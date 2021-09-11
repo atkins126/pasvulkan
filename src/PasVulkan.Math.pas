@@ -181,6 +181,7 @@ type PpvScalar=^TpvScalar;
        function Lerp(const aToVector:TpvVector2;const aTime:TpvScalar):TpvVector2; {$ifdef CAN_INLINE}inline;{$endif}
        function Nlerp(const aToVector:TpvVector2;const aTime:TpvScalar):TpvVector2; {$ifdef CAN_INLINE}inline;{$endif}
        function Slerp(const aToVector:TpvVector2;const aTime:TpvScalar):TpvVector2;
+       function Sqlerp(const aB,aC,aD:TpvVector2;const aTime:TpvScalar):TpvVector2;
        function Angle(const aOtherFirstVector,aOtherSecondVector:TpvVector2):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
        function Rotate(const aAngle:TpvScalar):TpvVector2; overload; {$ifdef CAN_INLINE}inline;{$endif}
        function Rotate(const aCenter:TpvVector2;const aAngle:TpvScalar):TpvVector2; overload; {$ifdef CAN_INLINE}inline;{$endif}
@@ -248,6 +249,7 @@ type PpvScalar=^TpvScalar;
        function Lerp(const aToVector:TpvVector3;const aTime:TpvScalar):TpvVector3; {$ifdef CAN_INLINE}inline;{$endif}
        function Nlerp(const aToVector:TpvVector3;const aTime:TpvScalar):TpvVector3; {$ifdef CAN_INLINE}inline;{$endif}
        function Slerp(const aToVector:TpvVector3;const aTime:TpvScalar):TpvVector3;
+       function Sqlerp(const aB,aC,aD:TpvVector3;const aTime:TpvScalar):TpvVector3;
        function Angle(const aOtherFirstVector,aOtherSecondVector:TpvVector3):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
        function RotateX(const aAngle:TpvScalar):TpvVector3; {$ifdef CAN_INLINE}inline;{$endif}
        function RotateY(const aAngle:TpvScalar):TpvVector3; {$ifdef CAN_INLINE}inline;{$endif}
@@ -319,6 +321,7 @@ type PpvScalar=^TpvScalar;
        function Lerp(const aToVector:TpvVector4;const aTime:TpvScalar):TpvVector4; {$ifdef CAN_INLINE}inline;{$endif}
        function Nlerp(const aToVector:TpvVector4;const aTime:TpvScalar):TpvVector4; {$ifdef CAN_INLINE}inline;{$endif}
        function Slerp(const aToVector:TpvVector4;const aTime:TpvScalar):TpvVector4;
+       function Sqlerp(const aB,aC,aD:TpvVector4;const aTime:TpvScalar):TpvVector4;
        function Angle(const aOtherFirstVector,aOtherSecondVector:TpvVector4):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
        function RotateX(const aAngle:TpvScalar):TpvVector4; {$ifdef CAN_INLINE}inline;{$endif}
        function RotateY(const aAngle:TpvScalar):TpvVector4; {$ifdef CAN_INLINE}inline;{$endif}
@@ -468,6 +471,7 @@ type PpvScalar=^TpvScalar;
        constructor Create(const aX:TpvScalar); overload;
        constructor Create(const aX,aY,aZ,aW:TpvScalar); overload;
        constructor Create(const aVector:TpvVector4); overload;
+       constructor CreateFromAngularVelocity(const aAngularVelocity:TpvVector3);
        constructor CreateFromAngleAxis(const aAngle:TpvScalar;const aAxis:TpvVector3);
        constructor CreateFromEuler(const aPitch,aYaw,aRoll:TpvScalar); overload;
        constructor CreateFromEuler(const aAngles:TpvVector3); overload;
@@ -512,6 +516,7 @@ type PpvScalar=^TpvScalar;
        function ToPitch:TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
        function ToYaw:TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
        function ToRoll:TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
+       function ToAngularVelocity:TpvVector3; {$ifdef CAN_INLINE}inline;{$endif}
        procedure ToAngleAxis(out aAngle:TpvScalar;out aAxis:TpvVector3); {$ifdef CAN_INLINE}inline;{$endif}
        function Generator:TpvVector3; {$ifdef CAN_INLINE}inline;{$endif}
        function Flip:TpvQuaternion; {$ifdef CAN_INLINE}inline;{$endif}
@@ -529,7 +534,10 @@ type PpvScalar=^TpvScalar;
        function Lerp(const aToQuaternion:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion; {$ifdef CAN_INLINE}inline;{$endif}
        function Nlerp(const aToQuaternion:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion; {$ifdef CAN_INLINE}inline;{$endif}
        function Slerp(const aToQuaternion:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion;
+       function Elerp(const aToQuaternion:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion;
+       function Sqlerp(const aB,aC,aD:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion;
        function UnflippedSlerp(const aToQuaternion:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion;
+       function UnflippedSqlerp(const aB,aC,aD:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion;
        function RotateAroundAxis(const aVector:TpvQuaternion):TpvQuaternion; {$ifdef CAN_INLINE}inline;{$endif}
        function Integrate(const aOmega:TpvVector3;const aDeltaTime:TpvScalar):TpvQuaternion; {$ifdef CAN_INLINE}inline;{$endif}
        function Spin(const aOmega:TpvVector3;const aDeltaTime:TpvScalar):TpvQuaternion; {$ifdef CAN_INLINE}inline;{$endif}
@@ -603,6 +611,8 @@ type PpvScalar=^TpvScalar;
        function Lerp(const b:TpvDecomposedMatrix3x3;const t:TpvScalar):TpvDecomposedMatrix3x3; {$ifdef CAN_INLINE}inline;{$endif}
        function Nlerp(const b:TpvDecomposedMatrix3x3;const t:TpvScalar):TpvDecomposedMatrix3x3; {$ifdef CAN_INLINE}inline;{$endif}
        function Slerp(const b:TpvDecomposedMatrix3x3;const t:TpvScalar):TpvDecomposedMatrix3x3; {$ifdef CAN_INLINE}inline;{$endif}
+       function Elerp(const b:TpvDecomposedMatrix3x3;const t:TpvScalar):TpvDecomposedMatrix3x3; {$ifdef CAN_INLINE}inline;{$endif}
+       function Sqlerp(const aB,aC,aD:TpvDecomposedMatrix3x3;const aTime:TpvScalar):TpvDecomposedMatrix3x3;
      end;
 
      PpvMatrix3x3=^TpvMatrix3x3;
@@ -689,9 +699,13 @@ type PpvScalar=^TpvScalar;
        function SimpleLerp(const b:TpvMatrix3x3;const t:TpvScalar):TpvMatrix3x3; {$ifdef CAN_INLINE}inline;{$endif}
        function SimpleNlerp(const b:TpvMatrix3x3;const t:TpvScalar):TpvMatrix3x3; {$ifdef CAN_INLINE}inline;{$endif}
        function SimpleSlerp(const b:TpvMatrix3x3;const t:TpvScalar):TpvMatrix3x3; {$ifdef CAN_INLINE}inline;{$endif}
+       function SimpleElerp(const b:TpvMatrix3x3;const t:TpvScalar):TpvMatrix3x3; {$ifdef CAN_INLINE}inline;{$endif}
+       function SimpleSqlerp(const aB,aC,aD:TpvMatrix3x3;const aTime:TpvScalar):TpvMatrix3x3;
        function Lerp(const b:TpvMatrix3x3;const t:TpvScalar):TpvMatrix3x3; {$ifdef CAN_INLINE}inline;{$endif}
        function Nlerp(const b:TpvMatrix3x3;const t:TpvScalar):TpvMatrix3x3; {$ifdef CAN_INLINE}inline;{$endif}
        function Slerp(const b:TpvMatrix3x3;const t:TpvScalar):TpvMatrix3x3; {$ifdef CAN_INLINE}inline;{$endif}
+       function Elerp(const b:TpvMatrix3x3;const t:TpvScalar):TpvMatrix3x3; {$ifdef CAN_INLINE}inline;{$endif}
+       function Sqlerp(const aB,aC,aD:TpvMatrix3x3;const aTime:TpvScalar):TpvMatrix3x3;
        function MulInverse(const a:TpvVector3):TpvVector3; overload; {$ifdef CAN_INLINE}inline;{$endif}
        function MulInverse(const a:TpvVector4):TpvVector4; overload; {$ifdef CAN_INLINE}inline;{$endif}
        function Decompose:TpvDecomposedMatrix3x3;
@@ -717,6 +731,8 @@ type PpvScalar=^TpvScalar;
        function Lerp(const b:TpvDecomposedMatrix4x4;const t:TpvScalar):TpvDecomposedMatrix4x4; {$ifdef CAN_INLINE}inline;{$endif}
        function Nlerp(const b:TpvDecomposedMatrix4x4;const t:TpvScalar):TpvDecomposedMatrix4x4; {$ifdef CAN_INLINE}inline;{$endif}
        function Slerp(const b:TpvDecomposedMatrix4x4;const t:TpvScalar):TpvDecomposedMatrix4x4; {$ifdef CAN_INLINE}inline;{$endif}
+       function Elerp(const b:TpvDecomposedMatrix4x4;const t:TpvScalar):TpvDecomposedMatrix4x4; {$ifdef CAN_INLINE}inline;{$endif}
+       function Sqlerp(const aB,aC,aD:TpvDecomposedMatrix4x4;const aTime:TpvScalar):TpvDecomposedMatrix4x4;
      end;
 
      PpvMatrix4x4=^TpvMatrix4x4;
@@ -776,6 +792,7 @@ type PpvScalar=^TpvScalar;
        constructor CreatePerspectiveLeftHandedZeroToOne(const fovy,Aspect,zNear,zFar:TpvScalar);
        constructor CreatePerspectiveRightHandedNegativeOneToPositiveOne(const fovy,Aspect,zNear,zFar:TpvScalar);
        constructor CreatePerspectiveRightHandedZeroToOne(const fovy,Aspect,zNear,zFar:TpvScalar);
+       constructor CreatePerspectiveReversedZ(const aFOVY,aAspectRatio,aZNear:TpvScalar);
        constructor CreatePerspective(const fovy,Aspect,zNear,zFar:TpvScalar);
        constructor CreateLookAt(const Eye,Center,Up:TpvVector3);
        constructor CreateFill(const Eye,RightVector,UpVector,ForwardVector:TpvVector3);
@@ -841,9 +858,13 @@ type PpvScalar=^TpvScalar;
        function SimpleLerp(const b:TpvMatrix4x4;const t:TpvScalar):TpvMatrix4x4; {$ifdef CAN_INLINE}inline;{$endif}
        function SimpleNlerp(const b:TpvMatrix4x4;const t:TpvScalar):TpvMatrix4x4; {$ifdef CAN_INLINE}inline;{$endif}
        function SimpleSlerp(const b:TpvMatrix4x4;const t:TpvScalar):TpvMatrix4x4; {$ifdef CAN_INLINE}inline;{$endif}
+       function SimpleElerp(const b:TpvMatrix4x4;const t:TpvScalar):TpvMatrix4x4; {$ifdef CAN_INLINE}inline;{$endif}
+       function SimpleSqlerp(const aB,aC,aD:TpvMatrix4x4;const aTime:TpvScalar):TpvMatrix4x4;
        function Lerp(const b:TpvMatrix4x4;const t:TpvScalar):TpvMatrix4x4; {$ifdef CAN_INLINE}inline;{$endif}
        function Nlerp(const b:TpvMatrix4x4;const t:TpvScalar):TpvMatrix4x4; {$ifdef CAN_INLINE}inline;{$endif}
        function Slerp(const b:TpvMatrix4x4;const t:TpvScalar):TpvMatrix4x4; {$ifdef CAN_INLINE}inline;{$endif}
+       function Elerp(const b:TpvMatrix4x4;const t:TpvScalar):TpvMatrix4x4; {$ifdef CAN_INLINE}inline;{$endif}
+       function Sqlerp(const aB,aC,aD:TpvMatrix4x4;const aTime:TpvScalar):TpvMatrix4x4;
        function MulInverse({$ifdef fpc}constref{$else}const{$endif} a:TpvVector3):TpvVector3; overload; {$ifdef CAN_INLINE}inline;{$endif}
        function MulInverse({$ifdef fpc}constref{$else}const{$endif} a:TpvVector4):TpvVector4; overload; {$ifdef CAN_INLINE}inline;{$endif}
        function MulInverted({$ifdef fpc}constref{$else}const{$endif} a:TpvVector3):TpvVector3; overload; {$ifdef CAN_INLINE}inline;{$endif}
@@ -931,6 +952,7 @@ type PpvScalar=^TpvScalar;
              NormalizedSpace:TpvMatrix4x4=(RawComponents:((2.0,0.0,0,0.0),(0.0,2.0,0.0,0.0),(0.0,0.0,2.0,0.0),(-1.0,-1.0,-1.0,1.0)));
              FlipYClipSpace:TpvMatrix4x4=(RawComponents:((1.0,0.0,0,0.0),(0.0,-1.0,0.0,0.0),(0.0,0.0,1.0,0.0),(0.0,0.0,0.0,1.0)));
              FlipYHalfZClipSpace:TpvMatrix4x4=(RawComponents:((1.0,0.0,0,0.0),(0.0,-1.0,0.0,0.0),(0.0,0.0,0.5,0.0),(0.0,0.0,0.5,1.0)));
+             FlipZ:TpvMatrix4x4=(RawComponents:((1.0,0.0,0,0.0),(0.0,1.0,0.0,0.0),(0.0,0.0,-1.0,0.0),(0.0,0.0,0.0,1.0)));
      end;
 
      TpvQuaternionHelper=record helper for TpvQuaternion
@@ -1039,10 +1061,12 @@ type PpvScalar=^TpvScalar;
        function RayIntersection(const Origin,Direction:TpvVector3;var Time:TpvScalar):boolean; overload; {$ifdef CAN_INLINE}inline;{$endif}
        function LineIntersection(const StartPoint,EndPoint:TpvVector3):boolean; {$ifdef CAN_INLINE}inline;{$endif}
        function TriangleIntersection(const Triangle:TpvTriangle):boolean;
-       function Transform(const Transform:TpvMatrix4x4):TpvAABB; {$ifdef CAN_INLINE}inline;{$endif}
-       function MatrixMul(const Transform:TpvMatrix4x4):TpvAABB; {$ifdef CAN_INLINE}inline;{$endif}
-       function ScissorRect(var Scissor:TpvClipRect;const mvp:TpvMatrix4x4;const vp:TpvClipRect;zcull:boolean):boolean; overload; {$ifdef CAN_INLINE}inline;{$endif}
-       function ScissorRect(var Scissor:TpvFloatClipRect;const mvp:TpvMatrix4x4;const vp:TpvFloatClipRect;zcull:boolean):boolean; overload; {$ifdef CAN_INLINE}inline;{$endif}
+       function Transform(const Transform:TpvMatrix3x3):TpvAABB; overload; {$ifdef CAN_INLINE}inline;{$endif}
+       function Transform(const Transform:TpvMatrix4x4):TpvAABB; overload; {$ifdef CAN_INLINE}inline;{$endif}
+       function MatrixMul(const Transform:TpvMatrix3x3):TpvAABB; overload;
+       function MatrixMul(const Transform:TpvMatrix4x4):TpvAABB; overload;
+       function ScissorRect(out Scissor:TpvClipRect;const mvp:TpvMatrix4x4;const vp:TpvClipRect;zcull:boolean):boolean; overload; {$ifdef CAN_INLINE}inline;{$endif}
+       function ScissorRect(out Scissor:TpvFloatClipRect;const mvp:TpvMatrix4x4;const vp:TpvFloatClipRect;zcull:boolean):boolean; overload; {$ifdef CAN_INLINE}inline;{$endif}
        function MovingTest(const aAABBTo,bAABBFrom,bAABBTo:TpvAABB;var t:TpvScalar):boolean;
        function SweepTest(const bAABB:TpvAABB;const aV,bV:TpvVector3;var FirstTime,LastTime:TpvScalar):boolean; {$ifdef CAN_INLINE}inline;{$endif}
        case boolean of
@@ -2246,6 +2270,11 @@ begin
  end;
 end;
 
+function TpvVector2.Sqlerp(const aB,aC,aD:TpvVector2;const aTime:TpvScalar):TpvVector2;
+begin
+ result:=Slerp(aD,aTime).Slerp(aB.Slerp(aC,aTime),(2.0*aTime)*(1.0-aTime));
+end;
+
 function TpvVector2.Angle(const aOtherFirstVector,aOtherSecondVector:TpvVector2):TpvScalar;
 var DeltaAB,DeltaCB:TpvVector2;
     LengthAB,LengthCB:TpvScalar;
@@ -3250,6 +3279,11 @@ begin
  end;
 end;
 
+function TpvVector3.Sqlerp(const aB,aC,aD:TpvVector3;const aTime:TpvScalar):TpvVector3;
+begin
+ result:=Slerp(aD,aTime).Slerp(aB.Slerp(aC,aTime),(2.0*aTime)*(1.0-aTime));
+end;
+
 function TpvVector3.Angle(const aOtherFirstVector,aOtherSecondVector:TpvVector3):TpvScalar;
 var DeltaAB,DeltaCB:TpvVector3;
     LengthAB,LengthCB:TpvScalar;
@@ -4161,6 +4195,11 @@ begin
  end;
 end;
 
+function TpvVector4.Sqlerp(const aB,aC,aD:TpvVector4;const aTime:TpvScalar):TpvVector4;
+begin
+ result:=Slerp(aD,aTime).Slerp(aB.Slerp(aC,aTime),(2.0*aTime)*(1.0-aTime));
+end;
+
 function TpvVector4.Angle(const aOtherFirstVector,aOtherSecondVector:TpvVector4):TpvScalar;
 var DeltaAB,DeltaCB:TpvVector4;
     LengthAB,LengthCB:TpvScalar;
@@ -4404,6 +4443,25 @@ begin
  Vector:=aVector;
 end;
 
+constructor TpvQuaternion.CreateFromAngularVelocity(const aAngularVelocity:TpvVector3);
+var Magnitude,Sinus,Cosinus,SinusGain:TpvScalar;
+begin
+ Magnitude:=aAngularVelocity.Length;
+ if Magnitude<EPSILON then begin
+  x:=0.0;
+  y:=0.0;
+  z:=0.0;
+  w:=1.0;
+ end else begin
+  SinCos(Magnitude*0.5,Sinus,Cosinus);
+  SinusGain:=Sinus/Magnitude;
+  x:=aAngularVelocity.x*SinusGain;
+  y:=aAngularVelocity.y*SinusGain;
+  z:=aAngularVelocity.z*SinusGain;
+  w:=Cosinus;
+ end;
+end;
+
 constructor TpvQuaternion.CreateFromAngleAxis(const aAngle:TpvScalar;const aAxis:TpvVector3);
 var s:TpvScalar;
 begin
@@ -4448,7 +4506,7 @@ begin
  sr:=sin(aAngles.Roll*0.5);
  cp:=cos(aAngles.Pitch*0.5);
  cy:=cos(aAngles.Yaw*0.5);
- cr:=cos(aAngles.Roll*0.5);{}
+ cr:=cos(aAngles.Roll*0.5);//}
  Vector:=TpvVector4.Create((sp*cy*cr)+(cp*sy*sr),
                               (cp*sy*cr)-(sp*cy*sr),
                               (cp*cy*sr)-(sp*sy*cr),
@@ -5100,6 +5158,22 @@ begin
  end;
 end;
 
+function TpvQuaternion.ToAngularVelocity:TpvVector3;
+var Angle,Gain:TpvScalar;
+begin
+ if System.abs(1.0-w)<EPSILON then begin
+  result.x:=0.0;
+  result.y:=0.0;
+  result.z:=0.0;
+ end else begin
+  Angle:=ArcCos(System.abs(w));
+  Gain:=(Sign(w)*2.0)*(Angle/Sin(Angle));
+  result.x:=x*Gain;
+  result.y:=y*Gain;
+  result.z:=z*Gain;
+ end;
+end;
+
 procedure TpvQuaternion.ToAngleAxis(out aAngle:TpvScalar;out aAxis:TpvVector3);
 var SinAngle:TpvScalar;
     Quaternion:TpvQuaternion;
@@ -5578,6 +5652,28 @@ begin
  result:=(s0*self)+(aToQuaternion*(s1*s2));
 end;
 
+function TpvQuaternion.Elerp(const aToQuaternion:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion;
+var SignFactor:TpvScalar;
+begin
+ if Dot(aToQuaternion)<0.0 then begin
+  SignFactor:=-1.0;
+ end else begin
+  SignFactor:=1.0;
+ end;
+ if aTime<=0.0 then begin
+  result:=self;
+ end else if aTime>=1.0 then begin
+  result:=aToQuaternion*SignFactor;
+ end else begin
+  result:=((Log*(1.0-aTime))+((aToQuaternion*SignFactor).Log*aTime)).Exp;
+ end;
+end;
+
+function TpvQuaternion.Sqlerp(const aB,aC,aD:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion;
+begin
+ result:=Slerp(aD,aTime).Slerp(aB.Slerp(aC,aTime),(2.0*aTime)*(1.0-aTime));
+end;
+
 function TpvQuaternion.UnflippedSlerp(const aToQuaternion:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion;
 var Omega,co,so,s0,s1:TpvScalar;
 begin
@@ -5592,6 +5688,11 @@ begin
   s1:=aTime;
  end;
  result:=(s0*self)+(aToQuaternion*s1);
+end;
+
+function TpvQuaternion.UnflippedSqlerp(const aB,aC,aD:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion;
+begin
+ result:=UnflippedSlerp(aD,aTime).UnflippedSlerp(aB.UnflippedSlerp(aC,aTime),(2.0*aTime)*(1.0-aTime));
 end;
 
 function TpvQuaternion.RotateAroundAxis(const aVector:TpvQuaternion):TpvQuaternion;
@@ -5637,7 +5738,7 @@ begin
  RawComponents[0,1]:=0.0;
  RawComponents[1,0]:=0.0;
  RawComponents[1,1]:=1.0;
-end;{}
+end;//}
 
 constructor TpvMatrix2x2.Create(const pX:TpvScalar);
 begin
@@ -5975,6 +6076,24 @@ begin
  end;
 end;
 
+function TpvDecomposedMatrix3x3.Elerp(const b:TpvDecomposedMatrix3x3;const t:TpvScalar):TpvDecomposedMatrix3x3;
+begin
+ if t<=0.0 then begin
+  result:=self;
+ end else if t>=1.0 then begin
+  result:=b;
+ end else begin
+  result.Scale:=Scale.Lerp(b.Scale,t);
+  result.Skew:=Skew.Lerp(b.Skew,t);
+  result.Rotation:=Rotation.Elerp(b.Rotation,t);
+ end;
+end;
+
+function TpvDecomposedMatrix3x3.Sqlerp(const aB,aC,aD:TpvDecomposedMatrix3x3;const aTime:TpvScalar):TpvDecomposedMatrix3x3;
+begin
+ result:=Slerp(aD,aTime).Slerp(aB.Slerp(aC,aTime),(2.0*aTime)*(1.0-aTime));
+end;
+
 {constructor TpvMatrix3x3.Create;
 begin
  RawComponents[0,0]:=1.0;
@@ -5986,7 +6105,7 @@ begin
  RawComponents[2,0]:=0.0;
  RawComponents[2,1]:=0.0;
  RawComponents[2,2]:=1.0;
-end;{}
+end;//}
 
 constructor TpvMatrix3x3.Create(const pX:TpvScalar);
 begin
@@ -7162,6 +7281,32 @@ begin
  end;
 end;
 
+function TpvMatrix3x3.SimpleElerp(const b:TpvMatrix3x3;const t:TpvScalar):TpvMatrix3x3;
+var Scale:TpvVector3;
+begin
+ if t<=0.0 then begin
+  result:=self;
+ end else if t>=1.0 then begin
+  result:=b;
+ end else begin
+  Scale:=TpvVector3.Create(Right.Length,
+                           Up.Length,
+                           Forwards.Length).Lerp(TpvVector3.Create(b.Right.Length,
+                                                                   b.Up.Length,
+                                                                   b.Forwards.Length),
+                                                 t);
+  result:=TpvMatrix3x3.CreateFromQuaternion(Normalize.ToQuaternion.Elerp(b.Normalize.ToQuaternion,t));
+  result.Right:=result.Right*Scale.x;
+  result.Up:=result.Up*Scale.y;
+  result.Forwards:=result.Forwards*Scale.z;
+ end;
+end;
+
+function TpvMatrix3x3.SimpleSqlerp(const aB,aC,aD:TpvMatrix3x3;const aTime:TpvScalar):TpvMatrix3x3;
+begin
+ result:=SimpleSlerp(aD,aTime).SimpleSlerp(aB.SimpleSlerp(aC,aTime),(2.0*aTime)*(1.0-aTime));
+end;
+
 function TpvMatrix3x3.Lerp(const b:TpvMatrix3x3;const t:TpvScalar):TpvMatrix3x3;
 begin
  if t<=0.0 then begin
@@ -7193,6 +7338,22 @@ begin
  end else begin
   result:=TpvMatrix3x3.CreateRecomposed(Decompose.Slerp(b.Decompose,t));
  end;
+end;
+
+function TpvMatrix3x3.Elerp(const b:TpvMatrix3x3;const t:TpvScalar):TpvMatrix3x3;
+begin
+ if t<=0.0 then begin
+  result:=self;
+ end else if t>=1.0 then begin
+  result:=b;
+ end else begin
+  result:=TpvMatrix3x3.CreateRecomposed(Decompose.Elerp(b.Decompose,t));
+ end;
+end;
+
+function TpvMatrix3x3.Sqlerp(const aB,aC,aD:TpvMatrix3x3;const aTime:TpvScalar):TpvMatrix3x3;
+begin
+ result:=Slerp(aD,aTime).Slerp(aB.Slerp(aC,aTime),(2.0*aTime)*(1.0-aTime));
 end;
 
 function TpvMatrix3x3.MulInverse(const a:TpvVector3):TpvVector3;
@@ -7331,6 +7492,26 @@ begin
  end;
 end;
 
+function TpvDecomposedMatrix4x4.Elerp(const b:TpvDecomposedMatrix4x4;const t:TpvScalar):TpvDecomposedMatrix4x4;
+begin
+ if t<=0.0 then begin
+  result:=self;
+ end else if t>=1.0 then begin
+  result:=b;
+ end else begin
+  result.Perspective:=Perspective.Lerp(b.Perspective,t);
+  result.Translation:=Translation.Lerp(b.Translation,t);
+  result.Scale:=Scale.Lerp(b.Scale,t);
+  result.Skew:=Skew.Lerp(b.Skew,t);
+  result.Rotation:=Rotation.Elerp(b.Rotation,t);
+ end;
+end;
+
+function TpvDecomposedMatrix4x4.Sqlerp(const aB,aC,aD:TpvDecomposedMatrix4x4;const aTime:TpvScalar):TpvDecomposedMatrix4x4;
+begin
+ result:=Slerp(aD,aTime).Slerp(aB.Slerp(aC,aTime),(2.0*aTime)*(1.0-aTime));
+end;
+
 {constructor TpvMatrix4x4.Create;
 begin
  RawComponents[0,0]:=1.0;
@@ -7349,7 +7530,7 @@ begin
  RawComponents[3,1]:=0.0;
  RawComponents[3,2]:=0.0;
  RawComponents[3,3]:=1.0;
-end;{}
+end;//}
 
 constructor TpvMatrix4x4.Create(const pX:TpvScalar);
 begin
@@ -8551,6 +8732,30 @@ begin
   RawComponents[3,2]:=(-(zNear*zFar))/(zFar-zNear);
   RawComponents[3,3]:=0.0;
  end;
+end;
+
+constructor TpvMatrix4x4.CreatePerspectiveReversedZ(const aFOVY,aAspectRatio,aZNear:TpvScalar);
+var t,sx,sy:TpvScalar;
+begin
+ t:=tan(aFOVY*DEG2RAD*0.5);
+ sy:=1.0/t;
+ sx:=sy/aAspectRatio;
+ RawComponents[0,0]:=sx;
+ RawComponents[0,1]:=0.0;
+ RawComponents[0,2]:=0.0;
+ RawComponents[0,3]:=0.0;
+ RawComponents[1,0]:=0.0;
+ RawComponents[1,1]:=sy;
+ RawComponents[1,2]:=0.0;
+ RawComponents[1,3]:=0.0;
+ RawComponents[2,0]:=0.0;
+ RawComponents[2,1]:=0.0;
+ RawComponents[2,2]:=0.0;
+ RawComponents[2,3]:=-1.0;
+ RawComponents[3,0]:=0.0;
+ RawComponents[3,1]:=0.0;
+ RawComponents[3,2]:=aZNear;
+ RawComponents[3,3]:=0.0;
 end;
 
 constructor TpvMatrix4x4.CreatePerspective(const fovy,Aspect,zNear,zFar:TpvScalar);
@@ -10978,6 +11183,38 @@ begin
  end;
 end;
 
+function TpvMatrix4x4.SimpleElerp(const b:TpvMatrix4x4;const t:TpvScalar):TpvMatrix4x4;
+var InvT:TpvScalar;
+    Scale:TpvVector3;
+begin
+ if t<=0.0 then begin
+  result:=self;
+ end else if t>=1.0 then begin
+  result:=b;
+ end else begin
+  Scale:=TpvVector3.Create(Right.xyz.Length,
+                           Up.xyz.Length,
+                           Forwards.xyz.Length).Lerp(TpvVector3.Create(b.Right.xyz.Length,
+                                                                       b.Up.xyz.Length,
+                                                                       b.Forwards.xyz.Length),
+                                                     t);
+  result:=TpvMatrix4x4.CreateFromQuaternion(Normalize.ToQuaternion.Elerp(b.Normalize.ToQuaternion,t));
+  result.Right.xyz:=result.Right.xyz*Scale.x;
+  result.Up.xyz:=result.Up.xyz*Scale.y;
+  result.Forwards.xyz:=result.Forwards.xyz*Scale.z;
+  result.Translation:=Translation.Lerp(b.Translation,t);
+  InvT:=1.0-t;
+  result[0,3]:=(RawComponents[0,3]*InvT)+(b.RawComponents[0,3]*t);
+  result[1,3]:=(RawComponents[1,3]*InvT)+(b.RawComponents[1,3]*t);
+  result[2,3]:=(RawComponents[2,3]*InvT)+(b.RawComponents[2,3]*t);
+ end;
+end;
+
+function TpvMatrix4x4.SimpleSqlerp(const aB,aC,aD:TpvMatrix4x4;const aTime:TpvScalar):TpvMatrix4x4;
+begin
+ result:=SimpleSlerp(aD,aTime).SimpleSlerp(aB.SimpleSlerp(aC,aTime),(2.0*aTime)*(1.0-aTime));
+end;
+
 function TpvMatrix4x4.Lerp(const b:TpvMatrix4x4;const t:TpvScalar):TpvMatrix4x4;
 begin
  if t<=0.0 then begin
@@ -11009,6 +11246,22 @@ begin
  end else begin
   result:=TpvMatrix4x4.CreateRecomposed(Decompose.Slerp(b.Decompose,t));
  end;
+end;
+
+function TpvMatrix4x4.Elerp(const b:TpvMatrix4x4;const t:TpvScalar):TpvMatrix4x4;
+begin
+ if t<=0.0 then begin
+  result:=self;
+ end else if t>=1.0 then begin
+  result:=b;
+ end else begin
+  result:=TpvMatrix4x4.CreateRecomposed(Decompose.Elerp(b.Decompose,t));
+ end;
+end;
+
+function TpvMatrix4x4.Sqlerp(const aB,aC,aD:TpvMatrix4x4;const aTime:TpvScalar):TpvMatrix4x4;
+begin
+ result:=Slerp(aD,aTime).Slerp(aB.Slerp(aC,aTime),(2.0*aTime)*(1.0-aTime));
 end;
 
 function TpvMatrix4x4.MulInverse({$ifdef fpc}constref{$else}const{$endif} a:TpvVector3):TpvVector3;
@@ -13623,6 +13876,31 @@ begin
  result:=PlaneBoxOverlap(Normal,-Normal.Dot(v0),BoxHalfSize);
 end;
 
+function TpvAABB.Transform(const Transform:TpvMatrix3x3):TpvAABB;
+var i,j:TpvInt32;
+    a,b:TpvScalar;
+begin
+ result.Min.x:=0.0;
+ result.Min.y:=0.0;
+ result.Min.z:=0.0;
+ result.Max.x:=0.0;
+ result.Max.y:=0.0;
+ result.Max.z:=0.0;
+ for i:=0 to 2 do begin
+  for j:=0 to 2 do begin
+   a:=Transform[j,i]*Min.RawComponents[j];
+   b:=Transform[j,i]*Max.RawComponents[j];
+   if a<b then begin
+    result.Min.RawComponents[i]:=result.Min.RawComponents[i]+a;
+    result.Max.RawComponents[i]:=result.Max.RawComponents[i]+b;
+   end else begin
+    result.Min.RawComponents[i]:=result.Min.RawComponents[i]+b;
+    result.Max.RawComponents[i]:=result.Max.RawComponents[i]+a;
+   end;
+  end;
+ end;
+end;
+
 function TpvAABB.Transform(const Transform:TpvMatrix4x4):TpvAABB;
 var i,j:TpvInt32;
     a,b:TpvScalar;
@@ -13644,6 +13922,53 @@ begin
    end;
   end;
  end;
+end;
+
+function TpvAABB.MatrixMul(const Transform:TpvMatrix3x3):TpvAABB;
+var Rotation:TpvMatrix3x3;
+    v:array[0..7] of TpvVector3;
+    Center,MinVector,MaxVector:TpvVector3;
+    i:TpvInt32;
+begin
+
+ Center:=(Min+Max)*0.5;
+
+ MinVector:=Min-Center;
+ MaxVector:=Max-Center;
+
+ v[0]:=Transform*TpvVector3.Create(MinVector.x,MinVector.y,MinVector.z);
+ v[1]:=Transform*TpvVector3.Create(MaxVector.x,MinVector.y,MinVector.z);
+ v[2]:=Transform*TpvVector3.Create(MaxVector.x,MaxVector.y,MinVector.z);
+ v[3]:=Transform*TpvVector3.Create(MaxVector.x,MaxVector.y,MaxVector.z);
+ v[4]:=Transform*TpvVector3.Create(MinVector.x,MaxVector.y,MaxVector.z);
+ v[5]:=Transform*TpvVector3.Create(MinVector.x,MinVector.y,MaxVector.z);
+ v[6]:=Transform*TpvVector3.Create(MaxVector.x,MinVector.y,MaxVector.z);
+ v[7]:=Transform*TpvVector3.Create(MinVector.x,MaxVector.y,MinVector.z);
+
+ result.Min:=v[0];
+ result.Max:=v[0];
+ for i:=0 to 7 do begin
+  if result.Min.x>v[i].x then begin
+   result.Min.x:=v[i].x;
+  end;
+  if result.Min.y>v[i].y then begin
+   result.Min.y:=v[i].y;
+  end;
+  if result.Min.z>v[i].z then begin
+   result.Min.z:=v[i].z;
+  end;
+  if result.Max.x<v[i].x then begin
+   result.Max.x:=v[i].x;
+  end;
+  if result.Max.y<v[i].y then begin
+   result.Max.y:=v[i].y;
+  end;
+  if result.Max.z<v[i].z then begin
+   result.Max.z:=v[i].z;
+  end;
+ end;
+ result.Min:=result.Min+Center;
+ result.Max:=result.Max+Center;
 end;
 
 function TpvAABB.MatrixMul(const Transform:TpvMatrix4x4):TpvAABB;
@@ -13696,7 +14021,7 @@ begin
  result.Max:=result.Max+NewCenter;
 end;
 
-function TpvAABB.ScissorRect(var Scissor:TpvClipRect;const mvp:TpvMatrix4x4;const vp:TpvClipRect;zcull:boolean):boolean;
+function TpvAABB.ScissorRect(out Scissor:TpvClipRect;const mvp:TpvMatrix4x4;const vp:TpvClipRect;zcull:boolean):boolean;
 var p:TpvVector4;
     i,x,y,z_far,z_near:TpvInt32;
 begin
@@ -13781,7 +14106,7 @@ begin
  end;
 end;
 
-function TpvAABB.ScissorRect(var Scissor:TpvFloatClipRect;const mvp:TpvMatrix4x4;const vp:TpvFloatClipRect;zcull:boolean):boolean;
+function TpvAABB.ScissorRect(out Scissor:TpvFloatClipRect;const mvp:TpvMatrix4x4;const vp:TpvFloatClipRect;zcull:boolean):boolean;
 var p:TpvVector4;
     i,z_far,z_near:TpvInt32;
 begin
@@ -16514,7 +16839,7 @@ begin
  result.y:=Min(Max((round((ArcTan2(aNormal.y,aNormal.x)/PI)*127)+128),0),255);
  result.z:=Min(Max((round((ArcSin(aTangent.z)/PI)*127)+128),0),255);
  result.w:=Min(Max((round((ArcTan2(aTangent.y,aTangent.x)/PI)*127)+128),0),255);
-end;{}
+end;//}
 
 procedure UnpackTangentSpace(const aPackedTangentSpace:TpvPackedTangentSpace;out aTangent,aBitangent,aNormal:TpvVector3);
 var q:TpvQuaternion;
@@ -16548,7 +16873,7 @@ begin
  aTangent.y:=cos(Latitude)*sin(Longitude);
  aTangent.z:=sin(Latitude);
  aBitangent:=Vector3Norm(Vector3Cross(aNormal,aTangent));
-end;{}
+end;//}
 
 function ConvertLinearToSRGB(const aColor:TpvVector3):TpvVector3;
 const InverseGamma=1.0/2.4;
