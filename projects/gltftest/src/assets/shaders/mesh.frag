@@ -2,6 +2,7 @@
 
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_ARB_shading_language_420pack : enable
+#extension GL_GOOGLE_include_directive : enable
 
 layout(location = 0) in vec3 inWorldSpacePosition;
 layout(location = 1) in vec3 inViewSpacePosition;
@@ -12,12 +13,6 @@ layout(location = 5) in vec3 inNormal;
 layout(location = 6) in vec2 inTexCoord0;
 layout(location = 7) in vec2 inTexCoord1;
 layout(location = 8) in vec4 inColor0;
-
-layout(set = 1, binding = 1) uniform sampler2D uTextures[];
-
-layout(set = 2, binding = 0) uniform sampler2D uImageBasedLightingBRDFTextures[];  // 0 = GGX, 1 = Charlie, 2 = Sheen E
-
-layout(set = 2, binding = 1) uniform samplerCube uImageBasedLightingEnvMaps[];  // 0 = GGX, 1 = Charlie, 2 = Lambertian
 
 layout(location = 0) out vec4 outFragColor;
 #ifdef EXTRAEMISSIONOUTPUT
@@ -32,9 +27,12 @@ layout(std140, set = 1, binding = 0) uniform uboMaterial {
   vec4 metallicRoughnessNormalScaleOcclusionStrengthFactor;
   vec4 sheenColorFactorSheenIntensityFactor;
   vec4 clearcoatFactorClearcoatRoughnessFactor;
+  vec4 ior;
   uvec4 alphaCutOffFlagsTex0Tex1;
   mat4 textureTransforms[16];
 } uMaterial;
+
+layout(set = 1, binding = 1) uniform sampler2D uTextures[];
 
 #ifdef LIGHTS
 struct Light {
@@ -45,13 +43,28 @@ struct Light {
   mat4 shadowMapMatrix;
 };
 
-layout(std430, set=2, binding = 1) buffer LightData {
-  uvec4 lightMetaData;
+layout(std430, set = 2, binding = 0) buffer LightItemData {
+//uvec4 lightMetaData;
   Light lights[];
+};
+
+struct LightTreeNode {
+  uvec4 aabbMinSkipCount;
+  uvec4 aabbMaxUserData;
+};
+
+layout(std430, set = 2, binding = 1) buffer LightTreeNodeData {
+  LightTreeNode lightTreeNodes[];
 };
 #endif
 
+layout(set = 3, binding = 0) uniform sampler2D uImageBasedLightingBRDFTextures[];  // 0 = GGX, 1 = Charlie, 2 = Sheen E
+
+layout(set = 3, binding = 1) uniform samplerCube uImageBasedLightingEnvMaps[];  // 0 = GGX, 1 = Charlie, 2 = Lambertian
+
 /* clang-format on */
+
+#include "roughness.glsl"
 
 float envMapMaxLevelGGX, envMapMaxLevelCharlie;
 
@@ -74,7 +87,7 @@ const float PI = 3.14159265358979323846,     //
 float cavity, ambientOcclusion;
 uint flags, shadingModel;
 
-vec3 approximateAnalyticBRDF(vec3 specularColor, float roughness, float NoV) {
+vec3 approximateAnalyticBRDF(vec3 specularColor, float NoV, float roughness) {
   const vec4 c0 = vec4(-1.0, -0.0275, -0.572, 0.022);
   const vec4 c1 = vec4(1.0, 0.0425, 1.04, -0.04);
   vec4 r = fma(c0, vec4(roughness), c1);
@@ -184,7 +197,7 @@ vec4 getEnvMap(sampler2D texEnvMap, vec3 rayDirection, float texLOD) {
 vec3 getIBLRadianceLambertian(const in vec3 normal, const in vec3 viewDirection, const in float roughness, const in vec3 diffuseColor, const in vec3 F0, const in float specularWeight) {
   float ao = cavity * ambientOcclusion;
   float NdotV = clamp(dot(normal, viewDirection), 0.0, 1.0);
-  vec2 brdfSamplePoint = clamp(vec2(roughness, NdotV), vec2(0.0), vec2(1.0));
+  vec2 brdfSamplePoint = clamp(vec2(NdotV, roughness), vec2(0.0), vec2(1.0));
   vec2 f_ab = texture(uImageBasedLightingBRDFTextures[0], brdfSamplePoint).rg;
   vec3 irradiance = texture(uImageBasedLightingEnvMaps[2], normal.xyz, 0.0).xyz;
   vec3 Fr = max(vec3(1.0 - roughness), F0) - F0;
@@ -199,23 +212,20 @@ vec3 getIBLRadianceLambertian(const in vec3 normal, const in vec3 viewDirection,
 
 vec3 getIBLRadianceGGX(const in vec3 normal, const in float roughness, const in vec3 F0, const in float specularWeight, const in vec3 viewDirection, const in float litIntensity, const in vec3 imageLightBasedLightDirection) {
   vec3 reflectionVector = normalize(reflect(-viewDirection, normal));
-  float NdotV = clamp(abs(dot(normal.xyz, viewDirection)) + 1e-5, 0.0, 1.0),                                                            //
-      NdotVclamped = clamp(dot(normal.xyz, viewDirection), 0.0, 1.0),                                                                   //
+  float NdotV = clamp(dot(normal, viewDirection), 0.0, 1.0),                                                                            //
       ao = cavity * ambientOcclusion,                                                                                                   //
       lit = mix(1.0, litIntensity, max(0.0, dot(reflectionVector, -imageLightBasedLightDirection) * (1.0 - (roughness * roughness)))),  //
       specularOcclusion = clamp((pow(NdotV + (ao * lit), roughness * roughness) - 1.0) + (ao * lit), 0.0, 1.0);
-  vec2 brdf = texture(uImageBasedLightingBRDFTextures[0], clamp(vec2(roughness, NdotV), vec2(0.0), vec2(1.0)), 0.0).xy;
-  return (texture(uImageBasedLightingEnvMaps[0],            //
-                  reflectionVector,                         //
-                  clamp((float(envMapMaxLevelGGX) - 1.0) -  //
-                            (1.0 - (1.2 * log2(roughness))),
-                        0.0, float(envMapMaxLevelGGX)))
-              .xyz *                                                                        //
-          fma(F0 + ((max(vec3(1.0 - roughness), F0) - F0) * pow(1.0 - NdotVclamped, 5.0)),  //
-              brdf.xxx,                                                                     //
-              brdf.yyy * clamp(max(max(F0.x, F0.y), F0.z) * 50.0, 0.0, 1.0)) *              //
-          specularWeight *                                                                  //
-          specularOcclusion *                                                               //
+  vec2 brdf = texture(uImageBasedLightingBRDFTextures[0], clamp(vec2(NdotV, roughness), vec2(0.0), vec2(1.0)), 0.0).xy;
+  return (texture(uImageBasedLightingEnvMaps[0],  //
+                  reflectionVector,               //
+                  roughnessToMipMapLevel(roughness, envMapMaxLevelGGX))
+              .xyz *                                                                 //
+          fma(F0 + ((max(vec3(1.0 - roughness), F0) - F0) * pow(1.0 - NdotV, 5.0)),  //
+              brdf.xxx,                                                              //
+              brdf.yyy * clamp(max(max(F0.x, F0.y), F0.z) * 50.0, 0.0, 1.0)) *       //
+          specularWeight *                                                           //
+          specularOcclusion *                                                        //
           1.0);
 }
 
@@ -223,14 +233,12 @@ vec3 getIBLRadianceCharlie(vec3 normal, vec3 viewDirection, float sheenRoughness
   float ao = cavity * ambientOcclusion;
   float NdotV = clamp(dot(normal.xyz, viewDirection), 0.0, 1.0);
   vec3 reflectionVector = normalize(reflect(-viewDirection, normal));
-  return texture(uImageBasedLightingEnvMaps[1],                   //
-                 reflectionVector,                                //
-                 clamp((float(envMapMaxLevelCharlie) - 1.0) -     //
-                           (1.0 - (1.2 * log2(sheenRoughness))),  //
-                       0.0, float(envMapMaxLevelCharlie)))        //
-             .xyz *                                               //
-         sheenColor *                                             //
-         texture(uImageBasedLightingBRDFTextures[1], clamp(vec2(sheenRoughness, NdotV), vec2(0.0), vec2(1.0)), 0.0).x *
+  return texture(uImageBasedLightingEnvMaps[1],  //
+                 reflectionVector,               //
+                 roughnessToMipMapLevel(sheenRoughness, envMapMaxLevelCharlie))
+             .xyz *    //
+         sheenColor *  //
+         texture(uImageBasedLightingBRDFTextures[1], clamp(vec2(NdotV, sheenRoughness), vec2(0.0), vec2(1.0)), 0.0).x *
          ao;
 }
 
@@ -339,7 +347,8 @@ void main() {
     case smPBRSpecularGlossiness: {
       vec4 diffuseColorAlpha = vec4(1.0);
       vec3 specularColorFactor = vec3(1.0);
-      vec3 F0 = vec3(0.004);
+      float ior = uMaterial.ior.x;
+      vec3 F0 = vec3((abs(ior - 1.5) < 1e-6) ? 0.04 : pow((ior - 1.0) / (ior + 1.0), 2.0));
       vec3 F90 = vec3(1.0);
       float specularFactor = 1.0;
       float perceptualRoughness = 1.0;
@@ -369,6 +378,14 @@ void main() {
         }
       }
 
+      float geometryRoughness;
+      {
+        vec3 dxy = max(abs(dFdx(inNormal)), abs(dFdy(inNormal)));
+        geometryRoughness = max(max(dxy.x, dxy.y), dxy.z);
+      }
+
+      perceptualRoughness = min(max(perceptualRoughness, 0.0525) + geometryRoughness, 1.0);
+
       float alphaRoughness = perceptualRoughness * perceptualRoughness;
 
       vec3 normal;
@@ -396,11 +413,7 @@ void main() {
 
       vec3 viewDirection = normalize(-inCameraRelativePosition);
 
-#ifdef LIGHTS
-      vec3 imageLightBasedLightDirection = (lightMetaData.x != 0u) ? lights[0].directionZFar.xyz : vec3(0.0, 0.0, -1.0);
-#else
       vec3 imageLightBasedLightDirection = vec3(0.0, 0.0, -1.0);
-#endif
 
       vec4 sheenColorIntensityFactor = vec4(1.0);
       float sheenRoughness = 0.0;
@@ -433,106 +446,141 @@ void main() {
           clearcoatNormal = normalize(inNormal);
         }
         clearcoatNormal *= (((flags & (1u << 6u)) != 0u) && !gl_FrontFacing) ? -1.0 : 1.0;
-        clearcoatRoughness = clamp(clearcoatRoughness, 0.0, 1.0);
+        clearcoatRoughness = min(max(clearcoatRoughness, 0.0525) + geometryRoughness, 1.0);
       }
 
 #ifdef LIGHTS
-      if (lightMetaData.x != 0u) {
-        for (int lightIndex = 0, lightCount = int(lightMetaData.x); lightIndex < lightCount; lightIndex++) {
-          Light light = lights[lightIndex];
-          float lightAttenuation = 1.0;
-          vec3 lightDirection;
-          vec3 lightVector = light.positionRange.xyz - vWorldSpacePosition.xyz;
-          vec3 normalizedLightVector = normalize(lightVector);
-          if ((uShadows != 0) && ((light.metaData.y & 0x80000000u) == 0u)) {
-            switch (light.metaData.x) {
-              case 1u:    // Directional
-              case 3u: {  // Spot
-                vec4 shadowNDC = light.shadowMapMatrix * vec4(vWorldSpacePosition, 1.0);
-                shadowNDC /= shadowNDC.w;
-                if (all(greaterThanEqual(shadowNDC, vec4(-1.0))) && all(lessThanEqual(shadowNDC, vec4(1.0)))) {
-                  shadowNDC.xyz = fma(shadowNDC.xyz, vec3(0.5), vec3(0.5));
-                  vec4 moments = (textureLod(uNormalShadowMapArrayTexture, vec3(shadowNDC.xy, float(int(light.metaData.y))), 0.0) + vec2(-0.035955884801, 0.0).xyyy) * mat4(0.2227744146, 0.0771972861, 0.7926986636, 0.0319417555, 0.1549679261, 0.1394629426, 0.7963415838, -0.172282317, 0.1451988946, 0.2120202157, 0.7258694464, -0.2758014811, 0.163127443, 0.2591432266, 0.6539092497, -0.3376131734);
-                  lightAttenuation *= 1.0 - reduceLightBleeding(getMSMShadowIntensity(moments, shadowNDC.z, 5e-3, 1e-2), 0.0);
+      uint lightTreeNodeIndex = 0;
+      uint lightTreeNodeCount = lightTreeNodes[0].aabbMinSkipCount.w;
+      while (lightTreeNodeIndex < lightTreeNodeCount) {
+        LightTreeNode lightTreeNode = lightTreeNodes[lightTreeNodeIndex];
+        vec3 aabbMin = vec3(uintBitsToFloat(uvec3(lightTreeNode.aabbMinSkipCount.xyz)));
+        vec3 aabbMax = vec3(uintBitsToFloat(uvec3(lightTreeNode.aabbMaxUserData.xyz)));
+        if (all(greaterThanEqual(inWorldSpacePosition.xyz, aabbMin)) && all(lessThanEqual(inWorldSpacePosition.xyz, aabbMax))) {
+          if (lightTreeNode.aabbMaxUserData.w != 0xffffffffu) {
+            Light light = lights[lightTreeNode.aabbMaxUserData.w];
+            float lightAttenuation = 1.0;
+            vec3 lightDirection;
+            vec3 lightVector = light.positionRange.xyz - inWorldSpacePosition.xyz;
+            vec3 normalizedLightVector = normalize(lightVector);
+#ifdef SHADOWS
+            if ((uShadows != 0) && ((light.metaData.y & 0x80000000u) == 0u)) {
+              switch (light.metaData.x) {
+                case 1u: {  // Directional
+                  imageLightBasedLightDirection = light.directionZFar.xyz;
+                  // fall-through
                 }
+                case 3u: {  // Spot
+                  vec4 shadowNDC = light.shadowMapMatrix * vec4(vWorldSpacePosition, 1.0);
+                  shadowNDC /= shadowNDC.w;
+                  if (all(greaterThanEqual(shadowNDC, vec4(-1.0))) && all(lessThanEqual(shadowNDC, vec4(1.0)))) {
+                    shadowNDC.xyz = fma(shadowNDC.xyz, vec3(0.5), vec3(0.5));
+                    vec4 moments = (textureLod(uNormalShadowMapArrayTexture, vec3(shadowNDC.xy, float(int(light.metaData.y))), 0.0) + vec2(-0.035955884801, 0.0).xyyy) * mat4(0.2227744146, 0.0771972861, 0.7926986636, 0.0319417555, 0.1549679261, 0.1394629426, 0.7963415838, -0.172282317, 0.1451988946, 0.2120202157, 0.7258694464, -0.2758014811, 0.163127443, 0.2591432266, 0.6539092497, -0.3376131734);
+                    lightAttenuation *= 1.0 - reduceLightBleeding(getMSMShadowIntensity(moments, shadowNDC.z, 5e-3, 1e-2), 0.0);
+                  }
+                  break;
+                }
+                case 2u: {  // Point
+                  float znear = 1e-2, zfar = max(1.0, light.directionZFar.w);
+                  vec3 vector = light.positionRange.xyz - vWorldSpacePosition;
+                  vec4 moments = (textureLod(uCubeMapShadowMapArrayTexture, vec4(vec3(normalize(vector)), float(int(light.metaData.y))), 0.0) + vec2(-0.035955884801, 0.0).xyyy) * mat4(0.2227744146, 0.0771972861, 0.7926986636, 0.0319417555, 0.1549679261, 0.1394629426, 0.7963415838, -0.172282317, 0.1451988946, 0.2120202157, 0.7258694464, -0.2758014811, 0.163127443, 0.2591432266, 0.6539092497, -0.3376131734);
+                  lightAttenuation *= 1.0 - reduceLightBleeding(getMSMShadowIntensity(moments, clamp((length(vector) - znear) / (zfar - znear), 0.0, 1.0), 5e-3, 1e-2), 0.0);
+                  break;
+                }
+              }
+              if (lightIndex == 0) {
+                litIntensity = lightAttenuation;
+              }
+            }
+#endif
+            switch (light.metaData.x) {
+              case 1u: {  // Directional
+                lightDirection = -light.directionZFar.xyz;
                 break;
               }
               case 2u: {  // Point
-                float znear = 1e-2, zfar = max(1.0, light.directionZFar.w);
-                vec3 vector = light.positionRange.xyz - vWorldSpacePosition;
-                vec4 moments = (textureLod(uCubeMapShadowMapArrayTexture, vec4(vec3(normalize(vector)), float(int(light.metaData.y))), 0.0) + vec2(-0.035955884801, 0.0).xyyy) * mat4(0.2227744146, 0.0771972861, 0.7926986636, 0.0319417555, 0.1549679261, 0.1394629426, 0.7963415838, -0.172282317, 0.1451988946, 0.2120202157, 0.7258694464, -0.2758014811, 0.163127443, 0.2591432266, 0.6539092497, -0.3376131734);
-                lightAttenuation *= 1.0 - reduceLightBleeding(getMSMShadowIntensity(moments, clamp((length(vector) - znear) / (zfar - znear), 0.0, 1.0), 5e-3, 1e-2), 0.0);
+                lightDirection = normalizedLightVector;
+                break;
+              }
+              case 3u: {  // Spot
+#if 1
+                float angularAttenuation = clamp(fma(dot(normalize(light.directionZFar.xyz), -normalizedLightVector), uintBitsToFloat(light.metaData.z), uintBitsToFloat(light.metaData.w)), 0.0, 1.0);
+#else
+                // Just for as reference
+                float innerConeCosinus = uintBitsToFloat(light.metaData.z);
+                float outerConeCosinus = uintBitsToFloat(light.metaData.w);
+                float actualCosinus = dot(normalize(light.directionZFar.xyz), -normalizedLightVector);
+                float angularAttenuation = mix(0.0, mix(smoothstep(outerConeCosinus, innerConeCosinus, actualCosinus), 1.0, step(innerConeCosinus, actualCosinus)), step(outerConeCosinus, actualCosinus));
+#endif
+                lightAttenuation *= angularAttenuation * angularAttenuation;
+                lightDirection = normalizedLightVector;
+                break;
+              }
+              default: {
+                continue;
+              }
+            }
+            switch (light.metaData.x) {
+              case 2u:    // Point
+              case 3u: {  // Spot
+                if (light.positionRange.w >= 0.0) {
+                  float currentDistance = length(lightVector);
+                  if (currentDistance > 0.0) {
+                    lightAttenuation *= 1.0 / (currentDistance * currentDistance);
+                    if (light.positionRange.w > 0.0) {
+                      float distanceByRange = currentDistance / light.positionRange.w;
+                      lightAttenuation *= clamp(1.0 - (distanceByRange * distanceByRange * distanceByRange * distanceByRange), 0.0, 1.0);
+                    }
+                  }
+                }
                 break;
               }
             }
-            if (lightIndex == 0) {
-              litIntensity = lightAttenuation;
+            if (lightAttenuation > 0.0) {
+              doSingleLight(light.colorIntensity.xyz * light.colorIntensity.w,  //
+                            vec3(lightAttenuation),                             //
+                            lightDirection,                                     //
+                            normal.xyz,                                         //
+                            diffuseColorAlpha.xyz,                              //
+                            F0,                                                 //
+                            F90,                                                //
+                            viewDirection,                                      //
+                            refractiveAngle,                                    //
+                            transparency,                                       //
+                            alphaRoughness,                                     //
+                            cavity,                                             //
+                            sheenColorIntensityFactor,                          //
+                            sheenRoughness,                                     //
+                            clearcoatNormal,                                    //
+                            clearcoatF0,                                        //
+                            clearcoatRoughness,                                 //
+                            specularWeight);                                    //
             }
           }
-          switch (light.metaData.x) {
-            case 1u: {  // Directional
-              lightDirection = -light.directionZFar.xyz;
-              break;
-            }
-            case 2u: {  // Point
-              lightDirection = normalizedLightVector;
-              break;
-            }
-            case 3u: {  // Spot
-#if 1
-              float angularAttenuation = clamp(fma(dot(normalize(light.directionZFar.xyz), -normalizedLightVector), uintBitsToFloat(light.metaData.z), uintBitsToFloat(light.metaData.w)), 0.0, 1.0);
-#else
-              // Just for as reference
-              float innerConeCosinus = uintBitsToFloat(light.metaData.z);
-              float outerConeCosinus = uintBitsToFloat(light.metaData.w);
-              float actualCosinus = dot(normalize(light.directionZFar.xyz), -normalizedLightVector);
-              float angularAttenuation = mix(0.0, mix(smoothstep(outerConeCosinus, innerConeCosinus, actualCosinus), 1.0, step(innerConeCosinus, actualCosinus)), step(outerConeCosinus, actualCosinus));
-#endif
-              lightAttenuation *= angularAttenuation * angularAttenuation;
-              lightDirection = normalizedLightVector;
-              break;
-            }
-            default: {
-              continue;
-            }
-          }
-          switch (light.metaData.x) {
-            case 2u:    // Point
-            case 3u: {  // Spot
-              if (light.positionRange.w >= 0.0) {
-                float currentDistance = length(lightVector);
-                if (currentDistance > 0.0) {
-                  lightAttenuation *= 1.0 / (currentDistance * currentDistance);
-                  if (light.positionRange.w > 0.0) {
-                    float distanceByRange = currentDistance / light.positionRange.w;
-                    lightAttenuation *= clamp(1.0 - (distanceByRange * distanceByRange * distanceByRange * distanceByRange), 0.0, 1.0);
-                  }
-                }
-              }
-              break;
-            }
-          }
-          if (lightAttenuation > 0.0) {
-            doSingleLight(light.colorIntensity.xyz * light.colorIntensity.w,  //
-                          vec3(lightAttenuation),                             //
-                          lightDirection,                                     //
-                          normal.xyz,                                         //
-                          diffuseColorAlpha.xyz,                              //
-                          F0,                                                 //
-                          F90,                                                //
-                          viewDirection,                                      //
-                          refractiveAngle,                                    //
-                          transparency,                                       //
-                          alphaRoughness,                                     //
-                          cavity,                                             //
-                          sheenColorIntensityFactor,                          //
-                          sheenRoughness,                                     //
-                          clearcoatNormal,                                    //
-                          clearcoatF0,                                        //
-                          clearcoatRoughness,                                 //
-                          specularWeight);                                    //
-          }
+          lightTreeNodeIndex++;
+        } else {
+          lightTreeNodeIndex += max(1u, lightTreeNode.aabbMinSkipCount.w);
         }
+      }
+      if (lightTreeNodeIndex == 0u) {
+        doSingleLight(vec3(1.7, 1.15, 0.70),              //
+                      vec3(1.0),                          //
+                      normalize(-vec3(0.5, -1.0, -1.0)),  //
+                      normal.xyz,                         //
+                      diffuseColorAlpha.xyz,              //
+                      F0,                                 //
+                      F90,                                //
+                      viewDirection,                      //
+                      refractiveAngle,                    //
+                      transparency,                       //
+                      alphaRoughness,                     //
+                      cavity,                             //
+                      sheenColorIntensityFactor,          //
+                      sheenRoughness,                     //
+                      clearcoatNormal,                    //
+                      clearcoatF0,                        //
+                      clearcoatRoughness,                 //
+                      specularWeight);                    //
       }
 #elif 1
       doSingleLight(vec3(1.7, 1.15, 0.70),              //
