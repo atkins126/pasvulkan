@@ -132,6 +132,7 @@ type EpvVirtualReality=class(Exception);
             TProjectionMatrixMode=
              (
               Normal,
+              ReversedZ,
               InfiniteFarPlaneReversedZ
              );
             TVulkanMemoryBlocks=TpvObjectGenericList<TpvVulkanDeviceMemoryBlock>;
@@ -632,8 +633,26 @@ procedure TpvVirtualReality.UpdateMatrices;
 
   for EyeIndex:=0 to 1 do begin
 
-   OpenVRMatrix.m44:=fOpenVR_VR_IVRSystem_FnTable^.GetProjectionMatrix(OpenVREyes[EyeIndex],fZNear,fZFar);
-   fOpenVR_ProjectionMatrices[EyeIndex]:=OpenVRMatrix.Matrix.Transpose*TpvMatrix4x4.FlipYClipSpace;
+   OpenVRMatrix.m44:=fOpenVR_VR_IVRSystem_FnTable^.GetProjectionMatrix(OpenVREyes[EyeIndex],abs(fZNear),IfThen(IsInfinite(fZFar),1024.0,abs(fZFar)));
+   fOpenVR_ProjectionMatrices[EyeIndex]:=OpenVRMatrix.Matrix.Transpose;
+   if fZFar<0.0 then begin
+    if IsInfinite(fZFar) then begin
+     // Convert to reversed infinite Z
+     fOpenVR_ProjectionMatrices[EyeIndex].RawComponents[2,2]:=0.0;
+     fOpenVR_ProjectionMatrices[EyeIndex].RawComponents[2,3]:=-1.0;
+     fOpenVR_ProjectionMatrices[EyeIndex].RawComponents[3,2]:=abs(fZNear);
+    end else begin
+     // Convert to reversed non-infinite Z
+     fOpenVR_ProjectionMatrices[EyeIndex].RawComponents[2,2]:=abs(fZNear)/(abs(fZFar)-abs(fZNear));
+     fOpenVR_ProjectionMatrices[EyeIndex].RawComponents[2,3]:=-1.0;
+     fOpenVR_ProjectionMatrices[EyeIndex].RawComponents[3,2]:=(abs(fZNear)*abs(fZFar))/(abs(fZFar)-abs(fZNear));
+    end;
+   end else begin
+    fOpenVR_ProjectionMatrices[EyeIndex].RawComponents[2,2]:=abs(fZNear)/(abs(fZFar)-abs(fZNear));
+    fOpenVR_ProjectionMatrices[EyeIndex].RawComponents[2,3]:=-1.0;
+    fOpenVR_ProjectionMatrices[EyeIndex].RawComponents[3,2]:=(abs(fZNear)*abs(fZFar))/(abs(fZFar)-abs(fZNear));
+   end;
+   fOpenVR_ProjectionMatrices[EyeIndex]:=fOpenVR_ProjectionMatrices[EyeIndex]*TpvMatrix4x4.FlipYClipSpace;
 
    OpenVRMatrix.m44.m[3,0]:=0.0;
    OpenVRMatrix.m44.m[3,1]:=0.0;
@@ -713,7 +732,8 @@ begin
   end;
   else {TMode.Disabled:}begin
    fCountImages:=1;
-   fMultiviewMask:=0;
+   fMultiviewMask:=1 shl 0;
+// fMultiviewMask:=0;
   end;
  end;
 
@@ -1109,10 +1129,11 @@ begin
                                                                  VK_ATTACHMENT_STORE_OP_DONT_CARE,
                                                                  VK_ATTACHMENT_LOAD_OP_DONT_CARE,
                                                                  VK_ATTACHMENT_STORE_OP_DONT_CARE,
-                                                                 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                                                                 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+                                                                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                                                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
                                                                 );
-    InputAttachments:=[fVulkanRenderPass.AddAttachmentReference(fInputAttachment,VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)];
+    InputAttachments:=[fVulkanRenderPass.AddAttachmentReference(fInputAttachment,
+                                                                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)];
    end;
 
    fOutputAttachment:=fVulkanRenderPass.AddAttachmentDescription(0,
@@ -1140,7 +1161,7 @@ begin
                                                                                                                                VK_ATTACHMENT_STORE_OP_DONT_CARE,
                                                                                                                                VK_ATTACHMENT_LOAD_OP_DONT_CARE,
                                                                                                                                VK_ATTACHMENT_STORE_OP_DONT_CARE,
-                                                                                                                               VK_IMAGE_LAYOUT_UNDEFINED, //VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, // VK_IMAGE_LAYOUT_UNDEFINED, // VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                                                                                                                               VK_IMAGE_LAYOUT_UNDEFINED,
                                                                                                                                VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
                                                                                                                               ),
                                                                                     VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
@@ -1149,18 +1170,47 @@ begin
    fVulkanRenderPass.AddSubpassDependency(VK_SUBPASS_EXTERNAL,
                                           0,
                                           TVkPipelineStageFlags(VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT),
+                                          TVkPipelineStageFlags(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT) or
+                                          TVkPipelineStageFlags(VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT) or
+                                          TVkPipelineStageFlags(VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT),
+                                          TVkAccessFlags(VK_ACCESS_MEMORY_READ_BIT),
+                                          TVkAccessFlags(VK_ACCESS_COLOR_ATTACHMENT_READ_BIT) or
+                                          TVkAccessFlags(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT) or
+                                          TVkAccessFlags(VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT) or
+                                          TVkAccessFlags(VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT),
+                                          TVkDependencyFlags(VK_DEPENDENCY_BY_REGION_BIT));
+   fVulkanRenderPass.AddSubpassDependency(0,
+                                          VK_SUBPASS_EXTERNAL,
+                                          TVkPipelineStageFlags(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT) or
+                                          TVkPipelineStageFlags(VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT) or
+                                          TVkPipelineStageFlags(VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT),
+                                          TVkPipelineStageFlags(VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT),
+                                          TVkAccessFlags(VK_ACCESS_COLOR_ATTACHMENT_READ_BIT) or
+                                          TVkAccessFlags(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT) or
+                                          TVkAccessFlags(VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT),
+                                          TVkAccessFlags(VK_ACCESS_MEMORY_READ_BIT),
+                                          TVkDependencyFlags(VK_DEPENDENCY_BY_REGION_BIT));
+{  fVulkanRenderPass.AddSubpassDependency(VK_SUBPASS_EXTERNAL,
+                                          0,
+                                          TVkPipelineStageFlags(VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT),
                                           TVkPipelineStageFlags(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT),
                                           TVkAccessFlags(VK_ACCESS_MEMORY_READ_BIT),
-                                          TVkAccessFlags(VK_ACCESS_COLOR_ATTACHMENT_READ_BIT) or TVkAccessFlags(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT),
+                                          TVkAccessFlags(VK_ACCESS_COLOR_ATTACHMENT_READ_BIT) or
+                                          TVkAccessFlags(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT) or
+                                          TVkAccessFlags(VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT),
                                           TVkDependencyFlags(VK_DEPENDENCY_BY_REGION_BIT));
    fVulkanRenderPass.AddSubpassDependency(0,
                                           VK_SUBPASS_EXTERNAL,
                                           TVkPipelineStageFlags(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT),
                                           TVkPipelineStageFlags(VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT),
-                                          TVkAccessFlags(VK_ACCESS_COLOR_ATTACHMENT_READ_BIT) or TVkAccessFlags(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT),
+                                          TVkAccessFlags(VK_ACCESS_COLOR_ATTACHMENT_READ_BIT) or
+                                          TVkAccessFlags(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT) or
+                                          TVkAccessFlags(VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT),
                                           TVkAccessFlags(VK_ACCESS_MEMORY_READ_BIT),
-                                          TVkDependencyFlags(VK_DEPENDENCY_BY_REGION_BIT));
+                                          TVkDependencyFlags(VK_DEPENDENCY_BY_REGION_BIT));}
    fVulkanRenderPass.Initialize;
+
+// pvApplication.VulkanDevice.DebugMarker.SetObjectName(fVulkanRenderPass.Handle,TVkDebugReportObjectTypeEXT.VK_DEBUG_REPORT_OBJECT_TYPE_RENDER_PASS_EXT,'VR_Blit_RenderPass');
 
   end;
 
@@ -1591,24 +1641,82 @@ var AspectRatio,WidthRatio,ZNearOverFocalLength,EyeOffset,Left,Right,Bottom,Top:
 {$endif}
   TMode.Faked:begin
    AspectRatio:=(fWidth*0.5)/fHeight;
-   WidthRatio:=fZNear*tan(DEG2RAD*FakedFOV*0.5);
-   ZNearOverFocalLength:=fZNear/FocalLength;
+   WidthRatio:=abs(fZNear)*tan(DEG2RAD*FakedFOV*0.5);
+   ZNearOverFocalLength:=abs(fZNear)/FocalLength;
    EyeOffset:=(EyeSeparation*0.5*ZNearOverFocalLength)*BooleanToSign[aIndex>0];
    Left:=((-WidthRatio)*AspectRatio)+EyeOffset;
    Right:=(WidthRatio*AspectRatio)+EyeOffset;
    Top:=WidthRatio;
    Bottom:=-WidthRatio;
-   result:=TpvMatrix4x4.CreateFrustumRightHandedZeroToOne(Left,Right,Bottom,Top,fZNear,fZFar)*TpvMatrix4x4.FlipYClipSpace;
+   if fZFar>0.0 then begin
+    result:=TpvMatrix4x4.CreateFrustumRightHandedZeroToOne(Left,
+                                                           Right,
+                                                           Bottom,
+                                                           Top,
+                                                           abs(fZNear),
+                                                           IfThen(IsInfinite(fZFar),1024.0,abs(fZFar)));
+   end else begin
+    result:=TpvMatrix4x4.CreateFrustumRightHandedOneToZero(Left,
+                                                           Right,
+                                                           Bottom,
+                                                           Top,
+                                                           abs(fZNear),
+                                                           IfThen(IsInfinite(fZFar),1024.0,abs(fZFar)));
+   end;
+   if fZFar<0.0 then begin
+    if IsInfinite(fZFar) then begin
+     // Convert to reversed infinite Z
+     result.RawComponents[2,2]:=0.0;
+     result.RawComponents[2,3]:=-1.0;
+     result.RawComponents[3,2]:=abs(fZNear);
+    end else begin
+     // Convert to reversed non-infinite Z
+     result.RawComponents[2,2]:=abs(fZNear)/(abs(fZFar)-abs(fZNear));
+     result.RawComponents[2,3]:=-1.0;
+     result.RawComponents[3,2]:=(abs(fZNear)*abs(fZFar))/(abs(fZFar)-abs(fZNear));
+    end;
+   end;
+   result:=result*TpvMatrix4x4.FlipYClipSpace;
   end;
   else {TMode.Disabled:}begin
-   result:=TpvMatrix4x4.CreatePerspectiveRightHandedZeroToOne(fFOV,
-                                                              fWidth/fHeight,
-                                                              fZNear,
-                                                              fZFar)*
-                       TpvMatrix4x4.FlipYClipSpace;
+   if fZFar>0.0 then begin
+    result:=TpvMatrix4x4.CreatePerspectiveRightHandedZeroToOne(fFOV,
+                                                               fWidth/fHeight,
+                                                               abs(fZNear),
+                                                               IfThen(IsInfinite(fZFar),1024.0,abs(fZFar)));
+   end else begin
+    result:=TpvMatrix4x4.CreatePerspectiveRightHandedOneToZero(fFOV,
+                                                               fWidth/fHeight,
+                                                               abs(fZNear),
+                                                               IfThen(IsInfinite(fZFar),1024.0,abs(fZFar)));
+   end;
+   if fZFar<0.0 then begin
+    if IsInfinite(fZFar) then begin
+     // Convert to reversed infinite Z
+     result.RawComponents[2,2]:=0.0;
+     result.RawComponents[2,3]:=-1.0;
+     result.RawComponents[3,2]:=abs(fZNear);
+    end else begin
+     // Convert to reversed non-infinite Z
+     result.RawComponents[2,2]:=abs(fZNear)/(abs(fZFar)-abs(fZNear));
+     result.RawComponents[2,3]:=-1.0;
+     result.RawComponents[3,2]:=(abs(fZNear)*abs(fZFar))/(abs(fZFar)-abs(fZNear));
+    end;
+   end;
+   result:=result*TpvMatrix4x4.FlipYClipSpace;
   end;
  end;
  case fProjectionMatrixMode of
+  TProjectionMatrixMode.ReversedZ:begin
+   result.RawComponents[2,0]:=0.0;
+   result.RawComponents[2,1]:=0.0;
+   result.RawComponents[2,2]:=abs(fZNear)/(abs(fZFar)-abs(fZNear));
+   result.RawComponents[2,3]:=-1.0;
+   result.RawComponents[3,0]:=0.0;
+   result.RawComponents[3,1]:=0.0;
+   result.RawComponents[3,2]:=(abs(fZNear)*abs(fZFar))/(abs(fZFar)-abs(fZNear));
+   result.RawComponents[3,3]:=0.0;
+  end;
   TProjectionMatrixMode.InfiniteFarPlaneReversedZ:begin
    result.RawComponents[2,0]:=0.0;
    result.RawComponents[2,1]:=0.0;
@@ -1616,7 +1724,7 @@ var AspectRatio,WidthRatio,ZNearOverFocalLength,EyeOffset,Left,Right,Bottom,Top:
    result.RawComponents[2,3]:=-1.0;
    result.RawComponents[3,0]:=0.0;
    result.RawComponents[3,1]:=0.0;
-   result.RawComponents[3,2]:=fZNear;
+   result.RawComponents[3,2]:=abs(fZNear);
    result.RawComponents[3,3]:=0.0;
   end;
   else {TProjectionMatrixMode.Normal:}begin

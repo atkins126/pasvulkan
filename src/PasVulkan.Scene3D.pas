@@ -132,14 +132,21 @@ type EpvScene3D=class(Exception);
             TMatrix4x4DynamicArray=TpvDynamicArray<TpvMatrix4x4>;
             TSizeIntDynamicArray=TpvDynamicArray<TpvSizeInt>;
             TSizeIntDynamicArrayEx=array of TpvSizeInt;
-            TViewPortGlobalsUniformBuffer=record
+            TView=packed record
              ViewMatrix:TpvMatrix4x4;
              ProjectionMatrix:TpvMatrix4x4;
             end;
-            PViewPortGlobalsUniformBuffer=^TViewPortGlobalsUniformBuffer;
+            PView=^TView;
+            TViews=TpvDynamicArray<TView>;
+       const MaxViews=65536 div SizeOf(TView);
+       type TGlobalViewUniformBuffer=record
+             Items:array[0..MaxViews-1] of TView;
+            end;
+            PGlobalViewUniformBuffer=^TGlobalViewUniformBuffer;
+            TGlobalVulkanViewUniformBuffers=array[0..MaxSwapChainImages+1] of TpvVulkanBuffer;
             TVertexStagePushConstants=record
-             ViewMatrix:TpvMatrix4x4;
-             ProjectionMatrix:TpvMatrix4x4;
+             ViewBaseIndex:UInt32;
+             CountViews:UInt32;
             end;
             PVertexStagePushConstants=^TVertexStagePushConstants;
             TVertex=packed record                    // Minimum required vertex structure for to be GLTF 2.0 conformant
@@ -508,6 +515,7 @@ type EpvScene3D=class(Exception);
               procedure Remove; override;
               procedure Upload; override;
               procedure Unload; override;
+              procedure AssignFromEmpty;
               procedure AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceMaterial:TPasGLTF.TMaterial;const aTextureMap:TTextures);
               procedure FillShaderData;
             end;
@@ -519,7 +527,8 @@ type EpvScene3D=class(Exception);
                      None=0,
                      Directional=1,
                      Point=2,
-                     Spot=3
+                     Spot=3,
+                     PrimaryDirectional=4
                     );
              private
               fType_:TType;
@@ -578,14 +587,6 @@ type EpvScene3D=class(Exception);
             TLightBuffers=array[0..MaxSwapChainImages+1] of TLightBuffer;
             { TLight }
             TLight=class
-             public
-              type TType=
-                    (
-                     None=0,
-                     Directional=1,
-                     Point=2,
-                     Spot=3
-                    );
              private
               fSceneInstance:TpvScene3D;
               fVisible:boolean;
@@ -685,36 +686,44 @@ type EpvScene3D=class(Exception);
                    TAnimation=class(TGroupObject)
                     public
                      type TChannel=record
-                                public
-                                 type TTarget=
-                                       (
-                                        Translation,
-                                        Rotation,
-                                        Scale,
-                                        Weights
-                                       );
-                                      TInterpolation=
-                                       (
-                                        Linear,
-                                        Step,
-                                        CubicSpline
-                                       );
-                                public
-                                 Name:TpvUTF8String;
-                                 Node:TpvSizeInt;
-                                 Target:TTarget;
-                                 Interpolation:TInterpolation;
-                                 InputTimeArray:TpvDoubleDynamicArray;
-                                 OutputScalarArray:TpvFloatDynamicArray;
-                                 OutputVector3Array:TpvVector3Array;
-                                 OutputVector4Array:TpvVector4Array;
-                                 Last:TPasGLTFSizeInt;
-                               end;
-                               PChannel=^TChannel;
-                               TChannels=array of TChannel;
+                           public
+                            type TTarget=
+                                  (
+                                   Translation,
+                                   Rotation,
+                                   Scale,
+                                   Weights
+                                  );
+                                 TInterpolation=
+                                  (
+                                   Linear,
+                                   Step,
+                                   CubicSpline
+                                  );
+                           public
+                            Name:TpvUTF8String;
+                            Node:TpvSizeInt;
+                            Target:TTarget;
+                            Interpolation:TInterpolation;
+                            InputTimeArray:TpvDoubleDynamicArray;
+                            OutputScalarArray:TpvFloatDynamicArray;
+                            OutputVector3Array:TpvVector3Array;
+                            OutputVector4Array:TpvVector4Array;
+                            Last:TPasGLTFSizeInt;
+                          end;
+                          PChannel=^TChannel;
+                          TChannels=array of TChannel;
+                          TDefaultChannel=record
+                           public
+                            Node:TpvSizeInt;
+                            Target:TpvScene3D.TGroup.TAnimation.TChannel.TTarget;
+                          end;
+                          PDefaultChannel=^TDefaultChannel;
+                          TDefaultChannels=array of TDefaultChannel;
                     private
                      fIndex:TpvSizeInt;
                      fChannels:TChannels;
+                     fDefaultChannels:TDefaultChannels;
                     public
                      constructor Create(const aGroup:TGroup;const aIndex:TpvSizeInt); reintroduce;
                      destructor Destroy; override;
@@ -936,15 +945,19 @@ type EpvScene3D=class(Exception);
                                  end;
                                  TChannels=TpvObjectGenericList<TChannel>;
                            private
-                            fFactor:TPasGLTFFloat;
-                            fTime:TPasGLTFDouble;
+                            fFactor:TpvFloat;
+                            fTime:TpvDouble;
+                            fShadowTime:TpvDouble;
+                            fComplete:LongBool;
                             fChannels:TChannels;
                            public
                             constructor Create; reintroduce;
                             destructor Destroy; override;
                            published
-                            property Factor:TPasGLTFFloat read fFactor write fFactor;
-                            property Time:TPasGLTFDouble read fTime write fTime;
+                            property Factor:TpvFloat read fFactor write fFactor;
+                            property Time:TpvDouble read fTime write fTime;
+                            property ShadowTime:TpvDouble read fShadowTime write fShadowTime;
+                            property Complete:LongBool read fComplete write fComplete;
                           end;
                           TAnimations=array of TpvScene3D.TGroup.TInstance.TAnimation;
                           TNode=record
@@ -952,6 +965,10 @@ type EpvScene3D=class(Exception);
                             type TOverwriteFlag=
                                   (
                                    Defaults,
+                                   DefaultTranslation,
+                                   DefaultRotation,
+                                   DefaultScale,
+                                   DefaultWeights,
                                    Translation,
                                    Rotation,
                                    Scale,
@@ -973,11 +990,6 @@ type EpvScene3D=class(Exception);
                             Processed:LongBool;
                             Overwrites:TOverwrites;
                             CountOverwrites:TpvSizeInt;
-                            OverwriteFlags:TOverwriteFlags;
-                            OverwriteTranslation:TpvVector3;
-                            OverwriteRotation:TpvQuaternion;
-                            OverwriteScale:TpvVector3;
-                            OverwriteWeights:TpvFloatDynamicArray;
                             OverwriteWeightsSum:TpvDoubleDynamicArray;
                             WorkWeights:TpvFloatDynamicArray;
                             WorkMatrix:TpvMatrix4x4;
@@ -1050,8 +1062,7 @@ type EpvScene3D=class(Exception);
                      function GetScene:TpvScene3D.TGroup.TScene;
                      procedure Prepare(const aSwapChainImageIndex:TpvSizeInt;
                                        const aRenderPassIndex:TpvSizeInt;
-                                       const aFrustum:TpvFrustum;
-                                       const aFrustumCulling:boolean);
+                                       const aFrustums:TpvFrustumDynamicArray);
                      procedure Draw(const aGraphicsPipelines:TpvScene3D.TGraphicsPipelines;
                                     const aSwapChainImageIndex:TpvSizeInt;
                                     const aRenderPassIndex:TpvSizeInt;
@@ -1121,8 +1132,7 @@ type EpvScene3D=class(Exception);
               procedure CollectMaterialPrimitives;
               procedure Prepare(const aSwapChainImageIndex:TpvSizeInt;
                                 const aRenderPassIndex:TpvSizeInt;
-                                const aFrustum:TpvFrustum;
-                                const aFrustumCulling:boolean);
+                                const aFrustums:TpvFrustumDynamicArray);
               procedure Draw(const aGraphicsPipelines:TpvScene3D.TGraphicsPipelines;
                              const aSwapChainImageIndex:TpvSizeInt;
                              const aRenderPassIndex:TpvSizeInt;
@@ -1170,6 +1180,8 @@ type EpvScene3D=class(Exception);
        fDefaultNormalMapTextureLock:TPasMPSlimReaderWriterLock;
        fMeshVulkanDescriptorSetLayout:TpvVulkanDescriptorSetLayout;
        fMaterialVulkanDescriptorSetLayout:TpvVulkanDescriptorSetLayout;
+       fGlobalVulkanViews:array[0..MaxSwapChainImages+1] of TGlobalViewUniformBuffer;
+       fGlobalVulkanViewUniformBuffers:TGlobalVulkanViewUniformBuffers;
        fGlobalVulkanDescriptorSetLayout:TpvVulkanDescriptorSetLayout;
        fGlobalVulkanDescriptorPool:TpvVulkanDescriptorPool;
        fGlobalVulkanDescriptorSets:array[0..MaxSwapChainImages+1] of TpvVulkanDescriptorSet;
@@ -1186,6 +1198,7 @@ type EpvScene3D=class(Exception);
        fMaterialListLock:TPasMPSlimReaderWriterLock;
        fMaterials:TMaterials;
        fMaterialHashMap:TMaterialHashMap;
+       fEmptyMaterial:TpvScene3D.TMaterial;
        fLights:array[0..MaxSwapChainImages+1] of TpvScene3D.TLights;
        fCountLights:array[0..MaxSwapChainImages+1] of TpvSizeInt;
        fIndirectLights:array[0..MaxSwapChainImages+1,0..MaxVisibleLights-1] of TpvScene3D.TLight;
@@ -1203,18 +1216,19 @@ type EpvScene3D=class(Exception);
        fAABBTreeStates:array[0..MaxSwapChainImages+1] of TpvBVHDynamicAABBTree.TState;
        fBoundingBox:TpvAABB;
        fSwapChainImageBufferMemoryBarriers:TSwapChainImageBufferMemoryBarriers;
+       fViews:TViews;
        procedure AddSwapChainImageBufferMemoryBarrier(const aSwapChainImageIndex:TpvSizeInt;
                                                       const aBuffer:TpvVulkanBuffer);
        procedure UploadWhiteTexture;
        procedure UploadDefaultNormalMapTexture;
-       procedure CullAABBTreeWithFrustum(const aFrustum:TpvFrustum;
-                                         const aTreeNodes:TpvBVHDynamicAABBTree.TTreeNodes;
-                                         const aRoot:TpvSizeInt;
-                                         const aVisibleBit:TPasMPUInt32);
-       procedure CullLightAABBTreeWithFrustum(const aSwapChainImageIndex:TpvSizeInt;
-                                              const aFrustum:PpvFrustum;
-                                              const aTreeNodes:TpvBVHDynamicAABBTree.TTreeNodes;
-                                              const aRoot:TpvSizeInt);
+       procedure CullAABBTreeWithFrustums(const aFrustums:TpvFrustumDynamicArray;
+                                          const aTreeNodes:TpvBVHDynamicAABBTree.TTreeNodes;
+                                          const aRoot:TpvSizeInt;
+                                          const aVisibleBit:TPasMPUInt32);
+       procedure CullLightAABBTreeWithFrustums(const aSwapChainImageIndex:TpvSizeInt;
+                                               const aFrustums:TpvFrustumDynamicArray;
+                                               const aTreeNodes:TpvBVHDynamicAABBTree.TTreeNodes;
+                                               const aRoot:TpvSizeInt);
        procedure CollectLightAABBTreeLights(const aTreeNodes:TpvBVHDynamicAABBTree.TTreeNodes;
                                             const aRoot:TpvSizeInt;
                                             var aLightItemArray:TpvScene3D.TLightItems);
@@ -1225,25 +1239,29 @@ type EpvScene3D=class(Exception);
        procedure Upload;
        procedure Unload;
        procedure Update(const aSwapChainImageIndex:TpvSizeInt);
+       procedure ClearViews;
+       function AddView(const aView:TpvScene3D.TView):TpvSizeInt;
+       function AddViews(const aViews:array of TpvScene3D.TView):TpvSizeInt;
+       procedure UpdateViews(const aSwapChainImageIndex:TpvSizeInt);
        procedure PrepareLights(const aSwapChainImageIndex:TpvSizeInt;
-                               const aViewMatrix:TpvMatrix4x4;
-                               const aProjectionMatrix:TpvMatrix4x4;
+                               const aViewBaseIndex:TpvSizeInt;
+                               const aCountViews:TpvSizeInt;
                                const aViewPortWidth:TpvInt32;
                                const aViewPortHeight:TpvInt32;
-                               const aFrustum:TpvFrustum;
-                               const aFrustumCulling:boolean=true);
+                               const aFrustums:TpvFrustumDynamicArray);
        procedure Prepare(const aSwapChainImageIndex:TpvSizeInt;
                          const aRenderPassIndex:TpvSizeInt;
-                         const aViewMatrix:TpvMatrix4x4;
-                         const aProjectionMatrix:TpvMatrix4x4;
+                         const aViewBaseIndex:TpvSizeInt;
+                         const aCountViews:TpvSizeInt;
                          const aViewPortWidth:TpvInt32;
                          const aViewPortHeight:TpvInt32;
+                         const aLights:boolean=true;
                          const aFrustumCulling:boolean=true);
        procedure Draw(const aGraphicsPipelines:TpvScene3D.TGraphicsPipelines;
                       const aSwapChainImageIndex:TpvSizeInt;
                       const aRenderPassIndex:TpvSizeInt;
-                      const aViewMatrix:TpvMatrix4x4;
-                      const aProjectionMatrix:TpvMatrix4x4;
+                      const aViewBaseIndex:TpvSizeInt;
+                      const aCountViews:TpvSizeInt;
                       const aCommandBuffer:TpvVulkanCommandBuffer;
                       const aPipelineLayout:TpvVulkanPipelineLayout;
                       const aMaterialAlphaModes:TpvScene3D.TMaterial.TAlphaModes=[TpvScene3D.TMaterial.TAlphaMode.Opaque,TpvScene3D.TMaterial.TAlphaMode.Blend,TpvScene3D.TMaterial.TAlphaMode.Mask]);
@@ -1253,6 +1271,7 @@ type EpvScene3D=class(Exception);
                               out aZFar:TpvScalar);
       public
        property BoundingBox:TpvAABB read fBoundingBox;
+       property GlobalVulkanViewUniformBuffers:TGlobalVulkanViewUniformBuffers read fGlobalVulkanViewUniformBuffers;
       published
        property MeshVulkanDescriptorSetLayout:TpvVulkanDescriptorSetLayout read fMeshVulkanDescriptorSetLayout;
        property MaterialVulkanDescriptorSetLayout:TpvVulkanDescriptorSetLayout read fMaterialVulkanDescriptorSetLayout;
@@ -2472,6 +2491,20 @@ begin
  end;
 end;
 
+procedure TpvScene3D.TMaterial.AssignFromEmpty;
+var Index:TpvSizeInt;
+    JSONItem:TPasJSONItem;
+    JSONObject:TPasJSONItemObject;
+begin
+
+ fName:='';
+
+ fData:=TpvScene3D.TMaterial.DefaultData;
+
+ FillShaderData;
+
+end;
+
 procedure TpvScene3D.TMaterial.AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceMaterial:TPasGLTF.TMaterial;const aTextureMap:TTextures);
 var Index:TpvSizeInt;
     JSONItem:TPasJSONItem;
@@ -2744,7 +2777,7 @@ begin
  begin
   JSONItem:=aSourceMaterial.Extensions.Properties['KHR_materials_ior'];
   if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
-   fData.IOR:=TPasJSON.GetNumber(JSONObject.Properties['ior'],1.5);
+   fData.IOR:=TPasJSON.GetNumber(TPasJSONItemObject(JSONItem).Properties['ior'],1.5);
   end;
  end;
 
@@ -2970,7 +3003,8 @@ begin
    end;
   end;
   case fData.Type_ of
-   TpvScene3D.TLightData.TType.Directional:begin
+   TpvScene3D.TLightData.TType.Directional,
+   TpvScene3D.TLightData.TType.PrimaryDirectional:begin
     AABB.Min:=TpvVector3.InlineableCreate(-Infinity,-Infinity,-Infinity);
     AABB.Max:=TpvVector3.InlineableCreate(Infinity,Infinity,Infinity);
    end;
@@ -2993,7 +3027,7 @@ begin
   fBoundingBox:=AABB;
   fBoundingSphere:=TpvSphere.CreateFromAABB(AABB);
   if fAABBTreeProxy<0 then begin
-   fAABBTreeProxy:=fSceneInstance.fLIghtAABBTree.CreateProxy(fBoundingBox,TpvPtrInt(Pointer(self)));
+   fAABBTreeProxy:=fSceneInstance.fLightAABBTree.CreateProxy(fBoundingBox,TpvPtrInt(Pointer(self)));
   end else begin
    fSceneInstance.fLightAABBTree.MoveProxy(fAABBTreeProxy,fBoundingBox,TpvVector3.Create(1.0,1.0,1.0));
   end;
@@ -3124,10 +3158,14 @@ constructor TpvScene3D.TGroup.TAnimation.Create(const aGroup:TGroup;const aIndex
 begin
  inherited Create(aGroup);
  fIndex:=aIndex;
+ fChannels:=nil;
+ fDefaultChannels:=nil;
 end;
 
 destructor TpvScene3D.TGroup.TAnimation.Destroy;
 begin
+ fChannels:=nil;
+ fDefaultChannels:=nil;
  inherited Destroy;
 end;
 
@@ -3270,7 +3308,7 @@ begin
    if Index=0 then begin
     result:=Channel^.InputTimeArray[length(Channel^.InputTimeArray)-1];
    end else begin
-    result:=Max(result,Channel^.InputTimeArray[0]);
+    result:=Max(result,Channel^.InputTimeArray[length(Channel^.InputTimeArray)-1]);
    end;
   end;
  end;
@@ -3332,12 +3370,16 @@ end;
 destructor TpvScene3D.TGroup.TMesh.Destroy;
 var Index:TpvSizeInt;
     Primitive:TpvScene3D.TGroup.TMesh.PPrimitive;
+    EmptyMaterial:TpvScene3D.TMaterial;
 begin
+ EmptyMaterial:=fGroup.fSceneInstance.fEmptyMaterial;
  for Index:=0 to length(fPrimitives)-1 do begin
   Primitive:=@fPrimitives[Index];
   if assigned(Primitive^.Material) then begin
    try
-    Primitive^.Material.DecRef;
+    if Primitive^.Material<>EmptyMaterial then begin
+     Primitive^.Material.DecRef;
+    end;
    finally
     Primitive^.Material:=nil;
    end;
@@ -3360,7 +3402,8 @@ var PrimitiveIndex,
     Old:TpvSizeInt;
     Primitive:TMesh.PPrimitive;
     NodeMeshPrimitiveInstance:TMesh.TPrimitive.PNodeMeshPrimitiveInstance;
-    Vertex,OldVertex:PVertex;
+    Vertex:PVertex;
+    OldVertex:TVertex;
     MorphTargetVertex:PMorphTargetVertex;
     MorphTargetVertexIndex:TpvUInt32;
 begin
@@ -3425,8 +3468,8 @@ begin
 
    NodeMeshPrimitiveInstance^.StartBufferVertexOffset:=fGroup.fVertices.Count;
    for VertexIndex:=TpvSizeInt(Primitive^.StartBufferVertexOffset) to TpvSizeInt(Primitive^.StartBufferVertexOffset+Primitive^.CountVertices)-1 do begin
-    OldVertex:=@fGroup.fVertices.Items[VertexIndex];
-    NewVertexIndex:=fGroup.fVertices.Add(OldVertex^);
+    OldVertex:=fGroup.fVertices.Items[VertexIndex];
+    NewVertexIndex:=fGroup.fVertices.Add(OldVertex);
     Vertex:=@fGroup.fVertices.Items[NewVertexIndex];
     Vertex^.NodeIndex:=aNodeIndex+1;
     if Vertex^.MorphTargetVertexBaseIndex<>TpvUInt32($ffffffff) then begin
@@ -3455,7 +3498,7 @@ begin
      Vertex^.JointBlockBaseIndex:=fGroup.fJointBlocks.Count;
      for JointBlockIndex:=0 to TpvSizeInt(Vertex^.CountJointBlocks)-1 do begin
       NewJointBlockIndex:=fGroup.fJointBlocks.AddNew;
-      fGroup.fJointBlocks.Items[NewJointBlockIndex]:=fGroup.fJointBlocks.Items[OldVertex^.JointBlockBaseIndex+JointBlockIndex];
+      fGroup.fJointBlocks.Items[NewJointBlockIndex]:=fGroup.fJointBlocks.Items[OldVertex.JointBlockBaseIndex+JointBlockIndex];
       if length(fGroup.fJointBlockOffsets)<=NewJointBlockIndex then begin
        Old:=length(fGroup.fJointBlockOffsets);
        SetLength(fGroup.fJointBlockOffsets,(NewJointBlockIndex+1)*2);
@@ -3568,7 +3611,7 @@ begin
         DestinationMeshPrimitive^.Material.IncRef;
        end;
       end else begin
-       DestinationMeshPrimitive^.Material:=nil;
+       DestinationMeshPrimitive^.Material:=fGroup.fSceneInstance.fEmptyMaterial;
       end;
 
       HasJoints:=false;
@@ -5006,7 +5049,7 @@ var LightMap:TpvScene3D.TGroup.TLights;
  begin
   for Index:=0 to aSourceDocument.Images.Count-1 do begin
    SourceImage:=aSourceDocument.Images[Index];
-   Image:=TImage.Create(pvApplication.ResourceManager,self);
+   Image:=TImage.Create(pvApplication.ResourceManager,fSceneInstance);
    try
     fSceneInstance.fImageListLock.Acquire;
     try
@@ -5038,7 +5081,7 @@ var LightMap:TpvScene3D.TGroup.TLights;
  begin
   for Index:=0 to aSourceDocument.Samplers.Count-1 do begin
    SourceSampler:=aSourceDocument.Samplers[Index];
-   Sampler:=TSampler.Create(pvApplication.ResourceManager,self);
+   Sampler:=TSampler.Create(pvApplication.ResourceManager,fSceneInstance);
    try
     fSceneInstance.fSamplerListLock.Acquire;
     try
@@ -5069,7 +5112,7 @@ var LightMap:TpvScene3D.TGroup.TLights;
  begin
   for Index:=0 to aSourceDocument.Textures.Count-1 do begin
    SourceTexture:=aSourceDocument.Textures[Index];
-   Texture:=TTexture.Create(pvApplication.ResourceManager,self);
+   Texture:=TTexture.Create(pvApplication.ResourceManager,fSceneInstance);
    try
     fSceneInstance.fTextureListLock.Acquire;
     try
@@ -5100,7 +5143,7 @@ var LightMap:TpvScene3D.TGroup.TLights;
  begin
   for Index:=0 to aSourceDocument.Materials.Count-1 do begin
    SourceMaterial:=aSourceDocument.Materials[Index];
-   Material:=TpvScene3D.TMaterial.Create(pvApplication.ResourceManager,self);
+   Material:=TpvScene3D.TMaterial.Create(pvApplication.ResourceManager,fSceneInstance);
    try
     fSceneInstance.fMaterialListLock.Acquire;
     try
@@ -5123,18 +5166,84 @@ var LightMap:TpvScene3D.TGroup.TLights;
   end;
  end;
  procedure ProcessAnimations;
- var Index:TpvSizeInt;
+ type TNodeTargetHashMap=TpvHashMap<TpvUInt64,TpvSizeInt>;
+      TNodeTargetArrayList=TpvDynamicArrayList<TpvUInt64>;
+      TNodeTargetUsedBitmap=array of TpvUInt32;
+ var Index,ChannelIndex,NodeTargetIndex,CountDefaultChannels:TpvSizeInt;
      SourceAnimation:TPasGLTF.TAnimation;
-     Animation:TAnimation;
+     Animation:TpvScene3D.TGroup.TAnimation;
+     Channel:TpvScene3D.TGroup.TAnimation.PChannel;
+     DefaultChannel:TpvScene3D.TGroup.TAnimation.PDefaultChannel;
+     NodeTargetHashMap:TNodeTargetHashMap;
+     NodeTargetArrayList:TNodeTargetArrayList;
+     NodeTargetUsedBitmap:TNodeTargetUsedBitmap;
+     CompactCode:TpvUInt64;
  begin
-  for Index:=0 to aSourceDocument.Animations.Count-1 do begin
-   SourceAnimation:=aSourceDocument.Animations[Index];
-   Animation:=TAnimation.Create(self,Index);
+  NodeTargetHashMap:=TNodeTargetHashMap.Create(-1);
+  try
+   NodeTargetArrayList:=TNodeTargetArrayList.Create;
    try
-    Animation.AssignFromGLTF(aSourceDocument,SourceAnimation);
+    for Index:=0 to aSourceDocument.Animations.Count-1 do begin
+     SourceAnimation:=aSourceDocument.Animations[Index];
+     Animation:=TAnimation.Create(self,Index);
+     try
+      Animation.AssignFromGLTF(aSourceDocument,SourceAnimation);
+      for ChannelIndex:=0 to length(Animation.fChannels)-1 do begin
+       Channel:=@Animation.fChannels[ChannelIndex];
+       CompactCode:=TpvUInt64(TpvUInt64(Channel^.Node) and TpvUInt64($ffffffff)) or (TpvUInt64(TpvInt32(Channel^.Target)) shl 32);
+       NodeTargetIndex:=NodeTargetHashMap[CompactCode];
+       if NodeTargetIndex<0 then begin
+        NodeTargetHashMap[CompactCode]:=NodeTargetArrayList.Add(CompactCode);
+       end;
+      end;
+     finally
+      fAnimations.Add(Animation);
+     end;
+    end;
+    if NodeTargetArrayList.Count>0 then begin
+     NodeTargetUsedBitmap:=nil;
+     try
+      SetLength(NodeTargetUsedBitmap,(NodeTargetArrayList.Count+31) shr 5);
+      for Index:=0 to fAnimations.Count-1 do begin
+       Animation:=fAnimations[Index];
+       FillChar(NodeTargetUsedBitmap[0],length(NodeTargetUsedBitmap)*SizeOf(TpvUInt32),#0);
+       for ChannelIndex:=0 to length(Animation.fChannels)-1 do begin
+        Channel:=@Animation.fChannels[ChannelIndex];
+        CompactCode:=TpvUInt64(TpvUInt64(Channel^.Node) and TpvUInt64($ffffffff)) or (TpvUInt64(TpvInt32(Channel^.Target)) shl 32);
+        NodeTargetIndex:=NodeTargetHashMap[CompactCode];
+        if (NodeTargetIndex>=0) and (NodeTargetIndex<NodeTargetArrayList.Count) then begin
+         NodeTargetUsedBitmap[NodeTargetIndex shr 5]:=NodeTargetUsedBitmap[NodeTargetIndex shr 5] or (TpvUInt32(1) shl (NodeTargetIndex and 31));
+        end;
+       end;
+       CountDefaultChannels:=0;
+       for NodeTargetIndex:=0 to NodeTargetArrayList.Count-1 do begin
+        if (NodeTargetUsedBitmap[NodeTargetIndex shr 5] and (TpvUInt32(1) shl (NodeTargetIndex and 31)))=0 then begin
+         inc(CountDefaultChannels);
+        end;
+       end;
+       if CountDefaultChannels>0 then begin
+        SetLength(Animation.fDefaultChannels,CountDefaultChannels);
+        CountDefaultChannels:=0;
+        for NodeTargetIndex:=0 to NodeTargetArrayList.Count-1 do begin
+         if (NodeTargetUsedBitmap[NodeTargetIndex shr 5] and (TpvUInt32(1) shl (NodeTargetIndex and 31)))=0 then begin
+          DefaultChannel:=@Animation.fDefaultChannels[CountDefaultChannels];
+          inc(CountDefaultChannels);
+          CompactCode:=NodeTargetArrayList[NodeTargetIndex];
+          DefaultChannel^.Node:=TpvSizeInt(TpvUInt64(TpvUInt64(CompactCode) and TpvUInt64($ffffffff)));
+          DefaultChannel^.Target:=TpvScene3D.TGroup.TAnimation.TChannel.TTarget(TpvInt32(TpvUInt64(TpvUInt64(CompactCode) shr 32)));
+         end;
+        end;
+       end;
+      end;
+     finally
+      NodeTargetUsedBitmap:=nil;
+     end;
+    end;
    finally
-    fAnimations.Add(Animation);
+    FreeAndNil(NodeTargetArrayList);
    end;
+  finally
+   FreeAndNil(NodeTargetHashMap);
   end;
  end;
  procedure ProcessCameras;
@@ -5301,6 +5410,7 @@ var LightMap:TpvScene3D.TGroup.TLights;
   end;
  end;
  procedure CalculateBoundingBox;
+ var First:boolean;
   procedure ProcessNode(const aNodeIndex:TpvSizeInt;const aMatrix:TpvMatrix4x4);
   var Index:TpvSizeInt;
       Matrix:TpvMatrix4x4;
@@ -5311,7 +5421,12 @@ var LightMap:TpvScene3D.TGroup.TLights;
              (TpvMatrix4x4.CreateFromQuaternion(Node.fRotation)*
               TpvMatrix4x4.CreateTranslation(Node.fTranslation)))*Node.fMatrix)*aMatrix;
    if assigned(Node.fMesh) then begin
-    fBoundingBox:=fBoundingBox.Combine(Node.fMesh.fBoundingBox.Transform(Matrix));
+    if First then begin
+     First:=false;
+     fBoundingBox:=Node.fMesh.fBoundingBox.Transform(Matrix);
+    end else begin
+     fBoundingBox:=fBoundingBox.Combine(Node.fMesh.fBoundingBox.Transform(Matrix));
+    end;
    end;
    for Index:=0 to Node.Children.Count-1 do begin
     ProcessNode(Node.Children[Index].Index,Matrix);
@@ -5322,6 +5437,7 @@ var LightMap:TpvScene3D.TGroup.TLights;
  begin
   fBoundingBox.Min:=TpvVector3.Origin;
   fBoundingBox.Max:=TpvVector3.Origin;
+  First:=true;
   for Scene in fScenes do begin
    for Node in Scene.fNodes do begin
     ProcessNode(Node.Index,TpvMatrix4x4.Identity);
@@ -5420,15 +5536,13 @@ end;
 
 procedure TpvScene3D.TGroup.Prepare(const aSwapChainImageIndex:TpvSizeInt;
                                     const aRenderPassIndex:TpvSizeInt;
-                                    const aFrustum:TpvFrustum;
-                                    const aFrustumCulling:boolean);
+                                    const aFrustums:TpvFrustumDynamicArray);
 var Instance:TpvScene3D.TGroup.TInstance;
 begin
  for Instance in fInstances do begin
   Instance.Prepare(aSwapChainImageIndex,
                    aRenderPassIndex,
-                   aFrustum,
-                   aFrustumCulling);
+                   aFrustums);
  end;
 end;
 
@@ -5543,6 +5657,9 @@ begin
  inherited Create;
  fChannels:=TChannels.Create;
  fChannels.OwnsObjects:=true;
+ fTime:=0.0;
+ fShadowTime:=0.0;
+ fComplete:=false;
 end;
 
 destructor TpvScene3D.TGroup.TInstance.TAnimation.Destroy;
@@ -5557,6 +5674,7 @@ constructor TpvScene3D.TGroup.TInstance.Create(const aResourceManager:TpvResourc
 var Index,OtherIndex:TpvSizeInt;
     InstanceNode:TpvScene3D.TGroup.TInstance.PNode;
     Node:TpvScene3D.TGroup.TNode;
+    Animation:TpvScene3D.TGroup.TAnimation;
 begin
  inherited Create(aResourceManager,aParent);
  if aParent is TGroup then begin
@@ -5585,7 +5703,6 @@ begin
   Node:=fGroup.fNodes[Index];
   InstanceNode^.Processed:=false;
   SetLength(InstanceNode^.WorkWeights,length(Node.fWeights));
-  SetLength(InstanceNode^.OverwriteWeights,length(Node.fWeights));
   SetLength(InstanceNode^.OverwriteWeightsSum,length(Node.fWeights));
   SetLength(InstanceNode^.Overwrites,fGroup.fAnimations.Count+1);
   for OtherIndex:=0 to fGroup.fAnimations.Count do begin
@@ -5596,7 +5713,8 @@ begin
  for Index:=0 to length(fAnimations)-1 do begin
   fAnimations[Index]:=TpvScene3D.TGroup.TInstance.TAnimation.Create;
   if Index>0 then begin
-   for OtherIndex:=0 to length(fGroup.fAnimations[Index-1].fChannels)-1 do begin
+   Animation:=fGroup.fAnimations[Index-1];
+   for OtherIndex:=0 to (length(Animation.fChannels)+length(Animation.fDefaultChannels))-1 do begin
     fAnimations[Index].fChannels.Add(TpvScene3D.TGroup.TInstance.TAnimation.TChannel.Create);
    end;
   end;
@@ -5833,7 +5951,6 @@ var CullFace,Blend:TPasGLTFInt32;
   InstanceNode:=@fNodes[aNodeIndex];
   Node:=fGroup.fNodes[aNodeIndex];
   InstanceNode^.CountOverwrites:=0;
-  InstanceNode^.OverwriteFlags:=[];
   for Index:=0 to Node.Children.Count-1 do begin
    ResetNode(Node.Children[Index].Index);
   end;
@@ -5866,6 +5983,7 @@ var CullFace,Blend:TPasGLTFInt32;
      l,r,m:TpvSizeInt;
      Animation:TpvScene3D.TGroup.TAnimation;
      AnimationChannel:TpvScene3D.TGroup.TAnimation.PChannel;
+     AnimationDefaultChannel:TpvScene3D.TGroup.TAnimation.PDefaultChannel;
      InstanceAnimation:TpvScene3D.TGroup.TInstance.TAnimation;
      InstanceAnimationChannel:TpvScene3D.TGroup.TInstance.TAnimation.TChannel;
      //Node:TpvScene3D.TGroup.TNode;
@@ -5879,17 +5997,22 @@ var CullFace,Blend:TPasGLTFInt32;
      Overwrite:TpvScene3D.TGroup.TInstance.TNode.POverwrite;
  begin
 
+  Animation:=fGroup.fAnimations[aAnimationIndex];
+
   InstanceAnimation:=fAnimations[aAnimationIndex+1];
 
-  for InstanceChannelIndex:=0 to InstanceAnimation.fChannels.Count-1 do begin
+  if InstanceAnimation.Complete then begin
+   CountInstanceChannels:=InstanceAnimation.fChannels.Count;
+  end else begin
+   CountInstanceChannels:=length(Animation.fChannels);
+  end;
+  for InstanceChannelIndex:=0 to CountInstanceChannels-1 do begin
    InstanceAnimationChannel:=InstanceAnimation.fChannels[InstanceChannelIndex];
    InstanceAnimationChannel.fNode:=nil;
    InstanceAnimationChannel.fOverwrite:=-1;
   end;
 
   CountInstanceChannels:=0;
-
-  Animation:=fGroup.fAnimations[aAnimationIndex];
 
   for ChannelIndex:=0 to length(Animation.fChannels)-1 do begin
 
@@ -5986,84 +6109,69 @@ var CullFace,Blend:TPasGLTFInt32;
       end;
      end;
 
-     case AnimationChannel^.Target of
-      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Translation,
-      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Scale:begin
-       case AnimationChannel^.Interpolation of
-        TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.Linear:begin
-         Vector3s[0]:=@AnimationChannel^.OutputVector3Array[TimeIndices[0]];
-         Vector3s[1]:=@AnimationChannel^.OutputVector3Array[TimeIndices[1]];
-         Vector3[0]:=(Vector3s[0]^[0]*(1.0-Factor))+(Vector3s[1]^[0]*Factor);
-         Vector3[1]:=(Vector3s[0]^[1]*(1.0-Factor))+(Vector3s[1]^[1]*Factor);
-         Vector3[2]:=(Vector3s[0]^[2]*(1.0-Factor))+(Vector3s[1]^[2]*Factor);
+     if assigned(Overwrite) then begin
+      case AnimationChannel^.Target of
+       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Translation,
+       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Scale:begin
+        case AnimationChannel^.Interpolation of
+         TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.Linear:begin
+          Vector3s[0]:=@AnimationChannel^.OutputVector3Array[TimeIndices[0]];
+          Vector3s[1]:=@AnimationChannel^.OutputVector3Array[TimeIndices[1]];
+          Vector3[0]:=(Vector3s[0]^[0]*(1.0-Factor))+(Vector3s[1]^[0]*Factor);
+          Vector3[1]:=(Vector3s[0]^[1]*(1.0-Factor))+(Vector3s[1]^[1]*Factor);
+          Vector3[2]:=(Vector3s[0]^[2]*(1.0-Factor))+(Vector3s[1]^[2]*Factor);
+         end;
+         TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.Step:begin
+          Vector3:=AnimationChannel^.OutputVector3Array[TimeIndices[0]];
+         end;
+         TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.CubicSpline:begin
+          SqrFactor:=sqr(Factor);
+          CubeFactor:=SqrFactor*Factor;
+          Vector3:=(((AnimationChannel^.OutputVector3Array[(TimeIndices[0]*3)+1]*(((2.0*CubeFactor)-(3.0*SqrFactor))+1.0))+
+                    (AnimationChannel^.OutputVector3Array[(TimeIndices[1]*3)+0]*(KeyDelta*((CubeFactor-(2.0*SqrFactor))+Factor))))+
+                     (AnimationChannel^.OutputVector3Array[(TimeIndices[1]*3)+1]*((3.0*SqrFactor)-(2.0*CubeFactor))))+
+                      (AnimationChannel^.OutputVector3Array[(TimeIndices[1]*3)+0]*(KeyDelta*(CubeFactor-SqrFactor)));
+         end;
+         else begin
+          Assert(false);
+         end;
         end;
-        TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.Step:begin
-         Vector3:=AnimationChannel^.OutputVector3Array[TimeIndices[0]];
-        end;
-        TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.CubicSpline:begin
-         SqrFactor:=sqr(Factor);
-         CubeFactor:=SqrFactor*Factor;
-         Vector3:=(((AnimationChannel^.OutputVector3Array[(TimeIndices[0]*3)+1]*(((2.0*CubeFactor)-(3.0*SqrFactor))+1.0))+
-                   (AnimationChannel^.OutputVector3Array[(TimeIndices[1]*3)+0]*(KeyDelta*((CubeFactor-(2.0*SqrFactor))+Factor))))+
-                    (AnimationChannel^.OutputVector3Array[(TimeIndices[1]*3)+1]*((3.0*SqrFactor)-(2.0*CubeFactor))))+
-                     (AnimationChannel^.OutputVector3Array[(TimeIndices[1]*3)+0]*(KeyDelta*(CubeFactor-SqrFactor)));
-        end;
-        else begin
-         Assert(false);
-        end;
-       end;
-       case AnimationChannel^.Target of
-        TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Translation:begin
-         if assigned(Overwrite) then begin
+        case AnimationChannel^.Target of
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Translation:begin
           Include(Overwrite^.Flags,TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Translation);
           Overwrite^.Translation:=Vector3;
-         end else begin
-          Include(Node^.OverwriteFlags,TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Translation);
-          Node^.OverwriteTranslation:=Vector3;
          end;
-        end;
-        TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Scale:begin
-         if assigned(Overwrite) then begin
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Scale:begin
           Include(Overwrite^.Flags,TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Scale);
           Overwrite^.Scale:=Vector3;
-         end else begin
-          Include(Node^.OverwriteFlags,TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Scale);
-          Node^.OverwriteScale:=Vector3;
          end;
         end;
        end;
-      end;
-      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Rotation:begin
-       case AnimationChannel^.Interpolation of
-        TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.Linear:begin
-         Vector4:=TpvQuaternion.Create(AnimationChannel^.OutputVector4Array[TimeIndices[0]]).Slerp(TpvQuaternion.Create(AnimationChannel^.OutputVector4Array[TimeIndices[1]]),Factor).Vector;
+       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Rotation:begin
+        case AnimationChannel^.Interpolation of
+         TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.Linear:begin
+          Vector4:=TpvQuaternion.Create(AnimationChannel^.OutputVector4Array[TimeIndices[0]]).Slerp(TpvQuaternion.Create(AnimationChannel^.OutputVector4Array[TimeIndices[1]]),Factor).Vector;
+         end;
+         TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.Step:begin
+          Vector4:=AnimationChannel^.OutputVector4Array[TimeIndices[0]];
+         end;
+         TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.CubicSpline:begin
+          SqrFactor:=sqr(Factor);
+          CubeFactor:=SqrFactor*Factor;
+          Vector4:=((((AnimationChannel^.OutputVector4Array[(TimeIndices[0]*3)+1]*(((2.0*CubeFactor)-(3.0*SqrFactor))+1.0))+
+                     (AnimationChannel^.OutputVector4Array[(TimeIndices[1]*3)+0]*(KeyDelta*((CubeFactor-(2.0*SqrFactor))+Factor))))+
+                      (AnimationChannel^.OutputVector4Array[(TimeIndices[1]*3)+1]*((3.0*SqrFactor)-(2.0*CubeFactor))))+
+                       (AnimationChannel^.OutputVector4Array[(TimeIndices[1]*3)+0]*(KeyDelta*(CubeFactor-SqrFactor)))).Normalize;
+         end;
+         else begin
+          Assert(false);
+         end;
         end;
-        TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.Step:begin
-         Vector4:=AnimationChannel^.OutputVector4Array[TimeIndices[0]];
-        end;
-        TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.CubicSpline:begin
-         SqrFactor:=sqr(Factor);
-         CubeFactor:=SqrFactor*Factor;
-         Vector4:=((((AnimationChannel^.OutputVector4Array[(TimeIndices[0]*3)+1]*(((2.0*CubeFactor)-(3.0*SqrFactor))+1.0))+
-                    (AnimationChannel^.OutputVector4Array[(TimeIndices[1]*3)+0]*(KeyDelta*((CubeFactor-(2.0*SqrFactor))+Factor))))+
-                     (AnimationChannel^.OutputVector4Array[(TimeIndices[1]*3)+1]*((3.0*SqrFactor)-(2.0*CubeFactor))))+
-                      (AnimationChannel^.OutputVector4Array[(TimeIndices[1]*3)+0]*(KeyDelta*(CubeFactor-SqrFactor)))).Normalize;
-        end;
-        else begin
-         Assert(false);
-        end;
-       end;
-       if assigned(Overwrite) then begin
         Include(Overwrite^.Flags,TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Rotation);
         Overwrite^.Rotation.Vector:=Vector4;
-       end else begin
-        Include(Node^.OverwriteFlags,TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Rotation);
-        Node^.OverwriteRotation.Vector:=Vector4;
        end;
-      end;
-      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Weights:begin
-       CountWeights:=length(Node^.WorkWeights);
-       if assigned(Overwrite) then begin
+       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Weights:begin
+        CountWeights:=length(Node^.WorkWeights);
         Include(Overwrite^.Flags,TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Weights);
         case AnimationChannel^.Interpolation of
          TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.Linear:begin
@@ -6081,38 +6189,10 @@ var CullFace,Blend:TPasGLTFInt32;
           SqrFactor:=sqr(Factor);
           CubeFactor:=SqrFactor*Factor;
           for WeightIndex:=0 to CountWeights-1 do begin
-           Overwrite^. Weights[WeightIndex]:=((((2.0*CubeFactor)-(3.0*SqrFactor))+1.0)*AnimationChannel^.OutputScalarArray[(((TimeIndices[0]*3)+1)*CountWeights)+WeightIndex])+
-                                             (((CubeFactor-(2.0*SqrFactor))+Factor)*KeyDelta*AnimationChannel^.OutputScalarArray[(((TimeIndices[0]*3)+2)*CountWeights)+WeightIndex])+
-                                             (((3.0*SqrFactor)-(2.0*CubeFactor))*AnimationChannel^.OutputScalarArray[(((TimeIndices[1]*3)+1)*CountWeights)+WeightIndex])+
-                                             ((CubeFactor-SqrFactor)*KeyDelta*AnimationChannel^.OutputScalarArray[(((TimeIndices[1]*3)+0)*CountWeights)+WeightIndex]);
-          end;
-         end;
-         else begin
-          Assert(false);
-         end;
-        end;
-       end else begin
-        Include(Node^.OverwriteFlags,TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Weights);
-        case AnimationChannel^.Interpolation of
-         TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.Linear:begin
-          for WeightIndex:=0 to CountWeights-1 do begin
-           Node^.OverwriteWeights[WeightIndex]:=(AnimationChannel^.OutputScalarArray[(TimeIndices[0]*CountWeights)+WeightIndex]*(1.0-Factor))+
-                                                (AnimationChannel^.OutputScalarArray[(TimeIndices[1]*CountWeights)+WeightIndex]*Factor);
-          end;
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.Step:begin
-          for WeightIndex:=0 to CountWeights-1 do begin
-           Node^.OverwriteWeights[WeightIndex]:=AnimationChannel^.OutputScalarArray[(TimeIndices[0]*CountWeights)+WeightIndex];
-          end;
-         end;
-         TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation.CubicSpline:begin
-          SqrFactor:=sqr(Factor);
-          CubeFactor:=SqrFactor*Factor;
-          for WeightIndex:=0 to CountWeights-1 do begin
-           Node^.OverwriteWeights[WeightIndex]:=((((2.0*CubeFactor)-(3.0*SqrFactor))+1.0)*AnimationChannel^.OutputScalarArray[(((TimeIndices[0]*3)+1)*CountWeights)+WeightIndex])+
-                                                (((CubeFactor-(2.0*SqrFactor))+Factor)*KeyDelta*AnimationChannel^.OutputScalarArray[(((TimeIndices[0]*3)+2)*CountWeights)+WeightIndex])+
-                                                (((3.0*SqrFactor)-(2.0*CubeFactor))*AnimationChannel^.OutputScalarArray[(((TimeIndices[1]*3)+1)*CountWeights)+WeightIndex])+
-                                                ((CubeFactor-SqrFactor)*KeyDelta*AnimationChannel^.OutputScalarArray[(((TimeIndices[1]*3)+0)*CountWeights)+WeightIndex]);
+           Overwrite^.Weights[WeightIndex]:=((((2.0*CubeFactor)-(3.0*SqrFactor))+1.0)*AnimationChannel^.OutputScalarArray[(((TimeIndices[0]*3)+1)*CountWeights)+WeightIndex])+
+                                            (((CubeFactor-(2.0*SqrFactor))+Factor)*KeyDelta*AnimationChannel^.OutputScalarArray[(((TimeIndices[0]*3)+2)*CountWeights)+WeightIndex])+
+                                            (((3.0*SqrFactor)-(2.0*CubeFactor))*AnimationChannel^.OutputScalarArray[(((TimeIndices[1]*3)+1)*CountWeights)+WeightIndex])+
+                                            ((CubeFactor-SqrFactor)*KeyDelta*AnimationChannel^.OutputScalarArray[(((TimeIndices[1]*3)+0)*CountWeights)+WeightIndex]);
           end;
          end;
          else begin
@@ -6123,11 +6203,61 @@ var CullFace,Blend:TPasGLTFInt32;
       end;
      end;
 
-
     end;
 
    end;
 
+  end;
+
+  if InstanceAnimation.Complete then begin
+   for ChannelIndex:=0 to length(Animation.fDefaultChannels)-1 do begin
+    AnimationDefaultChannel:=@Animation.fDefaultChannels[ChannelIndex];
+    Node:=@fNodes[AnimationDefaultChannel^.Node];
+    Overwrite:=nil;
+    if aFactor>=-0.5 then begin
+     InstanceAnimationChannel:=nil;
+     for InstanceChannelIndex:=CountInstanceChannels-1 downto 0 do begin
+      if InstanceAnimation.fChannels[InstanceChannelIndex].fNode=Node then begin
+       InstanceAnimationChannel:=InstanceAnimation.fChannels[InstanceChannelIndex];
+       break;
+      end;
+     end;
+     if assigned(InstanceAnimationChannel) then begin
+      Overwrite:=@Node.Overwrites[InstanceAnimationChannel.fOverwrite];
+     end else if (Node.CountOverwrites<length(Node.Overwrites)) and
+                 (CountInstanceChannels<InstanceAnimation.fChannels.Count) then begin
+      InstanceChannelIndex:=CountInstanceChannels;
+      inc(CountInstanceChannels);
+      InstanceAnimationChannel:=InstanceAnimation.fChannels[InstanceChannelIndex];
+      InstanceAnimationChannel.fNode:=Node;
+      InstanceAnimationChannel.fOverwrite:=Node.CountOverwrites;
+      inc(Node.CountOverwrites);
+      Overwrite:=@Node.Overwrites[InstanceAnimationChannel.fOverwrite];
+      Overwrite^.Flags:=[];
+      Overwrite^.Factor:=Max(aFactor,0.0);
+     end;
+     if assigned(Overwrite) then begin
+      case AnimationDefaultChannel^.Target of
+       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Translation:begin
+        Overwrite^.Flags:=Overwrite^.Flags+[TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.DefaultTranslation,
+                                            TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Translation];
+       end;
+       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Scale:begin
+        Overwrite^.Flags:=Overwrite^.Flags+[TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.DefaultScale,
+                                            TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Scale];
+       end;
+       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Rotation:begin
+        Overwrite^.Flags:=Overwrite^.Flags+[TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.DefaultRotation,
+                                            TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Rotation];
+       end;
+       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.Weights:begin
+        Overwrite^.Flags:=Overwrite^.Flags+[TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.DefaultWeights,
+                                            TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Weights];
+       end;
+      end;
+     end;
+    end;
+   end;
   end;
 
  end;
@@ -6232,19 +6362,35 @@ var CullFace,Blend:TPasGLTFInt32;
       end;
      end else begin
       if TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Translation in Overwrite^.Flags then begin
-       TranslationSum.x:=TranslationSum.x+(Overwrite^.Translation.x*Factor);
-       TranslationSum.y:=TranslationSum.y+(Overwrite^.Translation.y*Factor);
-       TranslationSum.z:=TranslationSum.z+(Overwrite^.Translation.z*Factor);
+       if TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.DefaultTranslation in Overwrite^.Flags then begin
+        TranslationSum.x:=TranslationSum.x+(Node.fTranslation.x*Factor);
+        TranslationSum.y:=TranslationSum.y+(Node.fTranslation.y*Factor);
+        TranslationSum.z:=TranslationSum.z+(Node.fTranslation.z*Factor);
+       end else begin
+        TranslationSum.x:=TranslationSum.x+(Overwrite^.Translation.x*Factor);
+        TranslationSum.y:=TranslationSum.y+(Overwrite^.Translation.y*Factor);
+        TranslationSum.z:=TranslationSum.z+(Overwrite^.Translation.z*Factor);
+       end;
        TranslationSum.FactorSum:=TranslationSum.FactorSum+Factor;
       end;
       if TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Scale in Overwrite^.Flags then begin
-       ScaleSum.x:=ScaleSum.x+(Overwrite^.Scale.x*Factor);
-       ScaleSum.y:=ScaleSum.y+(Overwrite^.Scale.y*Factor);
-       ScaleSum.z:=ScaleSum.z+(Overwrite^.Scale.z*Factor);
+       if TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.DefaultScale in Overwrite^.Flags then begin
+        ScaleSum.x:=ScaleSum.x+(Node.fScale.x*Factor);
+        ScaleSum.y:=ScaleSum.y+(Node.fScale.y*Factor);
+        ScaleSum.z:=ScaleSum.z+(Node.fScale.z*Factor);
+       end else begin
+        ScaleSum.x:=ScaleSum.x+(Overwrite^.Scale.x*Factor);
+        ScaleSum.y:=ScaleSum.y+(Overwrite^.Scale.y*Factor);
+        ScaleSum.z:=ScaleSum.z+(Overwrite^.Scale.z*Factor);
+       end;
        ScaleSum.FactorSum:=ScaleSum.FactorSum+Factor;
       end;
       if TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Rotation in Overwrite^.Flags then begin
-       AddRotation(Overwrite^.Rotation,Factor);
+       if TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.DefaultRotation in Overwrite^.Flags then begin
+        AddRotation(Node.fRotation,Factor);
+       end else begin
+        AddRotation(Overwrite^.Rotation,Factor);
+       end;
       end;
       if TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Weights in Overwrite^.Flags then begin
        if FirstWeights then begin
@@ -6253,8 +6399,14 @@ var CullFace,Blend:TPasGLTFInt32;
          InstanceNode^.OverwriteWeightsSum[OtherIndex]:=0.0;
         end;
        end;
-       for OtherIndex:=0 to Min(length(InstanceNode^.OverwriteWeightsSum),length(Overwrite^.Weights))-1 do begin
-        InstanceNode^.OverwriteWeightsSum[OtherIndex]:=InstanceNode^.OverwriteWeightsSum[OtherIndex]+(Overwrite^.Weights[OtherIndex]*Factor);
+       if TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.DefaultWeights in Overwrite^.Flags then begin
+        for OtherIndex:=0 to Min(length(InstanceNode^.OverwriteWeightsSum),length(Node.fWeights))-1 do begin
+         InstanceNode^.OverwriteWeightsSum[OtherIndex]:=InstanceNode^.OverwriteWeightsSum[OtherIndex]+(Node.fWeights[OtherIndex]*Factor);
+        end;
+       end else begin
+        for OtherIndex:=0 to Min(length(InstanceNode^.OverwriteWeightsSum),length(Overwrite^.Weights))-1 do begin
+         InstanceNode^.OverwriteWeightsSum[OtherIndex]:=InstanceNode^.OverwriteWeightsSum[OtherIndex]+(Overwrite^.Weights[OtherIndex]*Factor);
+        end;
        end;
        WeightsFactorSum:=WeightsFactorSum+Factor;
       end;
@@ -6293,33 +6445,11 @@ var CullFace,Blend:TPasGLTFInt32;
     end;
    end;
   end else begin
-   if TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Translation in InstanceNode^.OverwriteFlags then begin
-    Translation:=InstanceNode^.OverwriteTranslation;
-    SkinUsed:=true;
-   end else begin
-    Translation:=Node.fTranslation;
-   end;
-   if TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Scale in InstanceNode^.OverwriteFlags then begin
-    Scale:=InstanceNode^.OverwriteScale;
-    SkinUsed:=true;
-   end else begin
-    Scale:=Node.fScale;
-   end;
-   if TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Rotation in InstanceNode^.OverwriteFlags then begin
-    Rotation:=InstanceNode^.OverwriteRotation;
-    SkinUsed:=true;
-   end else begin
-    Rotation:=Node.fRotation;
-   end;
-   if TpvScene3D.TGroup.TInstance.TNode.TOverwriteFlag.Weights in InstanceNode^.OverwriteFlags then begin
-    SkinUsed:=true;
-    for Index:=0 to Min(length(InstanceNode^.WorkWeights),length(InstanceNode^.OverwriteWeights))-1 do begin
-     InstanceNode^.WorkWeights[Index]:=InstanceNode^.OverwriteWeights[Index];
-    end;
-   end else begin
-    for Index:=0 to Min(length(InstanceNode^.WorkWeights),length(Node.fWeights))-1 do begin
-     InstanceNode^.WorkWeights[Index]:=Node.fWeights[Index];
-    end;
+   Translation:=Node.fTranslation;
+   Scale:=Node.fScale;
+   Rotation:=Node.fRotation;
+   for Index:=0 to Min(length(InstanceNode^.WorkWeights),length(Node.fWeights))-1 do begin
+    InstanceNode^.WorkWeights[Index]:=Node.fWeights[Index];
    end;
   end;
   Matrix:=TpvMatrix4x4.CreateScale(Scale)*
@@ -6543,23 +6673,40 @@ end;
 
 procedure TpvScene3D.TGroup.TInstance.Prepare(const aSwapChainImageIndex:TpvSizeInt;
                                               const aRenderPassIndex:TpvSizeInt;
-                                              const aFrustum:TpvFrustum;
-                                              const aFrustumCulling:boolean);
+                                              const aFrustums:TpvFrustumDynamicArray);
 var VisibleBit:TpvUInt32;
  procedure ProcessNode(const aNodeIndex:TpvSizeInt;const aMask:TpvUInt32);
- var NodeIndex:TpvSizeInt;
+ var Index,NodeIndex:TpvSizeInt;
      Mask:TpvUInt32;
      InstanceNode:TpvScene3D.TGroup.TInstance.PNode;
      Node:TpvScene3D.TGroup.TNode;
+     OK:boolean;
  begin
   if aNodeIndex>=0 then begin
    InstanceNode:=@fNodes[aNodeIndex];
    Mask:=aMask;
-   if InstanceNode^.BoundingBoxFilled[aSwapChainImageIndex] and not (((Mask and $80000000)<>0) and (aFrustum.AABBInFrustum(InstanceNode^.BoundingBoxes[aSwapChainImageIndex],Mask)=TpvFrustum.COMPLETE_OUT)) then begin
-    TPasMPInterlocked.BitwiseOr(InstanceNode^.VisibleBitmap,VisibleBit);
-    Node:=fGroup.fNodes[aNodeIndex];
-    for NodeIndex:=0 to Node.fChildren.Count-1 do begin
-     ProcessNode(Node.fChildren[NodeIndex].fIndex,Mask);
+   if InstanceNode^.BoundingBoxFilled[aSwapChainImageIndex] then begin
+    if length(aFrustums)>0 then begin
+     if length(aFrustums)=1 then begin
+      OK:=not ((((Mask and $80000000)<>0) and (aFrustums[0].AABBInFrustum(InstanceNode^.BoundingBoxes[aSwapChainImageIndex],Mask)=TpvFrustum.COMPLETE_OUT)));
+     end else begin
+      OK:=false;
+      for Index:=0 to length(aFrustums)-1 do begin
+       if aFrustums[Index].AABBInFrustum(InstanceNode^.BoundingBoxes[aSwapChainImageIndex])<>TpvFrustum.COMPLETE_OUT then begin
+        OK:=true;
+        break;
+       end;
+      end;
+     end;
+    end else begin
+     OK:=true;
+    end;
+    if OK then begin
+     TPasMPInterlocked.BitwiseOr(InstanceNode^.VisibleBitmap,VisibleBit);
+     Node:=fGroup.fNodes[aNodeIndex];
+     for NodeIndex:=0 to Node.fChildren.Count-1 do begin
+      ProcessNode(Node.fChildren[NodeIndex].fIndex,Mask);
+     end;
     end;
    end;
   end;
@@ -6569,7 +6716,7 @@ var NodeIndex:TpvSizeInt;
 begin
  VisibleBit:=TpvUInt32(1) shl aRenderPassIndex;
  if fActives[aSwapChainImageIndex] and ((fVisibleBitmap and (TpvUInt32(1) shl aRenderPassIndex))<>0) then begin
-  if aFrustumCulling then begin
+  if length(aFrustums)>0 then begin
    for NodeIndex:=0 to length(fNodes)-1 do begin
     TPasMPInterlocked.BitwiseAnd(fNodes[NodeIndex].VisibleBitmap,not VisibleBit);
    end;
@@ -6722,6 +6869,10 @@ begin
 
  fMaterialHashMap:=TMaterialHashMap.Create(nil);
 
+ fEmptyMaterial:=TpvScene3D.TMaterial.Create(pvApplication.ResourceManager,self);
+ fEmptyMaterial.AssignFromEmpty;
+ fEmptyMaterial.IncRef;
+
  for Index:=0 to length(fLights)-1 do begin
   fLights[Index]:=TpvScene3D.TLights.Create;
   fLights[Index].OwnsObjects:=true;
@@ -6730,6 +6881,8 @@ begin
  for Index:=0 to length(fCountLights)-1 do begin
   fCountLights[Index]:=0;
  end;
+
+ fViews.Initialize;
 
  fGroupListLock:=TPasMPSlimReaderWriterLock.Create;
  fGroups:=TGroups.Create;
@@ -6796,11 +6949,16 @@ begin
 
  fGlobalVulkanDescriptorSetLayout:=TpvVulkanDescriptorSetLayout.Create(pvApplication.VulkanDevice);
  fGlobalVulkanDescriptorSetLayout.AddBinding(0,
+                                             VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                                             1,
+                                             TVkShaderStageFlags(VK_SHADER_STAGE_VERTEX_BIT) or TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
+                                             []);
+ fGlobalVulkanDescriptorSetLayout.AddBinding(1,
                                              VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                                              1,
                                              TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
                                              []);
- fGlobalVulkanDescriptorSetLayout.AddBinding(1,
+ fGlobalVulkanDescriptorSetLayout.AddBinding(2,
                                              VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                                              1,
                                              TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
@@ -6845,6 +7003,10 @@ begin
   FreeAndNil(fGlobalVulkanDescriptorSets[Index]);
  end;
  FreeAndNil(fGlobalVulkanDescriptorPool);
+
+ for Index:=0 to length(fGlobalVulkanViewUniformBuffers)-1 do begin
+  FreeAndNil(fGlobalVulkanViewUniformBuffers[Index]);
+ end;
 
  for Index:=0 to length(fAABBTreeStates)-1 do begin
   fAABBTreeStates[Index].TreeNodes:=nil;
@@ -6925,6 +7087,8 @@ begin
  FreeAndNil(fWhiteTextureLock);
 
  FreeAndNil(fDefaultNormalMapTextureLock);
+
+ fViews.Finalize;
 
  FreeAndNil(fLock);
 
@@ -7107,6 +7271,7 @@ end;
 procedure TpvScene3D.Upload;
 var Group:TGroup;
     Index:TpvSizeInt;
+    ViewUniformBuffer:TpvVulkanBuffer;
 begin
  if not fUploaded then begin
   fLock.Acquire;
@@ -7117,7 +7282,27 @@ begin
      for Index:=0 to length(fLightBuffers)-1 do begin
       fLightBuffers[Index].Upload;
      end;
+     for Index:=0 to length(fGlobalVulkanViewUniformBuffers)-1 do begin
+      ViewUniformBuffer:=TpvVulkanBuffer.Create(pvApplication.VulkanDevice,
+                                                SizeOf(TGlobalViewUniformBuffer),
+                                                TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT),
+                                                TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                [],
+                                                TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                                                0,
+                                                0,
+                                                0,
+                                                0,
+                                                [TpvVulkanBufferFlag.PersistentMapped]);
+      try
+
+      finally
+       fGlobalVulkanViewUniformBuffers[Index]:=ViewUniformBuffer;
+      end;
+     end;
      fGlobalVulkanDescriptorPool:=TpvVulkanDescriptorPool.Create(pvApplication.VulkanDevice,TVkDescriptorPoolCreateFlags(VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT),length(fGlobalVulkanDescriptorSets));
+     fGlobalVulkanDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,length(fGlobalVulkanDescriptorSets)*2);
      fGlobalVulkanDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,length(fGlobalVulkanDescriptorSets)*2);
      fGlobalVulkanDescriptorPool.Initialize;
      for Index:=0 to length(fGlobalVulkanDescriptorSets)-1 do begin
@@ -7126,12 +7311,20 @@ begin
       fGlobalVulkanDescriptorSets[Index].WriteToDescriptorSet(0,
                                                               0,
                                                               1,
+                                                              TVkDescriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER),
+                                                              [],
+                                                              [fGlobalVulkanViewUniformBuffers[Index].DescriptorBufferInfo],
+                                                              [],
+                                                              false);
+      fGlobalVulkanDescriptorSets[Index].WriteToDescriptorSet(1,
+                                                              0,
+                                                              1,
                                                               TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
                                                               [],
                                                               [fLightBuffers[Index].fLightItemsVulkanBuffer.DescriptorBufferInfo],
                                                               [],
                                                               false);
-      fGlobalVulkanDescriptorSets[Index].WriteToDescriptorSet(1,
+      fGlobalVulkanDescriptorSets[Index].WriteToDescriptorSet(2,
                                                               0,
                                                               1,
                                                               TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
@@ -7171,6 +7364,9 @@ begin
       FreeAndNil(fGlobalVulkanDescriptorSets[Index]);
      end;
      FreeAndNil(fGlobalVulkanDescriptorPool);
+     for Index:=0 to length(fGlobalVulkanViewUniformBuffers)-1 do begin
+      FreeAndNil(fGlobalVulkanViewUniformBuffers[Index]);
+     end;
      for Index:=0 to length(fLightBuffers)-1 do begin
       fLightBuffers[Index].Unload;
      end;
@@ -7271,18 +7467,35 @@ begin
 
 end;
 
-procedure TpvScene3D.CullAABBTreeWithFrustum(const aFrustum:TpvFrustum;
-                                             const aTreeNodes:TpvBVHDynamicAABBTree.TTreeNodes;
-                                             const aRoot:TpvSizeInt;
-                                             const aVisibleBit:TPasMPUInt32);
+procedure TpvScene3D.CullAABBTreeWithFrustums(const aFrustums:TpvFrustumDynamicArray;
+                                              const aTreeNodes:TpvBVHDynamicAABBTree.TTreeNodes;
+                                              const aRoot:TpvSizeInt;
+                                              const aVisibleBit:TPasMPUInt32);
  procedure ProcessNode(const aNode:TpvSizeint;const aMask:TpvUInt32);
- var TreeNode:TpvBVHDynamicAABBTree.PTreeNode;
-    Mask:TpvUInt32;
+ var Index:TpvSizeInt;
+     TreeNode:TpvBVHDynamicAABBTree.PTreeNode;
+     Mask:TpvUInt32;
+     OK:boolean;
  begin
   if aNode>=0 then begin
    TreeNode:=@aTreeNodes[aNode];
    Mask:=aMask;
-   if not (((Mask and $80000000)<>0) and (aFrustum.AABBInFrustum(TreeNode^.AABB,Mask)=TpvFrustum.COMPLETE_OUT)) then begin
+   if length(aFrustums)>0 then begin
+    if length(aFrustums)=1 then begin
+     OK:=not ((((Mask and $80000000)<>0) and (aFrustums[0].AABBInFrustum(TreeNode^.AABB,Mask)=TpvFrustum.COMPLETE_OUT)));
+    end else begin
+     OK:=false;
+     for Index:=0 to length(aFrustums)-1 do begin
+      if aFrustums[Index].AABBInFrustum(TreeNode^.AABB)<>TpvFrustum.COMPLETE_OUT then begin
+       OK:=true;
+       break;
+      end;
+     end;
+    end;
+   end else begin
+    OK:=true;
+   end;
+   if OK then begin
     if TreeNode^.UserData<>0 then begin
      TPasMPInterlocked.BitwiseOr(TpvScene3D.TGroup.TInstance(TreeNode^.UserData).fVisibleBitmap,aVisibleBit);
     end;
@@ -7300,12 +7513,13 @@ type PStackItem=^TStackItem;
       Node:TpvSizeInt;
       Mask:TpvUInt32;
      end;
-var StackPointer:TpvSizeInt;
+var Index,StackPointer:TpvSizeInt;
     StackItem:PStackItem;
     Node:TpvSizeInt;
     TreeNode:TpvBVHDynamicAABBTree.PTreeNode;
     Mask:TpvUInt32;
     Stack:array[0..31] of TStackItem;
+    OK:boolean;
 begin
  if (aRoot>=0) and (length(aTreeNodes)>0) then begin
   Stack[0].Node:=aRoot;
@@ -7318,33 +7532,47 @@ begin
    Mask:=StackItem^.Mask;
    while Node>=0 do begin
     TreeNode:=@aTreeNodes[Node];
-    if ((Mask and $80000000)<>0) and (aFrustum.AABBInFrustum(TreeNode^.AABB,Mask)=TpvFrustum.COMPLETE_OUT) then begin
-     break;
-    end;
-    if TreeNode^.UserData<>0 then begin
-     TPasMPInterlocked.BitwiseOr(TpvScene3D.TGroup.TInstance(TreeNode^.UserData).fVisibleBitmap,aVisibleBit);
-    end;
-    if (StackPointer>=High(Stack)) and ((TreeNode^.Children[0]>=0) or (TreeNode^.Children[1]>=0)) then begin
-     if TreeNode^.Children[0]>=0 then begin
-      ProcessNode(TreeNode^.Children[0],Mask);
-     end;
-     if TreeNode^.Children[1]>=0 then begin
-      ProcessNode(TreeNode^.Children[1],Mask);
+    if length(aFrustums)>0 then begin
+     if length(aFrustums)=1 then begin
+      OK:=not ((((Mask and $80000000)<>0) and (aFrustums[0].AABBInFrustum(TreeNode^.AABB,Mask)=TpvFrustum.COMPLETE_OUT)));
+     end else begin
+      OK:=false;
+      for Index:=0 to length(aFrustums)-1 do begin
+       if aFrustums[Index].AABBInFrustum(TreeNode^.AABB)<>TpvFrustum.COMPLETE_OUT then begin
+        OK:=true;
+        break;
+       end;
+      end;
      end;
     end else begin
-     if TreeNode^.Children[0]>=0 then begin
-      if TreeNode^.Children[1]>=0 then begin
-       StackItem:=@Stack[StackPointer];
-       StackItem^.Node:=TreeNode^.Children[1];
-       StackItem^.Mask:=Mask;
-       inc(StackPointer);
+     OK:=true;
+    end;
+    if OK then begin
+     if TreeNode^.UserData<>0 then begin
+      TPasMPInterlocked.BitwiseOr(TpvScene3D.TGroup.TInstance(TreeNode^.UserData).fVisibleBitmap,aVisibleBit);
+     end;
+     if (StackPointer>=High(Stack)) and ((TreeNode^.Children[0]>=0) or (TreeNode^.Children[1]>=0)) then begin
+      if TreeNode^.Children[0]>=0 then begin
+       ProcessNode(TreeNode^.Children[0],Mask);
       end;
-      Node:=TreeNode^.Children[0];
-      continue;
-     end else begin
       if TreeNode^.Children[1]>=0 then begin
-       Node:=TreeNode^.Children[1];
+       ProcessNode(TreeNode^.Children[1],Mask);
+      end;
+     end else begin
+      if TreeNode^.Children[0]>=0 then begin
+       if TreeNode^.Children[1]>=0 then begin
+        StackItem:=@Stack[StackPointer];
+        StackItem^.Node:=TreeNode^.Children[1];
+        StackItem^.Mask:=Mask;
+        inc(StackPointer);
+       end;
+       Node:=TreeNode^.Children[0];
        continue;
+      end else begin
+       if TreeNode^.Children[1]>=0 then begin
+        Node:=TreeNode^.Children[1];
+        continue;
+       end;
       end;
      end;
     end;
@@ -7356,27 +7584,48 @@ end;
 
 function TpvScene3DCompareIndirectLights(const a,b:pointer):TpvInt32;
 begin
- result:=Sign((ord(TpvScene3D.TLight(b).fData.fType_=TpvScene3D.TLightData.TType.Directional) and 1)-
-              (ord(TpvScene3D.TLight(a).fData.fType_=TpvScene3D.TLightData.TType.Directional) and 1));
+ result:=Sign((ord(TpvScene3D.TLight(b).fData.fType_=TpvScene3D.TLightData.TType.PrimaryDirectional) and 1)-
+              (ord(TpvScene3D.TLight(a).fData.fType_=TpvScene3D.TLightData.TType.PrimaryDirectional) and 1));
  if result=0 then begin
-  result:=Sign(TpvScene3D.TLight(b).fViewSpacePosition.z-TpvScene3D.TLight(a).fViewSpacePosition.z);
+  result:=Sign((ord(TpvScene3D.TLight(b).fData.fType_=TpvScene3D.TLightData.TType.Directional) and 1)-
+               (ord(TpvScene3D.TLight(a).fData.fType_=TpvScene3D.TLightData.TType.Directional) and 1));
   if result=0 then begin
+   result:=Sign(TpvScene3D.TLight(b).fViewSpacePosition.z-TpvScene3D.TLight(a).fViewSpacePosition.z);
+   if result=0 then begin
+   end;
   end;
  end;
 end;
 
-procedure TpvScene3D.CullLightAABBTreeWithFrustum(const aSwapChainImageIndex:TpvSizeInt;
-                                                  const aFrustum:PpvFrustum;
-                                                  const aTreeNodes:TpvBVHDynamicAABBTree.TTreeNodes;
-                                                  const aRoot:TpvSizeInt);
+procedure TpvScene3D.CullLightAABBTreeWithFrustums(const aSwapChainImageIndex:TpvSizeInt;
+                                                   const aFrustums:TpvFrustumDynamicArray;
+                                                   const aTreeNodes:TpvBVHDynamicAABBTree.TTreeNodes;
+                                                   const aRoot:TpvSizeInt);
  procedure ProcessNode(const aNode:TpvSizeint;const aMask:TpvUInt32);
- var TreeNode:TpvBVHDynamicAABBTree.PTreeNode;
+ var Index:TpvSizeInt;
+     TreeNode:TpvBVHDynamicAABBTree.PTreeNode;
      Mask:TpvUInt32;
+     OK:boolean;
  begin
   if aNode>=0 then begin
    TreeNode:=@aTreeNodes[aNode];
    Mask:=aMask;
-   if not (assigned(aFrustum) and (((Mask and $80000000)<>0) and (aFrustum^.AABBInFrustum(TreeNode^.AABB,Mask)=TpvFrustum.COMPLETE_OUT))) then begin
+   if length(aFrustums)>0 then begin
+    if length(aFrustums)=1 then begin
+     OK:=not ((((Mask and $80000000)<>0) and (aFrustums[0].AABBInFrustum(TreeNode^.AABB,Mask)=TpvFrustum.COMPLETE_OUT)));
+    end else begin
+     OK:=false;
+     for Index:=0 to length(aFrustums)-1 do begin
+      if aFrustums[Index].AABBInFrustum(TreeNode^.AABB)<>TpvFrustum.COMPLETE_OUT then begin
+       OK:=true;
+       break;
+      end;
+     end;
+    end;
+   end else begin
+    OK:=true;
+   end;
+   if OK then begin
     if TreeNode^.UserData<>0 then begin
      if fCountIndirectLights[aSwapChainImageIndex]<MaxVisibleLights then begin
       fIndirectLights[aSwapChainImageIndex,fCountIndirectLights[aSwapChainImageIndex]]:=TpvScene3D.TLight(Pointer(TreeNode^.UserData));
@@ -7397,12 +7646,13 @@ type PStackItem=^TStackItem;
       Node:TpvSizeInt;
       Mask:TpvUInt32;
      end;
-var StackPointer:TpvSizeInt;
+var Index,StackPointer:TpvSizeInt;
     StackItem:PStackItem;
     Node:TpvSizeInt;
     TreeNode:TpvBVHDynamicAABBTree.PTreeNode;
     Mask:TpvUInt32;
     Stack:array[0..31] of TStackItem;
+    OK:boolean;
 begin
  if (aRoot>=0) and (length(aTreeNodes)>0) then begin
   Stack[0].Node:=aRoot;
@@ -7415,36 +7665,50 @@ begin
    Mask:=StackItem^.Mask;
    while Node>=0 do begin
     TreeNode:=@aTreeNodes[Node];
-    if assigned(aFrustum) and (((Mask and $80000000)<>0) and (aFrustum^.AABBInFrustum(TreeNode^.AABB,Mask)=TpvFrustum.COMPLETE_OUT)) then begin
-     break;
-    end;
-    if TreeNode^.UserData<>0 then begin
-     if fCountIndirectLights[aSwapChainImageIndex]<MaxVisibleLights then begin
-      fIndirectLights[aSwapChainImageIndex,fCountIndirectLights[aSwapChainImageIndex]]:=TpvScene3D.TLight(Pointer(TreeNode^.UserData));
-      inc(fCountIndirectLights[aSwapChainImageIndex]);
-     end;
-    end;
-    if (StackPointer>=High(Stack)) and ((TreeNode^.Children[0]>=0) or (TreeNode^.Children[1]>=0)) then begin
-     if TreeNode^.Children[0]>=0 then begin
-      ProcessNode(TreeNode^.Children[0],Mask);
-     end;
-     if TreeNode^.Children[1]>=0 then begin
-      ProcessNode(TreeNode^.Children[1],Mask);
+    if length(aFrustums)>0 then begin
+     if length(aFrustums)=1 then begin
+      OK:=not ((((Mask and $80000000)<>0) and (aFrustums[0].AABBInFrustum(TreeNode^.AABB,Mask)=TpvFrustum.COMPLETE_OUT)));
+     end else begin
+      OK:=false;
+      for Index:=0 to length(aFrustums)-1 do begin
+       if aFrustums[Index].AABBInFrustum(TreeNode^.AABB)<>TpvFrustum.COMPLETE_OUT then begin
+        OK:=true;
+        break;
+       end;
+      end;
      end;
     end else begin
-     if TreeNode^.Children[0]>=0 then begin
-      if TreeNode^.Children[1]>=0 then begin
-       StackItem:=@Stack[StackPointer];
-       StackItem^.Node:=TreeNode^.Children[1];
-       StackItem^.Mask:=Mask;
-       inc(StackPointer);
+     OK:=true;
+    end;
+    if OK then begin
+     if TreeNode^.UserData<>0 then begin
+      if fCountIndirectLights[aSwapChainImageIndex]<MaxVisibleLights then begin
+       fIndirectLights[aSwapChainImageIndex,fCountIndirectLights[aSwapChainImageIndex]]:=TpvScene3D.TLight(Pointer(TreeNode^.UserData));
+       inc(fCountIndirectLights[aSwapChainImageIndex]);
       end;
-      Node:=TreeNode^.Children[0];
-      continue;
-     end else begin
+     end;
+     if (StackPointer>=High(Stack)) and ((TreeNode^.Children[0]>=0) or (TreeNode^.Children[1]>=0)) then begin
+      if TreeNode^.Children[0]>=0 then begin
+       ProcessNode(TreeNode^.Children[0],Mask);
+      end;
       if TreeNode^.Children[1]>=0 then begin
-       Node:=TreeNode^.Children[1];
+       ProcessNode(TreeNode^.Children[1],Mask);
+      end;
+     end else begin
+      if TreeNode^.Children[0]>=0 then begin
+       if TreeNode^.Children[1]>=0 then begin
+        StackItem:=@Stack[StackPointer];
+        StackItem^.Node:=TreeNode^.Children[1];
+        StackItem^.Mask:=Mask;
+        inc(StackPointer);
+       end;
+       Node:=TreeNode^.Children[0];
        continue;
+      end else begin
+       if TreeNode^.Children[1]>=0 then begin
+        Node:=TreeNode^.Children[1];
+        continue;
+       end;
       end;
      end;
     end;
@@ -7548,13 +7812,51 @@ begin
  end;
 end;
 
+procedure TpvScene3D.ClearViews;
+begin
+ fViews.Count:=0;
+end;
+
+function TpvScene3D.AddView(const aView:TpvScene3D.TView):TpvSizeInt;
+begin
+ if (fViews.Count+1)<TpvScene3D.MaxViews then begin
+  result:=fViews.Add(aView);
+ end else begin
+  result:=-1;
+ end;
+end;
+
+function TpvScene3D.AddViews(const aViews:array of TpvScene3D.TView):TpvSizeInt;
+begin
+ if (length(aViews)>0) and ((fViews.Count+length(aViews))<TpvScene3D.MaxViews) then begin
+  result:=fViews.Add(aViews);
+ end else begin
+  result:=-1;
+ end;
+end;
+
+procedure TpvScene3D.UpdateViews(const aSwapChainImageIndex:TpvSizeInt);
+begin
+ if fViews.Count>0 then begin
+  Move(fViews.Items[0],
+       fGlobalVulkanViews[aSwapChainImageIndex].Items[0],
+       fViews.Count*SizeOf(TpvScene3D.TView));
+  if assigned(fGlobalVulkanViewUniformBuffers[aSwapChainImageIndex]) then begin
+   fGlobalVulkanViewUniformBuffers[aSwapChainImageIndex].UpdateData(fViews.Items[0],
+                                                                    0,
+                                                                    fViews.Count*SizeOf(TpvScene3D.TView),
+                                                                    FlushUpdateData
+                                                                   );
+  end;
+ end;
+end;
+
 procedure TpvScene3D.PrepareLights(const aSwapChainImageIndex:TpvSizeInt;
-                                   const aViewMatrix:TpvMatrix4x4;
-                                   const aProjectionMatrix:TpvMatrix4x4;
+                                   const aViewBaseIndex:TpvSizeInt;
+                                   const aCountViews:TpvSizeInt;
                                    const aViewPortWidth:TpvInt32;
                                    const aViewPortHeight:TpvInt32;
-                                   const aFrustum:TpvFrustum;
-                                   const aFrustumCulling:boolean=true);
+                                   const aFrustums:TpvFrustumDynamicArray);
 var Index:TpvSizeInt;
    {Lights:TpvScene3D.TLights;
     Light:TpvScene3D.TLight;
@@ -7576,11 +7878,7 @@ begin
 
  AABBTreeState:=@fLightAABBTreeStates[aSwapChainImageIndex];
 
- if aFrustumCulling then begin
-  CullLightAABBTreeWithFrustum(aSwapChainImageIndex,@aFrustum,AABBTreeState^.TreeNodes,AABBTreeState^.Root);
- end else begin
-  CullLightAABBTreeWithFrustum(aSwapChainImageIndex,nil,AABBTreeState^.TreeNodes,AABBTreeState^.Root);
- end;
+ CullLightAABBTreeWithFrustums(aSwapChainImageIndex,aFrustums,AABBTreeState^.TreeNodes,AABBTreeState^.Root);
 
  if fCountIndirectLights[aSwapChainImageIndex]>0 then begin
 // IndirectIntroSort(@fIndirectLights[aSwapChainImageIndex,0],0,fCountIndirectLights[aSwapChainImageIndex],TpvScene3DCompareIndirectLights);
@@ -7590,62 +7888,83 @@ end;
 
 procedure TpvScene3D.Prepare(const aSwapChainImageIndex:TpvSizeInt;
                              const aRenderPassIndex:TpvSizeInt;
-                             const aViewMatrix:TpvMatrix4x4;
-                             const aProjectionMatrix:TpvMatrix4x4;
+                             const aViewBaseIndex:TpvSizeInt;
+                             const aCountViews:TpvSizeInt;
                              const aViewPortWidth:TpvInt32;
                              const aViewPortHeight:TpvInt32;
+                             const aLights:boolean=true;
                              const aFrustumCulling:boolean=true);
-var VisibleBit:TPasMPUInt32;
-    Frustum:TpvFrustum;
+var Index:TpvSizeInt;
+    VisibleBit:TPasMPUInt32;
+    Frustums:TpvFrustumDynamicArray;
     Group:TpvScene3D.TGroup;
     GroupInstance:TpvScene3D.TGroup.TInstance;
     AABBTreeState:TpvBVHDynamicAABBTree.PState;
+    View:TpvScene3D.PView;
 begin
 
- VisibleBit:=TpvUInt32(1) shl (aRenderPassIndex and 31);
+ if (aViewBaseIndex>=0) and (aCountViews>0) then begin
 
- if aFrustumCulling then begin
+  VisibleBit:=TpvUInt32(1) shl (aRenderPassIndex and 31);
 
-  for GroupInstance in fGroupInstances do begin
-   TPasMPInterlocked.BitwiseAnd(GroupInstance.fVisibleBitmap,not VisibleBit);
-  end;
+  Frustums:=nil;
+  try
 
-  Frustum.Init(aViewMatrix,aProjectionMatrix);
+   if aFrustumCulling then begin
 
-  AABBTreeState:=@fAABBTreeStates[aSwapChainImageIndex];
+    SetLength(Frustums,aCountViews);
 
-  CullAABBTreeWithFrustum(Frustum,AABBTreeState^.TreeNodes,AABBTreeState^.Root,VisibleBit);
+    for GroupInstance in fGroupInstances do begin
+     TPasMPInterlocked.BitwiseAnd(GroupInstance.fVisibleBitmap,not VisibleBit);
+    end;
 
- end else begin
+    AABBTreeState:=@fAABBTreeStates[aSwapChainImageIndex];
 
-  for GroupInstance in fGroupInstances do begin
-   TPasMPInterlocked.BitwiseOr(GroupInstance.fVisibleBitmap,VisibleBit);
+    for Index:=0 to aCountViews-1 do begin
+     View:=@fGlobalVulkanViews[aSwapChainImageIndex].Items[aViewBaseIndex+Index];
+     Frustums[Index].Init(View^.ViewMatrix,View^.ProjectionMatrix);
+    end;
+
+    CullAABBTreeWithFrustums(Frustums,AABBTreeState^.TreeNodes,AABBTreeState^.Root,VisibleBit);
+
+   end else begin
+
+    for GroupInstance in fGroupInstances do begin
+     TPasMPInterlocked.BitwiseOr(GroupInstance.fVisibleBitmap,VisibleBit);
+    end;
+
+   end;
+
+   for Group in fGroups do begin
+    Group.Prepare(aSwapChainImageIndex,
+                  aRenderPassIndex,
+                  Frustums);
+   end;
+
+   if aLights then begin
+    PrepareLights(aSwapChainImageIndex,
+                  aViewBaseIndex,
+                  aCountViews,
+                  aViewPortWidth,
+                  aViewPortHeight,
+                  Frustums);
+   end else begin
+    fCountIndirectLights[aSwapChainImageIndex]:=0;
+   end;
+
+  finally
+   Frustums:=nil;
   end;
 
  end;
-
- for Group in fGroups do begin
-  Group.Prepare(aSwapChainImageIndex,
-                aRenderPassIndex,
-                Frustum,
-                aFrustumCulling);
- end;
-
- PrepareLights(aSwapChainImageIndex,
-               aViewMatrix,
-               aProjectionMatrix,
-               aViewPortWidth,
-               aViewPortHeight,
-               Frustum,
-               aFrustumCulling);
 
 end;
 
 procedure TpvScene3D.Draw(const aGraphicsPipelines:TpvScene3D.TGraphicsPipelines;
                           const aSwapChainImageIndex:TpvSizeInt;
                           const aRenderPassIndex:TpvSizeInt;
-                          const aViewMatrix:TpvMatrix4x4;
-                          const aProjectionMatrix:TpvMatrix4x4;
+                          const aViewBaseIndex:TpvSizeInt;
+                          const aCountViews:TpvSizeInt;
                           const aCommandBuffer:TpvVulkanCommandBuffer;
                           const aPipelineLayout:TpvVulkanPipelineLayout;
                           const aMaterialAlphaModes:TpvScene3D.TMaterial.TAlphaModes=[TpvScene3D.TMaterial.TAlphaMode.Opaque,TpvScene3D.TMaterial.TAlphaMode.Blend,TpvScene3D.TMaterial.TAlphaMode.Mask]);
@@ -7655,48 +7974,52 @@ var VertexStagePushConstants:TpvScene3D.TVertexStagePushConstants;
     Pipeline:TpvVulkanPipeline;
 begin
 
- Pipeline:=nil;
+ if (aViewBaseIndex>=0) and (aCountViews>0) then begin
 
- VisibleBit:=TpvUInt32(1) shl (aRenderPassIndex and 31);
+  Pipeline:=nil;
 
- VertexStagePushConstants.ViewMatrix:=aViewMatrix;
- VertexStagePushConstants.ProjectionMatrix:=aProjectionMatrix;
+  VisibleBit:=TpvUInt32(1) shl (aRenderPassIndex and 31);
 
- if fSwapChainImageBufferMemoryBarriers[aSwapChainImageIndex].Count>0 then begin
-  aCommandBuffer.CmdPipelineBarrier(TVkPipelineStageFlags(VK_PIPELINE_STAGE_HOST_BIT),
-                                    TVkPipelineStageFlags(VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT) or pvApplication.VulkanDevice.PhysicalDevice.PipelineStageAllShaderBits,
-                                    0,
-                                    0,
-                                    nil,
-                                    fSwapChainImageBufferMemoryBarriers[aSwapChainImageIndex].Count,
-                                    @fSwapChainImageBufferMemoryBarriers[aSwapChainImageIndex].Items[0],
-                                    0,
-                                    nil);
-  fSwapChainImageBufferMemoryBarriers[aSwapChainImageIndex].Count:=0;
- end;
+  VertexStagePushConstants.ViewBaseIndex:=aViewBaseIndex;
+  VertexStagePushConstants.CountViews:=aCountViews;
 
- aCommandBuffer.CmdPushConstants(aPipelineLayout.Handle,
-                                 TVkShaderStageFlags(TVkShaderStageFlagBits.VK_SHADER_STAGE_VERTEX_BIT),
-                                 0,
-                                 SizeOf(TpvScene3D.TVertexStagePushConstants),
-                                 @VertexStagePushConstants);
+  if fSwapChainImageBufferMemoryBarriers[aSwapChainImageIndex].Count>0 then begin
+   aCommandBuffer.CmdPipelineBarrier(TVkPipelineStageFlags(VK_PIPELINE_STAGE_HOST_BIT),
+                                     TVkPipelineStageFlags(VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT) or pvApplication.VulkanDevice.PhysicalDevice.PipelineStageAllShaderBits,
+                                     0,
+                                     0,
+                                     nil,
+                                     fSwapChainImageBufferMemoryBarriers[aSwapChainImageIndex].Count,
+                                     @fSwapChainImageBufferMemoryBarriers[aSwapChainImageIndex].Items[0],
+                                     0,
+                                     nil);
+   fSwapChainImageBufferMemoryBarriers[aSwapChainImageIndex].Count:=0;
+  end;
 
- aCommandBuffer.CmdBindDescriptorSets(VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                      aPipelineLayout.Handle,
-                                      2,
-                                      1,
-                                      @fGlobalVulkanDescriptorSets[aSwapChainImageIndex].Handle,
-                                      0,
-                                      nil);
+  aCommandBuffer.CmdPushConstants(aPipelineLayout.Handle,
+                                  TVkShaderStageFlags(TVkShaderStageFlagBits.VK_SHADER_STAGE_VERTEX_BIT),
+                                  0,
+                                  SizeOf(TpvScene3D.TVertexStagePushConstants),
+                                  @VertexStagePushConstants);
 
- for Group in fGroups do begin
-  Group.Draw(aGraphicsPipelines,
-             aSwapChainImageIndex,
-             aRenderPassIndex,
-             aCommandBuffer,
-             Pipeline,
-             aPipelineLayout,
-             aMaterialAlphaModes);
+  aCommandBuffer.CmdBindDescriptorSets(VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                       aPipelineLayout.Handle,
+                                       2,
+                                       1,
+                                       @fGlobalVulkanDescriptorSets[aSwapChainImageIndex].Handle,
+                                       0,
+                                       nil);
+
+  for Group in fGroups do begin
+   Group.Draw(aGraphicsPipelines,
+              aSwapChainImageIndex,
+              aRenderPassIndex,
+              aCommandBuffer,
+              Pipeline,
+              aPipelineLayout,
+              aMaterialAlphaModes);
+  end;
+
  end;
 
 end;

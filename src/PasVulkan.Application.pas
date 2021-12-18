@@ -1085,6 +1085,8 @@ type EpvApplication=class(Exception)
 
        fVulkanDebuggingEnabled:boolean;
 
+       fVulkanPreferDedicatedGPUs:boolean;
+
        fVulkanMultiviewSupportEnabled:boolean;
 
        fVulkanMultiviewGeometryShader:boolean;
@@ -1094,6 +1096,12 @@ type EpvApplication=class(Exception)
        fVulkanMaxMultiviewViewCount:TpvUInt32;
 
        fVulkanMaxMultiviewInstanceIndex:TpvUInt32;
+
+       fVulkanFragmentShaderSampleInterlock:boolean;
+
+       fVulkanFragmentShaderPixelInterlock:boolean;
+
+       fVulkanFragmentShaderShadingRateInterlock:boolean;
 
        fVulkanInstance:TpvVulkanInstance;
 
@@ -1105,11 +1113,17 @@ type EpvApplication=class(Exception)
 
        fVulkanPhysicalDeviceFeatures2KHR:TVkPhysicalDeviceFeatures2KHR;
 
+       fVulkanPhysicalDeviceVulkan11Features:TVkPhysicalDeviceVulkan11Features;
+
+       fVulkanPhysicalDeviceVulkan11Properties:TVkPhysicalDeviceVulkan11Properties;
+
        fVulkanPhysicalDeviceMultiviewFeaturesKHR:TVkPhysicalDeviceMultiviewFeaturesKHR;
 
        fVulkanPhysicalDeviceProperties2KHR:TVkPhysicalDeviceProperties2KHR;
 
        fVulkanPhysicalDeviceMultiviewPropertiesKHR:TVkPhysicalDeviceMultiviewPropertiesKHR;
+
+       fVulkanPhysicalDeviceFragmentShaderInterlockFeaturesEXT:TVkPhysicalDeviceFragmentShaderInterlockFeaturesEXT;
 
        fCountCPUThreads:TpvInt32;
 
@@ -1505,6 +1519,8 @@ type EpvApplication=class(Exception)
 
        property VulkanDebuggingEnabled:boolean read fVulkanDebuggingEnabled;
 
+       property VulkanPreferDedicatedGPUs:boolean read fVulkanPreferDedicatedGPUs write fVulkanPreferDedicatedGPUs;
+
        property VulkanMultiviewSupportEnabled:boolean read fVulkanMultiviewSupportEnabled;
 
        property VulkanMultiviewGeometryShader:boolean read fVulkanMultiviewGeometryShader;
@@ -1514,6 +1530,12 @@ type EpvApplication=class(Exception)
        property VulkanMaxMultiviewViewCount:TpvUInt32 read fVulkanMaxMultiviewViewCount;
 
        property VulkanMaxMultiviewInstanceIndex:TpvUInt32 read fVulkanMaxMultiviewInstanceIndex;
+
+       property VulkanFragmentShaderSampleInterlock:boolean read fVulkanFragmentShaderSampleInterlock;
+
+       property VulkanFragmentShaderPixelInterlock:boolean read fVulkanFragmentShaderPixelInterlock;
+
+       property VulkanFragmentShaderShadingRateInterlock:boolean read fVulkanFragmentShaderShadingRateInterlock;
 
        property VulkanInstance:TpvVulkanInstance read fVulkanInstance;
 
@@ -1632,6 +1654,33 @@ const BoolToInt:array[boolean] of TpvInt32=(0,1);
 
 {$if defined(fpc) and defined(Windows)}
 function IsDebuggerPresent:longbool; stdcall; external 'kernel32.dll' name 'IsDebuggerPresent';
+{$ifend}
+
+{$if defined(fpc)}
+function DumpExceptionCallStack(e:Exception):string;
+var i:int32;
+    Frames:PPointer;
+begin
+ result:='Program exception! '+LineEnding+'Stack trace:'+LineEnding+LineEnding;
+ if assigned(e) then begin
+  result:=result+'Exception class: '+e.ClassName+LineEnding+'Message: '+e.Message+LineEnding;
+ end;
+ result:=result+BackTraceStrFunc(ExceptAddr);
+ Frames:=ExceptFrames;
+ for i:=0 to ExceptFrameCount-1 do begin
+  result:=result+LineEnding+BackTraceStrFunc(Frames);
+  inc(Frames);
+ end;
+end;
+{$else}
+function DumpException(e:Exception):string;
+const LineEnding={$ifdef Unix}#10{$else}#13#10{$endif};
+begin
+ result:='Program exception! '+LineEnding;
+ if assigned(e) then begin
+  result:=result+'Exception class: '+e.ClassName+LineEnding+'Message: '+e.Message+LineEnding;
+ end;
+end;
 {$ifend}
 
 {$if defined(Unix)}
@@ -5366,6 +5415,8 @@ begin
 
  fVulkanDebuggingEnabled:=false;
 
+ fVulkanPreferDedicatedGPUs:=true;
+
  fVulkanValidation:=false;
 
  fVulkanNoUniqueObjectsValidation:=false;
@@ -5660,6 +5711,8 @@ procedure TpvApplication.CreateVulkanDevice(const aSurface:TpvVulkanSurface=nil)
 var QueueFamilyIndex,ThreadIndex,SwapChainImageIndex,Index:TpvInt32;
     FormatProperties:TVkFormatProperties;
     PhysicalDevice:TpvVulkanPhysicalDevice;
+    DoMultiviewFeaturesStuff,
+    DoMultiviewVulkan11PropertiesStuff:boolean;
 begin
 {$if (defined(fpc) and defined(android)) and not defined(Release)}
  __android_log_write(ANDROID_LOG_VERBOSE,'PasVulkanApplication','Entering TpvApplication.CreateVulkanDevice');
@@ -5685,7 +5738,11 @@ begin
    end;
   end;
 
-  fVulkanDevice:=TpvVulkanDevice.Create(fVulkanInstance,PhysicalDevice,aSurface,nil);
+  fVulkanDevice:=TpvVulkanDevice.Create(fVulkanInstance,
+                                        PhysicalDevice,
+                                        aSurface,
+                                        nil,
+                                        fVulkanPreferDedicatedGPUs);
 
   fVulkanPhysicalDeviceHandle:=fVulkanDevice.PhysicalDevice.Handle;
 
@@ -5727,7 +5784,7 @@ begin
    fVulkanDevice.EnabledExtensionNames.Add(VK_EXT_DEBUG_MARKER_EXTENSION_NAME);
   end;
 
-  if fVulkanInstance.APIVersion=VK_API_VERSION_1_0 then begin
+  if (fVulkanInstance.APIVersion and VK_API_VERSION_WITHOUT_PATCH_MASK)=VK_API_VERSION_1_0 then begin
    // > Vulkan API version 1.0
    if fVulkanInstance.EnabledExtensionNames.IndexOf(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME)>=0 then begin
     if fVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_KHR_MULTIVIEW_EXTENSION_NAME)>=0 then begin
@@ -5738,6 +5795,12 @@ begin
   end else begin
    // >= Vulkan API version 1.1
    fVulkanMultiviewSupportEnabled:=true;
+   if fVulkanInstance.EnabledExtensionNames.IndexOf(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME)>=0 then begin
+    if fVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_KHR_MULTIVIEW_EXTENSION_NAME)>=0 then begin
+     fVulkanDevice.EnabledExtensionNames.Add(VK_KHR_MULTIVIEW_EXTENSION_NAME);
+     fVulkanMultiviewSupportEnabled:=true;
+    end;
+   end;
   end;
 
   SetupVulkanDevice(fVulkanDevice);
@@ -5887,49 +5950,94 @@ begin
    raise EpvVulkanException.Create('No suitable depth image format!');
   end;
 
-  if fVulkanMultiviewSupportEnabled then begin
+  DoMultiviewFeaturesStuff:=false;
 
-   FillChar(fVulkanPhysicalDeviceMultiviewFeaturesKHR,SizeOf(TVkPhysicalDeviceMultiviewFeaturesKHR),#0);
-   fVulkanPhysicalDeviceMultiviewFeaturesKHR.sType:=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTIVIEW_FEATURES_KHR;
+  DoMultiviewVulkan11PropertiesStuff:=false;
 
-   FillChar(fVulkanPhysicalDeviceFeatures2KHR,SizeOf(TVkPhysicalDeviceFeatures2KHR),#0);
-   fVulkanPhysicalDeviceFeatures2KHR.sType:=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2_KHR;
-   fVulkanPhysicalDeviceFeatures2KHR.pNext:=@fVulkanPhysicalDeviceMultiviewFeaturesKHR;
+  FillChar(fVulkanPhysicalDeviceFeatures2KHR,SizeOf(TVkPhysicalDeviceFeatures2KHR),#0);
+  fVulkanPhysicalDeviceFeatures2KHR.sType:=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2_KHR;
 
-   if fVulkanInstance.APIVersion=VK_API_VERSION_1_0 then begin
-    fVulkanInstance.Commands.GetPhysicalDeviceFeatures2KHR(fVulkanDevice.PhysicalDevice.Handle,@fVulkanPhysicalDeviceFeatures2KHR);
-   end else begin
-    fVulkanInstance.Commands.GetPhysicalDeviceFeatures2(fVulkanDevice.PhysicalDevice.Handle,@fVulkanPhysicalDeviceFeatures2KHR);
-   end;
+  FillChar(fVulkanPhysicalDeviceProperties2KHR,SizeOf(TVkPhysicalDeviceProperties2KHR),#0);
+  fVulkanPhysicalDeviceProperties2KHR.sType:=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2_KHR;
 
-   fVulkanMultiviewSupportEnabled:=fVulkanPhysicalDeviceMultiviewFeaturesKHR.multiview<>0;
+  if (fVulkanInstance.APIVersion and VK_API_VERSION_WITHOUT_PATCH_MASK)>=VK_API_VERSION_1_2 then begin
+
+   fVulkanPhysicalDeviceVulkan11Features:=fVulkanDevice.PhysicalDeviceVulkan11Features^;
+
+   FillChar(fVulkanPhysicalDeviceVulkan11Properties,SizeOf(TVkPhysicalDeviceVulkan11Properties),#0);
+   fVulkanPhysicalDeviceVulkan11Properties.sType:=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_PROPERTIES;
+   fVulkanPhysicalDeviceVulkan11Properties.pNext:=fVulkanPhysicalDeviceProperties2KHR.pNext;
+   fVulkanPhysicalDeviceProperties2KHR.pNext:=@fVulkanPhysicalDeviceVulkan11Properties;
+
+   fVulkanMultiviewSupportEnabled:=fVulkanMultiviewSupportEnabled and (fVulkanPhysicalDeviceVulkan11Features.multiview<>VK_FALSE);
 
    if fVulkanMultiviewSupportEnabled then begin
+    fVulkanMultiviewGeometryShader:=fVulkanPhysicalDeviceVulkan11Features.multiviewGeometryShader<>0;
+    fVulkanMultiviewTessellationShader:=fVulkanPhysicalDeviceVulkan11Features.multiviewTessellationShader<>0;
+    DoMultiviewVulkan11PropertiesStuff:=true;
+   end;
 
-    fVulkanMultiviewGeometryShader:=fVulkanPhysicalDeviceMultiviewFeaturesKHR.multiviewGeometryShader<>0;
+  end else begin
 
-    fVulkanMultiviewTessellationShader:=fVulkanPhysicalDeviceMultiviewFeaturesKHR.multiviewTessellationShader<>0;
-
-    FillChar(fVulkanPhysicalDeviceMultiviewPropertiesKHR,SizeOf(TVkPhysicalDeviceMultiviewPropertiesKHR),#0);
-    fVulkanPhysicalDeviceMultiviewPropertiesKHR.sType:=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTIVIEW_PROPERTIES_KHR;
-
-    FillChar(fVulkanPhysicalDeviceProperties2KHR,SizeOf(TVkPhysicalDeviceProperties2KHR),#0);
-    fVulkanPhysicalDeviceProperties2KHR.sType:=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2_KHR;
-    fVulkanPhysicalDeviceProperties2KHR.pNext:=@fVulkanPhysicalDeviceMultiviewPropertiesKHR;
-
-    if fVulkanInstance.APIVersion=VK_API_VERSION_1_0 then begin
-     fVulkanInstance.Commands.GetPhysicalDeviceProperties2KHR(fVulkanDevice.PhysicalDevice.Handle,@fVulkanPhysicalDeviceProperties2KHR);
-    end else begin
-     fVulkanInstance.Commands.GetPhysicalDeviceProperties2(fVulkanDevice.PhysicalDevice.Handle,@fVulkanPhysicalDeviceProperties2KHR);
-    end;
-
-    fVulkanMaxMultiviewViewCount:=fVulkanPhysicalDeviceMultiviewPropertiesKHR.maxMultiviewViewCount;
-
-    fVulkanMaxMultiviewInstanceIndex:=fVulkanPhysicalDeviceMultiviewPropertiesKHR.maxMultiviewInstanceIndex;
-
+   if fVulkanMultiviewSupportEnabled then begin
+    FillChar(fVulkanPhysicalDeviceMultiviewFeaturesKHR,SizeOf(TVkPhysicalDeviceMultiviewFeaturesKHR),#0);
+    fVulkanPhysicalDeviceMultiviewFeaturesKHR.sType:=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTIVIEW_FEATURES_KHR;
+    fVulkanPhysicalDeviceMultiviewFeaturesKHR.pNext:=fVulkanPhysicalDeviceFeatures2KHR.pNext;
+    fVulkanPhysicalDeviceFeatures2KHR.pNext:=@fVulkanPhysicalDeviceMultiviewFeaturesKHR;
+    DoMultiviewFeaturesStuff:=true;
    end;
 
   end;
+
+  begin
+   FillChar(fVulkanPhysicalDeviceFragmentShaderInterlockFeaturesEXT,SizeOf(TVkPhysicalDeviceFragmentShaderInterlockFeaturesEXT),#0);
+   fVulkanPhysicalDeviceFragmentShaderInterlockFeaturesEXT.sType:=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_INTERLOCK_FEATURES_EXT;
+   if fVulkanDevice.EnabledExtensionNames.IndexOf(VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME)>0 then begin
+    fVulkanPhysicalDeviceFragmentShaderInterlockFeaturesEXT.pNext:=fVulkanPhysicalDeviceFeatures2KHR.pNext;
+    fVulkanPhysicalDeviceFeatures2KHR.pNext:=@fVulkanPhysicalDeviceFragmentShaderInterlockFeaturesEXT;
+   end;
+  end;
+
+  if (fVulkanInstance.APIVersion and VK_API_VERSION_WITHOUT_PATCH_MASK)=VK_API_VERSION_1_0 then begin
+   fVulkanInstance.Commands.GetPhysicalDeviceFeatures2KHR(fVulkanDevice.PhysicalDevice.Handle,@fVulkanPhysicalDeviceFeatures2KHR);
+  end else begin
+   fVulkanInstance.Commands.GetPhysicalDeviceFeatures2(fVulkanDevice.PhysicalDevice.Handle,@fVulkanPhysicalDeviceFeatures2KHR);
+  end;
+
+  if DoMultiviewFeaturesStuff then begin
+
+   fVulkanMultiviewSupportEnabled:=fVulkanPhysicalDeviceMultiviewFeaturesKHR.multiview<>VK_FALSE;
+
+   if fVulkanMultiviewSupportEnabled then begin
+
+    fVulkanMultiviewGeometryShader:=fVulkanPhysicalDeviceMultiviewFeaturesKHR.multiviewGeometryShader<>VK_FALSE;
+    fVulkanMultiviewTessellationShader:=fVulkanPhysicalDeviceMultiviewFeaturesKHR.multiviewTessellationShader<>VK_FALSE;
+
+    FillChar(fVulkanPhysicalDeviceMultiviewPropertiesKHR,SizeOf(TVkPhysicalDeviceMultiviewPropertiesKHR),#0);
+    fVulkanPhysicalDeviceMultiviewPropertiesKHR.sType:=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTIVIEW_PROPERTIES_KHR;
+    fVulkanPhysicalDeviceMultiviewPropertiesKHR.pNext:=fVulkanPhysicalDeviceProperties2KHR.pNext;
+    fVulkanPhysicalDeviceProperties2KHR.pNext:=@fVulkanPhysicalDeviceMultiviewPropertiesKHR;
+
+   end;
+  end;
+
+  if (fVulkanInstance.APIVersion and VK_API_VERSION_WITHOUT_PATCH_MASK)=VK_API_VERSION_1_0 then begin
+   fVulkanInstance.Commands.GetPhysicalDeviceProperties2KHR(fVulkanDevice.PhysicalDevice.Handle,@fVulkanPhysicalDeviceProperties2KHR);
+  end else begin
+   fVulkanInstance.Commands.GetPhysicalDeviceProperties2(fVulkanDevice.PhysicalDevice.Handle,@fVulkanPhysicalDeviceProperties2KHR);
+  end;
+
+  if DoMultiviewFeaturesStuff and fVulkanMultiviewSupportEnabled then begin
+   fVulkanMaxMultiviewViewCount:=fVulkanPhysicalDeviceMultiviewPropertiesKHR.maxMultiviewViewCount;
+   fVulkanMaxMultiviewInstanceIndex:=fVulkanPhysicalDeviceMultiviewPropertiesKHR.maxMultiviewInstanceIndex;
+  end else if DoMultiviewVulkan11PropertiesStuff then begin
+   fVulkanMaxMultiviewViewCount:=fVulkanPhysicalDeviceVulkan11Properties.maxMultiviewViewCount;
+   fVulkanMaxMultiviewInstanceIndex:=fVulkanPhysicalDeviceVulkan11Properties.maxMultiviewInstanceIndex;
+  end;
+
+  fVulkanFragmentShaderSampleInterlock:=fVulkanPhysicalDeviceFragmentShaderInterlockFeaturesEXT.fragmentShaderSampleInterlock<>VK_FALSE;
+  fVulkanFragmentShaderPixelInterlock:=fVulkanPhysicalDeviceFragmentShaderInterlockFeaturesEXT.fragmentShaderPixelInterlock<>VK_FALSE;
+  fVulkanFragmentShaderShadingRateInterlock:=fVulkanPhysicalDeviceFragmentShaderInterlockFeaturesEXT.fragmentShaderShadingRateInterlock<>VK_FALSE;
 
  end;
 end;
@@ -6065,7 +6173,9 @@ begin
        fVulkanInstance.EnabledLayerNames.Add('VK_LAYER_LUNARG_swapchain');
       end;
      end else begin
-      if fVulkanInstance.AvailableLayerNames.IndexOf('VK_LAYER_LUNARG_standard_validation')>=0 then begin
+      if fVulkanInstance.AvailableLayerNames.IndexOf('VK_LAYER_KHRONOS_validation')>=0 then begin
+       fVulkanInstance.EnabledLayerNames.Add('VK_LAYER_KHRONOS_validation');
+      end else if fVulkanInstance.AvailableLayerNames.IndexOf('VK_LAYER_LUNARG_standard_validation')>=0 then begin
        fVulkanInstance.EnabledLayerNames.Add('VK_LAYER_LUNARG_standard_validation');
       end;
      end;
@@ -7962,7 +8072,9 @@ begin
 
   fResourceManager.FinishResources(fBackgroundResourceLoaderFrameTimeout);
 
-  if fSkipNextDrawFrame or not IsReadyForDrawOfSwapChainImageIndex(fDrawSwapChainImageIndex) then begin
+  if fSkipNextDrawFrame or not
+     ((not (CanBeParallelProcessed and (fCountSwapChainImages>1))) or
+      IsReadyForDrawOfSwapChainImageIndex(fDrawSwapChainImageIndex)) then begin
 
    fSkipNextDrawFrame:=false;
 
@@ -8090,6 +8202,7 @@ end;
 
 procedure TpvApplication.Run;
 var Index:TpvInt32;
+    ExceptionString:String;
 {$if defined(PasVulkanUseSDL2)}
     SDL2Flags:TpvUInt32;
     SDL2HintParameter:TpvUTF8String;
@@ -8488,68 +8601,81 @@ begin
 
          fLoadWasCalled:=true;
 
-         AfterCreateSwapChainWithCheck;
-
-         fLifecycleListenerListCriticalSection.Acquire;
          try
-          for Index:=0 to fLifecycleListenerList.Count-1 do begin
-           if TpvApplicationLifecycleListener(fLifecycleListenerList[Index]).Resume then begin
-            break;
+
+          AfterCreateSwapChainWithCheck;
+
+          fLifecycleListenerListCriticalSection.Acquire;
+          try
+           for Index:=0 to fLifecycleListenerList.Count-1 do begin
+            if TpvApplicationLifecycleListener(fLifecycleListenerList[Index]).Resume then begin
+             break;
+            end;
            end;
+          finally
+           fLifecycleListenerListCriticalSection.Release;
           end;
-         finally
-          fLifecycleListenerListCriticalSection.Release;
-         end;
 
-         if assigned(fStartScreen) then begin
-          SetScreen(fStartScreen.Create);
-         end;
-         try
-
-          if assigned(fAudio) then begin
- {$if defined(PasVulkanUseSDL2)}
-           SDL_PauseAudio(0);
- {$else}
- {$ifend}
+          if assigned(fStartScreen) then begin
+           SetScreen(fStartScreen.Create);
           end;
           try
 
-           while not fTerminated do begin
-            ProcessMessages;
+           if assigned(fAudio) then begin
+  {$if defined(PasVulkanUseSDL2)}
+            SDL_PauseAudio(0);
+  {$else}
+  {$ifend}
+           end;
+           try
+
+            while not fTerminated do begin
+             ProcessMessages;
+            end;
+
+           finally
+            if assigned(fAudio) then begin
+  {$if defined(PasVulkanUseSDL2)}
+             SDL_PauseAudio(1);
+  {$else}
+  {$ifend}
+            end;
            end;
 
           finally
-           if assigned(fAudio) then begin
- {$if defined(PasVulkanUseSDL2)}
-            SDL_PauseAudio(1);
- {$else}
- {$ifend}
-           end;
+
+           SetScreen(nil);
+
+           FreeAndNil(fNextScreen);
+           FreeAndNil(fScreen);
+
           end;
 
-         finally
-
-          SetScreen(nil);
-
-          FreeAndNil(fNextScreen);
-          FreeAndNil(fScreen);
-
-         end;
-
-         fLifecycleListenerListCriticalSection.Acquire;
-         try
-          for Index:=0 to fLifecycleListenerList.Count-1 do begin
-           if TpvApplicationLifecycleListener(fLifecycleListenerList[Index]).Pause then begin
-            break;
+          fLifecycleListenerListCriticalSection.Acquire;
+          try
+           for Index:=0 to fLifecycleListenerList.Count-1 do begin
+            if TpvApplicationLifecycleListener(fLifecycleListenerList[Index]).Pause then begin
+             break;
+            end;
            end;
-          end;
-          for Index:=0 to fLifecycleListenerList.Count-1 do begin
-           if TpvApplicationLifecycleListener(fLifecycleListenerList[Index]).Terminate then begin
-            break;
+           for Index:=0 to fLifecycleListenerList.Count-1 do begin
+            if TpvApplicationLifecycleListener(fLifecycleListenerList[Index]).Terminate then begin
+             break;
+            end;
            end;
+          finally
+           fLifecycleListenerListCriticalSection.Release;
           end;
-         finally
-          fLifecycleListenerListCriticalSection.Release;
+
+         except
+          on e:Exception do begin
+           ExceptionString:={$ifdef fpc}DumpExceptionCallStack{$else}DumpException{$endif}(e);
+{$if defined(fpc) and defined(android) and (defined(Release) or not defined(Debug))}
+           __android_log_write(ANDROID_LOG_ERROR,'PasVulkanApplication',PAnsiChar(TpvApplicationRawByteString(ExceptionString)));
+{$ifend}
+           TpvApplication.Log(LOG_ERROR,'TpvApplication.Run',ExceptionString);
+           //raise;
+          end;
          end;
 
         finally

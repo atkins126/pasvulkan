@@ -555,12 +555,15 @@ type EpvVulkanException=class(Exception);
        fMemoryManager:TpvVulkanDeviceMemoryManager;
        fDebugMarker:TpvVulkanDeviceDebugMarker;
        fCanvasCommon:TObject;
+       fPhysicalDeviceVulkan11Features:TVkPhysicalDeviceVulkan11Features;
+       fPointerToPhysicalDeviceVulkan11Features:PVkPhysicalDeviceVulkan11Features;
       protected
       public
        constructor Create(const aInstance:TpvVulkanInstance;
                           const aPhysicalDevice:TpvVulkanPhysicalDevice=nil;
                           const aSurface:TpvVulkanSurface=nil;
-                          const aAllocationManager:TpvVulkanAllocationManager=nil);
+                          const aAllocationManager:TpvVulkanAllocationManager=nil;
+                          const aPreferDedicatedGPUs:boolean=true);
        destructor Destroy; override;
        procedure AddQueue(const aQueueFamilyIndex:TpvUInt32;
                           const aQueuePriorities:array of TpvFloat;
@@ -573,6 +576,7 @@ type EpvVulkanException=class(Exception);
        procedure Initialize;
        procedure WaitIdle;
        property EnabledFeatures:PVkPhysicalDeviceFeatures read fPointerToEnabledFeatures;
+       property PhysicalDeviceVulkan11Features:PVkPhysicalDeviceVulkan11Features read fPointerToPhysicalDeviceVulkan11Features;
       published
        property Instance:TpvVulkanInstance read fInstance;
        property PhysicalDevice:TpvVulkanPhysicalDevice read fPhysicalDevice;
@@ -907,6 +911,7 @@ type EpvVulkanException=class(Exception);
        fFirstMemoryBlock:TpvVulkanDeviceMemoryBlock;
        fLastMemoryBlock:TpvVulkanDeviceMemoryBlock;
        fDedicatedAllocationSupport:TDedicatedAllocationSupport;
+       fLazilyAllocationSupport:boolean;
       public
        constructor Create(const aDevice:TpvVulkanDevice);
        destructor Destroy; override;
@@ -956,6 +961,10 @@ type EpvVulkanException=class(Exception);
        **
        **)
        procedure Defragment;
+
+      published
+
+       property LazilyAllocationSupport:boolean read fLazilyAllocationSupport;
 
      end;
 
@@ -1061,7 +1070,7 @@ type EpvVulkanException=class(Exception);
        destructor Destroy; override;
       published
        property Device:TpvVulkanDevice read fDevice;
-       property Handle:TVkRenderPass read fBufferViewHandle;
+       property Handle:TVkBufferView read fBufferViewHandle;
        property Buffer:TpvVulkanBuffer read fBuffer write fBuffer;
      end;
 
@@ -2954,6 +2963,14 @@ type EpvVulkanException=class(Exception);
                                  const aTransferCommandBuffer:TpvVulkanCommandBuffer;
                                  const aTransferFence:TpvVulkanFence;
                                  const aStream:TStream);
+       constructor CreateFromKTX2(const aDevice:TpvVulkanDevice;
+                                  const aGraphicsQueue:TpvVulkanQueue;
+                                  const aGraphicsCommandBuffer:TpvVulkanCommandBuffer;
+                                  const aGraphicsFence:TpvVulkanFence;
+                                  const aTransferQueue:TpvVulkanQueue;
+                                  const aTransferCommandBuffer:TpvVulkanCommandBuffer;
+                                  const aTransferFence:TpvVulkanFence;
+                                  const aStream:TStream);
        constructor CreateFromDDS(const aDevice:TpvVulkanDevice;
                                  const aGraphicsQueue:TpvVulkanQueue;
                                  const aGraphicsCommandBuffer:TpvVulkanCommandBuffer;
@@ -3158,7 +3175,7 @@ procedure VulkanDisableFloatingPointExceptions;
 
 implementation
 
-uses PasVulkan.Utils;
+uses PasVulkan.Utils,PasVulkan.Streams;
 
 const BooleanToVkBool:array[boolean] of TVkBool32=(VK_FALSE,VK_TRUE);
 
@@ -6456,10 +6473,10 @@ begin
    fApplicationInfo.apiVersion:=VK_API_VERSION_1_0;
   end;
  end;
- if fApplicationInfo.apiVersion<VK_API_VERSION_1_0 then begin
+ if (fApplicationInfo.apiVersion and VK_API_VERSION_WITHOUT_PATCH_MASK)<VK_API_VERSION_1_0 then begin
   fApplicationInfo.apiVersion:=VK_API_VERSION_1_0;
- end else if fApplicationInfo.apiVersion>VK_API_VERSION_1_1 then begin
-  fApplicationInfo.apiVersion:=VK_API_VERSION_1_1;
+ end else if (fApplicationInfo.apiVersion and VK_API_VERSION_WITHOUT_PATCH_MASK)>VK_API_VERSION_1_2 then begin
+  fApplicationInfo.apiVersion:=VK_API_VERSION_1_2;
  end;
 
  fValidation:=aValidation;
@@ -6661,7 +6678,7 @@ begin
    InstanceCreateInfo.enabledExtensionCount:=length(fEnabledExtensionNameStrings);
    InstanceCreateInfo.ppEnabledExtensionNames:=@fRawEnabledExtensionNameStrings[0];
   end;
-
+  InstanceCreateInfo.pApplicationInfo:=@fApplicationInfo;
   VulkanCheckResult(fVulkan.CreateInstance(@InstanceCreateInfo,fAllocationCallbacks,@fInstanceHandle));
 
   GetMem(InstanceCommands,SizeOf(TVulkanCommands));
@@ -7522,7 +7539,8 @@ end;
 constructor TpvVulkanDevice.Create(const aInstance:TpvVulkanInstance;
                                    const aPhysicalDevice:TpvVulkanPhysicalDevice=nil;
                                    const aSurface:TpvVulkanSurface=nil;
-                                   const aAllocationManager:TpvVulkanAllocationManager=nil);
+                                   const aAllocationManager:TpvVulkanAllocationManager=nil;
+                                   const aPreferDedicatedGPUs:boolean=true);
 var Index,SubIndex:TpvInt32;
     BestPhysicalDevice,CurrentPhysicalDevice:TpvVulkanPhysicalDevice;
     BestScore,CurrentScore,Temp,NewTemp:TpvUInt64;
@@ -7632,10 +7650,18 @@ begin
        CurrentScore:=CurrentScore or (TpvUInt64(1) shl 60);
       end;
       VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU:begin
-       CurrentScore:=CurrentScore or (TpvUInt64(3) shl 60);
+       if aPreferDedicatedGPUs then begin
+        CurrentScore:=CurrentScore or (TpvUInt64(3) shl 60);
+       end else begin
+        CurrentScore:=CurrentScore or (TpvUInt64(4) shl 60);
+       end;
       end;
       VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:begin
-       CurrentScore:=CurrentScore or (TpvUInt64(4) shl 60);
+       if aPreferDedicatedGPUs then begin
+        CurrentScore:=CurrentScore or (TpvUInt64(4) shl 60);
+       end else begin
+        CurrentScore:=CurrentScore or (TpvUInt64(3) shl 60);
+       end;
       end;
       VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:begin
        CurrentScore:=CurrentScore or (TpvUInt64(2) shl 60);
@@ -7698,6 +7724,8 @@ begin
  fEnabledFeatures:=fPhysicalDevice.fFeatures;
 
  fPointerToEnabledFeatures:=@fEnabledFeatures;
+
+ fPointerToPhysicalDeviceVulkan11Features:=@fPhysicalDeviceVulkan11Features;
 
  fMemoryManager:=TpvVulkanDeviceMemoryManager.Create(self);
 
@@ -8094,6 +8122,16 @@ begin
    DeviceCreateInfo.ppEnabledExtensionNames:=@fRawEnabledExtensionNameStrings[0];
   end;
   DeviceCreateInfo.pEnabledFeatures:=@fEnabledFeatures;
+  FillChar(fPhysicalDeviceVulkan11Features,SizeOf(TVkPhysicalDeviceVulkan11Features),#0);
+  fPhysicalDeviceVulkan11Features.sType:=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
+  if fInstance.APIVersion>=VK_API_VERSION_1_2 then begin
+   if fPhysicalDevice.AvailableExtensionNames.IndexOf(VK_KHR_MULTIVIEW_EXTENSION_NAME)>=0 then begin
+    fPhysicalDeviceVulkan11Features.multiview:=VK_TRUE;
+   end else begin
+    fPhysicalDeviceVulkan11Features.multiview:=VK_FALSE;
+   end;
+   DeviceCreateInfo.pNext:=@fPhysicalDeviceVulkan11Features;
+  end;
   VulkanCheckResult(fInstance.Commands.CreateDevice(fPhysicalDevice.fPhysicalDeviceHandle,@DeviceCreateInfo,fAllocationCallbacks,@fDeviceHandle));
 
   GetMem(DeviceCommands,SizeOf(TVulkanCommands));
@@ -9299,6 +9337,7 @@ begin
 end;
 
 function TpvVulkanDeviceMemoryChunk.MapMemory(const aOffset:TVkDeviceSize=0;const aSize:TVkDeviceSize=TVkDeviceSize(VK_WHOLE_SIZE)):PVkVoid;
+var NonCoherentAtomSize:TVkDeviceSize;
 begin
  result:=nil;
  if TpvVulkanDeviceMemoryChunkFlag.PersistentMapped in fMemoryChunkFlags then begin
@@ -9318,9 +9357,14 @@ begin
     if assigned(fMemory) then begin
      raise EpvVulkanException.Create('Memory is already mapped');
     end else begin
-     fMappedOffset:=aOffset;
-     fMappedSize:=aSize;
+     NonCoherentAtomSize:=fMemoryManager.fDevice.fPhysicalDevice.fProperties.limits.nonCoherentAtomSize;
+     fMappedOffset:=VulkanDeviceSizeAlignDown(aOffset,NonCoherentAtomSize);
+     fMappedSize:=VulkanDeviceSizeAlignUp(aOffset+aSize,NonCoherentAtomSize)-fMappedOffset;
+     if (fMappedOffset+fMappedSize)>fSize then begin
+      fMappedSize:=fSize-fMappedOffset;
+     end;
      VulkanCheckResult(fMemoryManager.fDevice.Commands.MapMemory(fMemoryManager.fDevice.fDeviceHandle,fMemoryHandle,fMappedOffset,fMappedSize,0,@result));
+     inc(TpvPtrInt(result),TpvPtrInt(aOffset)-TpvPtrInt(fMappedOffset));
      fMemory:=result;
     end;
    end else begin
@@ -9368,15 +9412,19 @@ begin
   Offset:=aMappedMemoryRange.offset;
   Size:=aMappedMemoryRange.size;
   NewOffset:=VulkanDeviceSizeAlignDown(Offset,NonCoherentAtomSize);
-  if (Size=TVkDeviceSize(VK_WHOLE_SIZE)) or ((Offset+Size)=fSize) then begin
-   NewSize:=TpvInt64(MaxInt64(0,TpvInt64(fSize-Offset)));
+  if (Size=TVkDeviceSize(VK_WHOLE_SIZE)) or ((NewOffset+Size)=fSize) then begin
+   NewSize:=TpvInt64(MaxInt64(0,TpvInt64(fSize-NewOffset)));
   end else begin
    Assert((Offset+Size)<=fSize);
-   NewSize:=VulkanDeviceSizeAlignUp(Size+(Offset-aMappedMemoryRange.offset),NonCoherentAtomSize);
-   MaximumSize:=TpvInt64(MaxInt64(0,TpvInt64(fSize-Offset)));
+   NewSize:=VulkanDeviceSizeAlignUp(Size+(NewOffset-aMappedMemoryRange.offset),NonCoherentAtomSize);
+   MaximumSize:=TpvInt64(MaxInt64(0,TpvInt64(fSize-NewOffset)));
    if NewSize>MaximumSize then begin
     NewSize:=MaximumSize;
    end;
+  end;
+  if (NewOffset<fMappedOffset) or ((NewOffset+NewSize)>(fMappedOffset+fMappedSize)) then begin
+   NewOffset:=fMappedOffset;
+   NewSize:=VK_WHOLE_SIZE;
   end;
   aMappedMemoryRange.offset:=NewOffset;
   aMappedMemoryRange.size:=NewSize;
@@ -9910,6 +9958,8 @@ begin
 
  fDedicatedAllocationSupport:=TDedicatedAllocationSupport.None;
 
+ fLazilyAllocationSupport:=false;
+
 end;
 
 destructor TpvVulkanDeviceMemoryManager.Destroy;
@@ -9926,9 +9976,11 @@ begin
 end;
 
 procedure TpvVulkanDeviceMemoryManager.Initialize;
+var Index:TpvSizeInt;
+    MemoryPropertyFlags:TVkMemoryPropertyFlags;
 begin
 
- if (((fDevice.fInstance.APIVersion shr 22)=1) or
+ if ((((fDevice.fInstance.APIVersion shr 22) and $7f)=1) or
     (((fDevice.fInstance.APIVersion shr 12) and $3ff)=0)) and
     (((fDevice.fEnabledExtensionNames.IndexOf(VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME)>=0) and
       (fDevice.fEnabledExtensionNames.IndexOf(VK_KHR_DEDICATED_ALLOCATION_EXTENSION_NAME)>=0)) and
@@ -9936,7 +9988,7 @@ begin
        assigned(fDevice.fDeviceVulkan.Commands.GetBufferMemoryRequirements2KHR) and
        assigned(fDevice.fDeviceVulkan.Commands.GetImageMemoryRequirements2KHR))) then begin
   fDedicatedAllocationSupport:=TDedicatedAllocationSupport.KHR;
- end else if (((fDevice.fInstance.APIVersion shr 22)>1) or
+ end else if ((((fDevice.fInstance.APIVersion shr 22) and $7f)>1) or
              (((fDevice.fInstance.APIVersion shr 22)=1) or
               (((fDevice.fInstance.APIVersion shr 12) and $3ff)>=1))) and
              (assigned(fDevice.fDeviceVulkan) and
@@ -9945,6 +9997,15 @@ begin
   fDedicatedAllocationSupport:=TDedicatedAllocationSupport.Core;
  end else begin
   fDedicatedAllocationSupport:=TDedicatedAllocationSupport.None;
+ end;
+
+ fLazilyAllocationSupport:=false;
+ for Index:=0 to TpvSizeInt(fDevice.fPhysicalDevice.fMemoryProperties.memoryTypeCount)-1 do begin
+  MemoryPropertyFlags:=fDevice.fPhysicalDevice.fMemoryProperties.memoryTypes[Index].propertyFlags;
+  if (MemoryPropertyFlags and TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT))<>0 then begin
+   fLazilyAllocationSupport:=true;
+   break;
+  end;
  end;
 
 end;
@@ -10222,7 +10283,6 @@ begin
 
    if not assigned(result) then begin
     // Otherwise allocate a block inside a new chunk
-
     MemoryChunk:=TpvVulkanDeviceMemoryChunk.Create(self,
                                                    MemoryChunkFlags,
                                                    VulkanDeviceSizeRoundUpToPowerOfTwo(MaxUInt64(VulkanMinimumMemoryChunkSize,aMemoryBlockSize shl 1)),
@@ -10455,6 +10515,7 @@ procedure TpvVulkanBuffer.UploadData(const aTransferQueue:TpvVulkanQueue;
 var StagingBuffer:TpvVulkanBuffer;
     p:TpvPointer;
     VkBufferCopy:TVkBufferCopy;
+    DataSize,NonCoherentAtomSize:TVkDeviceSize;
 begin
 
  if (aUseTemporaryStagingBufferMode=TpvVulkanBufferUseTemporaryStagingBufferMode.Yes) or
@@ -10509,7 +10570,26 @@ begin
     if assigned(p) then begin
      Move(aData,p^,aDataSize);
      if aForceFlush or ((fMemoryPropertyFlags and TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))=0) then begin
-      Memory.FlushMappedMemoryRange(p,aDataSize);
+      DataSize:=aDataSize;
+      NonCoherentAtomSize:=fDevice.fPhysicalDevice.fProperties.limits.nonCoherentAtomSize;
+      if NonCoherentAtomSize>0 then begin
+       if (NonCoherentAtomSize and (NonCoherentAtomSize-1))=0 then begin
+        if (DataSize and (NonCoherentAtomSize-1))<>0 then begin
+         inc(DataSize,NonCoherentAtomSize-(DataSize and (NonCoherentAtomSize-1)));
+         if (aDataOffset+aDataSize)>=Memory.Size then begin
+          DataSize:=Memory.Size-(aDataOffset+aDataSize);
+         end;
+        end;
+       end else begin
+        if (DataSize mod NonCoherentAtomSize)=0 then begin
+         inc(DataSize,NonCoherentAtomSize-(DataSize mod NonCoherentAtomSize));
+         if (aDataOffset+aDataSize)>=Memory.Size then begin
+          DataSize:=Memory.Size-(aDataOffset+aDataSize);
+         end;
+        end;
+       end;
+      end;
+      Memory.FlushMappedMemoryRange(p,DataSize);
      end;
     end else begin
      raise EpvVulkanException.Create('Vulkan buffer memory block map failed');
@@ -10530,6 +10610,7 @@ procedure TpvVulkanBuffer.UpdateData(const aData;
                                      const aDataSize:TVkDeviceSize;
                                      const aForceFlush:boolean=false);
 var p:TpvPointer;
+    NonCoherentAtomSize,DataSize,WholeSize:TVkDeviceSize;
 begin
  if (fMemoryPropertyFlags and TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))<>0 then begin
   p:=Memory.MapMemory(aDataOffset,aDataSize);
@@ -10537,7 +10618,26 @@ begin
    if assigned(p) then begin
     Move(aData,p^,aDataSize);
     if aForceFlush or ((fMemoryPropertyFlags and TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))=0) then begin
-     Memory.FlushMappedMemoryRange(p,aDataSize);
+     DataSize:=aDataSize;
+     NonCoherentAtomSize:=fDevice.fPhysicalDevice.fProperties.limits.nonCoherentAtomSize;
+     if NonCoherentAtomSize>0 then begin
+      if (NonCoherentAtomSize and (NonCoherentAtomSize-1))=0 then begin
+       if (DataSize and (NonCoherentAtomSize-1))<>0 then begin
+        inc(DataSize,NonCoherentAtomSize-(DataSize and (NonCoherentAtomSize-1)));
+        if (aDataOffset+aDataSize)>=Memory.Size then begin
+         DataSize:=Memory.Size-(aDataOffset+aDataSize);
+        end;
+       end;
+      end else begin
+       if (DataSize mod NonCoherentAtomSize)=0 then begin
+        inc(DataSize,NonCoherentAtomSize-(DataSize mod NonCoherentAtomSize));
+        if (aDataOffset+aDataSize)>=Memory.Size then begin
+         DataSize:=Memory.Size-(aDataOffset+aDataSize);
+        end;
+       end;
+      end;
+     end;
+     Memory.FlushMappedMemoryRange(p,DataSize);
     end;
    end else begin
     raise EpvVulkanException.Create('Vulkan buffer memory block map failed');
@@ -11012,7 +11112,9 @@ end;
 destructor TpvVulkanCommandBuffer.Destroy;
 begin
  if fCommandBufferHandle<>VK_NULL_HANDLE then begin
-  fDevice.fDeviceVulkan.FreeCommandBuffers(fDevice.fDeviceHandle,fCommandPool.fCommandPoolHandle,1,@fCommandBufferHandle);
+  if fDevice.fDeviceHandle<>VK_NULL_HANDLE then begin
+   fDevice.fDeviceVulkan.FreeCommandBuffers(fDevice.fDeviceHandle,fCommandPool.fCommandPoolHandle,1,@fCommandBufferHandle);
+  end;
   fCommandBufferHandle:=VK_NULL_HANDLE;
  end;
 //FreeAndNil(fFence);
@@ -11901,9 +12003,9 @@ begin
   if fCountCorrelationMasks>0 then begin
    MultiviewCreateInfo.correlationMaskCount:=fCountCorrelationMasks;
    MultiviewCreateInfo.pCorrelationMasks:=@fCorrelationMasks[0];
-  end else begin
+{ end else begin
    MultiviewCreateInfo.correlationMaskCount:=1;
-   MultiviewCreateInfo.pCorrelationMasks:=@DefaultCorrelationMask;
+   MultiviewCreateInfo.pCorrelationMasks:=@DefaultCorrelationMask;}
   end;
   RenderPassCreateInfo.pNext:=@MultiviewCreateInfo;
  end;
@@ -12161,7 +12263,7 @@ begin
   fImageView:=nil;
  end;
  if fImageHandle<>VK_NULL_HANDLE then begin
-  if fDoDestroy then begin
+  if fDoDestroy and (fDevice.fDeviceHandle<>VK_NULL_HANDLE) then begin
    fDevice.fDeviceVulkan.DestroyImage(fDevice.fDeviceHandle,fImageHandle,fDevice.fAllocationCallbacks);
   end;
   fImageHandle:=VK_NULL_HANDLE;
@@ -12581,7 +12683,9 @@ begin
   fImage:=nil;
  end;
  if fImageViewHandle<>VK_NULL_HANDLE then begin
-  fDevice.fDeviceVulkan.DestroyImageView(fDevice.fDeviceHandle,fImageViewHandle,fDevice.fAllocationCallbacks);
+  if fDevice.fDeviceHandle<>VK_NULL_HANDLE then begin
+   fDevice.fDeviceVulkan.DestroyImageView(fDevice.fDeviceHandle,fImageViewHandle,fDevice.fAllocationCallbacks);
+  end;
   fImageViewHandle:=VK_NULL_HANDLE;
  end;
  inherited Destroy;
@@ -18683,6 +18787,238 @@ begin
 
 end;
 
+constructor TpvVulkanTexture.CreateFromKTX2(const aDevice:TpvVulkanDevice;
+                                            const aGraphicsQueue:TpvVulkanQueue;
+                                            const aGraphicsCommandBuffer:TpvVulkanCommandBuffer;
+                                            const aGraphicsFence:TpvVulkanFence;
+                                            const aTransferQueue:TpvVulkanQueue;
+                                            const aTransferCommandBuffer:TpvVulkanCommandBuffer;
+                                            const aTransferFence:TpvVulkanFence;
+                                            const aStream:TStream);
+const	SUPERCOMPRESSION_NONE=0;
+      SUPERCOMPRESSION_CRN=1;
+      SUPERCOMPRESSION_ZLIB=2;
+      SUPERCOMPRESSION_ZSTD=3;
+type TKTX2Identifier=array[0..11] of TpvUInt8;
+     PKTX2Identifier=^TKTX2Identifier;
+     TKTX2Header=packed record
+      Identifier:TKTX2Identifier;
+      VkFormat:TpvUInt32;
+      TypeSize:TpvUInt32;
+      PixelWidth:TpvUInt32;
+      PixelHeight:TpvUInt32;
+      PixelDepth:TpvUInt32;
+      LayerCount:TpvUInt32;
+      FaceCount:TpvUInt32;
+      LevelCount:TpvUInt32;
+      SuperCompressionScheme:TpvUInt32;
+      dfdByteOffset:TpvUInt32;
+      dfdByteLength:TpvUInt32;
+      kvdByteOffset:TpvUInt32;
+      kvdByteLength:TpvUInt32;
+      sgdByteOffset:TpvUInt32;
+      sgdByteLength:TpvUInt32;
+     end;
+     PKTX2Header=^TKTX2Header;
+     TKTX2Level=packed record
+      ByteOffset:UInt64;
+      ByteLength:UInt64;
+      UncompressedByteLength:UInt64;
+     end;
+     PKTX2Level=^TKTX2Level;
+     TKTX2Levels=array of TKTX2Level;
+     TKTX2DataFormatDescriptor=packed record
+      dfdTotalSize:UInt32;
+     end;
+     PKTX2DataFormatDescriptor=^TKTX2DataFormatDescriptor;
+     TKTX2DataFormatDescriptorBasicFormat=packed record
+      VendorID:UInt16;
+      DescriptorType:UInt16;
+      VersionNumber:UInt16;
+      DescriptionBlockSize:UInt16;
+      ColorModel:UInt8;
+      ColorPrimaries:UInt8;
+      TransferFunction:UInt8;
+      Flags:UInt8;
+      TexelBlockDimensions:array[0..3] of UInt8;
+      BytePlanes:array[0..7] of UInt8;
+     end;
+     TKTX2DataFormatDescriptorSample=packed record
+      BitOffset:UInt16;
+      BitLength:UInt8;
+      ChannelID:UInt8;
+      SamplePositions:array[0..3] of UInt8;
+      SampleLower:UInt32;
+      SampleUpper:UInt32;
+     end;
+     PKTX2DataFormatDescriptorSample=^TKTX2DataFormatDescriptorSample;
+     TKTX2DataFormatDescriptorSamples=array of TKTX2DataFormatDescriptorSample;
+     TKeyValueHashMap=TpvStringHashMap<RawByteString>;
+var KTX2Header:TKTX2Header;
+    KTX2Levels:TKTX2Levels;
+    KTX2DataFormatDescriptor:TKTX2DataFormatDescriptor;
+    KTX2DataFormatDescriptorBasicFormat:TKTX2DataFormatDescriptorBasicFormat;
+    KTX2DataFormatDescriptorSamples:TKTX2DataFormatDescriptorSamples;
+    KeyValueByteLength,LevelCount,Remain,Count,CountSamples:UInt32;
+    NullPosition:Int32;
+    NewPosition,BasePosition:UInt64;
+    KeyValue,Key,Value:RawByteString;
+    KeyValueHashMap:TKeyValueHashMap;
+    DFDChunkSystem:TpvChunkStream;
+    KVDChunkSystem:TpvChunkStream;
+    SGDChunkSystem:TpvChunkStream;
+begin
+
+ BasePosition:=aStream.Position;
+
+ if aStream.Read(KTX2Header,SizeOf(TKTX2Header))<>SizeOf(TKTX2Header) then begin
+  raise EpvVulkanTextureException.Create('Stream read error');
+ end;
+
+ if (KTX2Header.Identifier[0]<>$ab) or
+    (KTX2Header.Identifier[1]<>$4b) or
+    (KTX2Header.Identifier[2]<>$54) or
+    (KTX2Header.Identifier[3]<>$58) or
+    (KTX2Header.Identifier[4]<>$20) or
+    (KTX2Header.Identifier[5]<>$32) or
+    (KTX2Header.Identifier[6]<>$30) or
+    (KTX2Header.Identifier[7]<>$bb) or
+    (KTX2Header.Identifier[8]<>$0d) or
+    (KTX2Header.Identifier[9]<>$0a) or
+    (KTX2Header.Identifier[10]<>$1a) or
+    (KTX2Header.Identifier[11]<>$0a) then begin
+  raise EpvVulkanTextureException.Create('Invalid KTX2 stream');
+ end;
+
+ if not (KTX2Header.FaceCount in [1,6]) then begin
+  raise EpvVulkanTextureException.Create('Invalid KTX2 stream (Count of faces must be 1 or 6)');
+ end;
+
+ if KTX2Header.LevelCount<>0 then begin
+  LevelCount:=KTX2Header.LevelCount;
+ end else begin
+  LevelCount:=1;
+ end;
+
+ KTX2Levels:=nil;
+ try
+
+  SetLength(KTX2Levels,LevelCount);
+
+  if aStream.Read(KTX2Levels[0],LevelCount*SizeOf(TKTX2Level))<>(LevelCount*SizeOf(TKTX2Level)) then begin
+   raise EpvVulkanTextureException.Create('Stream read error');
+  end;
+
+  if aStream.Read(KTX2DataFormatDescriptor,SizeOf(TKTX2DataFormatDescriptor))<>SizeOf(TKTX2DataFormatDescriptor) then begin
+   raise EpvVulkanTextureException.Create('Stream read error');
+  end;
+
+  DFDChunkSystem:=TpvChunkStream.Create(aStream,BasePosition+KTX2Header.dfdByteOffset,KTX2Header.dfdByteLength,false);
+  try
+
+   FillChar(KTX2DataFormatDescriptorBasicFormat,SizeOf(TKTX2DataFormatDescriptorBasicFormat),#0);
+
+   Remain:=KTX2DataFormatDescriptor.dfdTotalSize;
+   Count:=Min(SizeOf(KTX2DataFormatDescriptorBasicFormat),Remain);
+   if Count>0 then begin
+    if DFDChunkSystem.Read(KTX2DataFormatDescriptorBasicFormat,Count)<>Count then begin
+     raise EpvVulkanTextureException.Create('Stream read error');
+    end;
+    dec(Remain,Count);
+   end;
+   NewPosition:=DFDChunkSystem.Position+Remain;
+   if DFDChunkSystem.Seek(NewPosition,soBeginning)<>NewPosition then begin
+    raise EpvVulkanTextureException.Create('Stream seek error');
+   end;
+   inc(KTX2DataFormatDescriptorBasicFormat.TexelBlockDimensions[0]);
+   inc(KTX2DataFormatDescriptorBasicFormat.TexelBlockDimensions[1]);
+   inc(KTX2DataFormatDescriptorBasicFormat.TexelBlockDimensions[2]);
+   inc(KTX2DataFormatDescriptorBasicFormat.TexelBlockDimensions[3]);
+
+   CountSamples:=((KTX2DataFormatDescriptorBasicFormat.DescriptionBlockSize shr 2)-6) shr 2;
+
+   KTX2DataFormatDescriptorSamples:=nil;
+   try
+
+    if CountSamples>0 then begin
+     SetLength(KTX2DataFormatDescriptorSamples,CountSamples);
+     if DFDChunkSystem.Read(KTX2DataFormatDescriptorSamples[0],CountSamples*SizeOf(TKTX2DataFormatDescriptorSample))<>(CountSamples*SizeOf(TKTX2DataFormatDescriptorSample)) then begin
+      raise EpvVulkanTextureException.Create('Stream read error');
+     end;
+    end;
+
+    KVDChunkSystem:=TpvChunkStream.Create(aStream,BasePosition+KTX2Header.kvdByteOffset,KTX2Header.kvdByteLength,false);
+    try
+
+     KeyValueHashMap:=TKeyValueHashMap.Create('');
+     try
+
+      while KVDChunkSystem.Position<KVDChunkSystem.Size do begin
+       if KVDChunkSystem.Read(KeyValueByteLength,SizeOf(UInt32))<>SizeOf(UInt32) then begin
+        raise EpvVulkanTextureException.Create('Stream read error');
+       end;
+       KeyValue:='';
+       try
+        if KeyValueByteLength>0 then begin
+         SetLength(KeyValue,KeyValueByteLength);
+         if KVDChunkSystem.Read(KeyValue[1],KeyValueByteLength)<>KeyValueByteLength then begin
+          raise EpvVulkanTextureException.Create('Stream read error');
+         end;
+         NullPosition:=pos(AnsiChar(#0),KeyValue);
+         if NullPosition>0 then begin
+          Key:=Copy(KeyValue,1,NullPosition-1);
+          Value:=Copy(KeyValue,NullPosition+1,length(KeyValue)-NullPosition);
+          KeyValueHashMap.Add(Key,Value);
+         end;
+        end;
+       finally
+        KeyValue:='';
+       end;
+       if (KVDChunkSystem.Position and 3)<>0 then begin
+        NewPosition:=KVDChunkSystem.Position+(4-(KVDChunkSystem.Position and 3));
+        if KVDChunkSystem.Seek(NewPosition,soBeginning)<>NewPosition then begin
+         raise EpvVulkanTextureException.Create('Stream seek error');
+        end;
+       end;
+      end;
+
+      // TODO: Complete it!
+
+      if KTX2Header.sgdByteLength>0 then begin
+       SGDChunkSystem:=TpvChunkStream.Create(aStream,BasePosition+KTX2Header.sgdByteOffset,KTX2Header.sgdByteLength,false);
+       try
+
+
+
+       finally
+        FreeAndNil(SGDChunkSystem);
+       end;
+      end;
+
+     finally
+      FreeAndNil(KeyValueHashMap);
+     end;
+
+    finally
+     FreeAndNil(KVDChunkSystem);
+    end;
+
+   finally
+    KTX2DataFormatDescriptorSamples:=nil;
+   end;
+
+  finally
+   FreeAndNil(DFDChunkSystem);
+  end;
+
+ finally
+  KTX2Levels:=nil;
+ end;
+
+
+
+end;
+
 constructor TpvVulkanTexture.CreateFromDDS(const aDevice:TpvVulkanDevice;
                                            const aGraphicsQueue:TpvVulkanQueue;
                                            const aGraphicsCommandBuffer:TpvVulkanCommandBuffer;
@@ -20099,7 +20435,18 @@ begin
  FillChar(FirstBytes,SizeOf(FirstBytes),#0);
  aStream.ReadBuffer(FirstBytes,Min(SizeOf(FirstBytes),aStream.Size));
  aStream.Seek(0,soBeginning);
- if (FirstBytes[0]=$ab) and (FirstBytes[1]=$4b) and (FirstBytes[2]=$54) and (FirstBytes[3]=$58) and (FirstBytes[4]=$20) and (FirstBytes[5]=$31) and (FirstBytes[6]=$31) and (FirstBytes[7]=$bb) and (FirstBytes[8]=$0d) and (FirstBytes[9]=$0a) and (FirstBytes[10]=$1a) and (FirstBytes[11]=$0a) then begin
+ if (FirstBytes[0]=$ab) and
+    (FirstBytes[1]=$4b) and
+    (FirstBytes[2]=$54) and
+    (FirstBytes[3]=$58) and
+    (FirstBytes[4]=$20) and
+    (FirstBytes[5]=$31) and
+    (FirstBytes[6]=$31) and
+    (FirstBytes[7]=$bb) and
+    (FirstBytes[8]=$0d) and
+    (FirstBytes[9]=$0a) and
+    (FirstBytes[10]=$1a) and
+    (FirstBytes[11]=$0a) then begin
   CreateFromKTX(aDevice,
                 aGraphicsQueue,
                 aGraphicsCommandBuffer,
@@ -20108,6 +20455,26 @@ begin
                 aTransferCommandBuffer,
                 aTransferFence,
                 aStream);
+ end else if (FirstBytes[0]=$ab) and
+             (FirstBytes[1]=$4b) and
+             (FirstBytes[2]=$54) and
+             (FirstBytes[3]=$58) and
+             (FirstBytes[4]=$20) and
+             (FirstBytes[5]=$32) and
+             (FirstBytes[6]=$30) and
+             (FirstBytes[7]=$bb) and
+             (FirstBytes[8]=$0d) and
+             (FirstBytes[9]=$0a) and
+             (FirstBytes[10]=$1a) and
+             (FirstBytes[11]=$0a) then begin
+  CreateFromKTX2(aDevice,
+                 aGraphicsQueue,
+                 aGraphicsCommandBuffer,
+                 aGraphicsFence,
+                 aTransferQueue,
+                 aTransferCommandBuffer,
+                 aTransferFence,
+                 aStream);
  end else if (FirstBytes[0]=$89) and (FirstBytes[1]=$50) and (FirstBytes[2]=$4e) and (FirstBytes[3]=$47) and (FirstBytes[4]=$0d) and (FirstBytes[5]=$0a) and (FirstBytes[6]=$1a) and (FirstBytes[7]=$0a) then begin
   CreateFromPNG(aDevice,
                 aGraphicsQueue,

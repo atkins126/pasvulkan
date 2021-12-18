@@ -1,8 +1,15 @@
 #version 450 core
 
+#define NUM_SHADOW_CASCADES 4
+
+#extension GL_EXT_multiview : enable
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_ARB_shading_language_420pack : enable
 #extension GL_GOOGLE_include_directive : enable
+
+#ifndef ALPHATEST
+layout(early_fragment_tests) in;
+#endif
 
 layout(location = 0) in vec3 inWorldSpacePosition;
 layout(location = 1) in vec3 inViewSpacePosition;
@@ -14,9 +21,25 @@ layout(location = 6) in vec2 inTexCoord0;
 layout(location = 7) in vec2 inTexCoord1;
 layout(location = 8) in vec4 inColor0;
 
+#ifdef DEPTHONLY
+#if defined(MBOIT) && defined(MBOITPASS1)
+layout(location = 0) out vec4 outFragMBOITMoments0;
+layout(location = 1) out vec4 outFragMBOITMoments1;
+#endif
+#else
+#if defined(MBOIT)
+#if defined(MBOITPASS1)
+layout(location = 0) out vec4 outFragMBOITMoments0;
+layout(location = 1) out vec4 outFragMBOITMoments1;
+#elif defined(MBOITPASS2)
+layout(location = 0) out vec4 outFragColor;
+#endif
+#else
 layout(location = 0) out vec4 outFragColor;
 #ifdef EXTRAEMISSIONOUTPUT
 layout(location = 1) out vec4 outFragEmission;
+#endif
+#endif
 #endif
 
 /* clang-format off */
@@ -34,6 +57,15 @@ layout(std140, set = 1, binding = 0) uniform uboMaterial {
 
 layout(set = 1, binding = 1) uniform sampler2D uTextures[];
 
+struct View {
+  mat4 viewMatrix;
+  mat4 projectionMatrix;
+};
+
+layout(std140, set = 2, binding = 0) uniform uboViews {
+  View views[512];
+} uView;
+
 #ifdef LIGHTS
 struct Light {
   uvec4 metaData;
@@ -43,7 +75,7 @@ struct Light {
   mat4 shadowMapMatrix;
 };
 
-layout(std430, set = 2, binding = 0) buffer LightItemData {
+layout(std430, set = 2, binding = 1) buffer LightItemData {
 //uvec4 lightMetaData;
   Light lights[];
 };
@@ -53,20 +85,49 @@ struct LightTreeNode {
   uvec4 aabbMaxUserData;
 };
 
-layout(std430, set = 2, binding = 1) buffer LightTreeNodeData {
+layout(std430, set = 2, binding = 2) buffer LightTreeNodeData {
   LightTreeNode lightTreeNodes[];
 };
 #endif
 
+#if defined(MBOIT)
+
+layout(std140, set = 3, binding = 4) uniform uboMBOIT {
+  vec4 mboitZNearZFar;
+} uMBOIT;
+
+#if defined(MBOITPASS1)
+#elif defined(MBOITPASS2)
+#ifdef MSAA
+layout(input_attachment_index = 0, set = 3, binding = 5) uniform subpassInputMS uMBOITMoments0;
+layout(input_attachment_index = 1, set = 3, binding = 6) uniform subpassInputMS uMBOITMoments1;
+#else
+layout(input_attachment_index = 0, set = 3, binding = 5) uniform subpassInput uMBOITMoments0;
+layout(input_attachment_index = 1, set = 3, binding = 6) uniform subpassInput uMBOITMoments1;
+#endif
+#endif
+
+#endif
+
+#ifdef DEPTHONLY
+#else
 layout(set = 3, binding = 0) uniform sampler2D uImageBasedLightingBRDFTextures[];  // 0 = GGX, 1 = Charlie, 2 = Sheen E
 
 layout(set = 3, binding = 1) uniform samplerCube uImageBasedLightingEnvMaps[];  // 0 = GGX, 1 = Charlie, 2 = Lambertian
 
+#ifdef SHADOWS
+layout(std140, set = 3, binding = 2) uniform uboCascadedShadowMaps {
+  mat4 shadowMapMatrices[NUM_SHADOW_CASCADES];
+  vec4 shadowMapSplitDepths[NUM_SHADOW_CASCADES];
+} uCascadedShadowMaps;
+
+layout(set = 3, binding = 3) uniform sampler2DArray uCascadedShadowMapTexture;
+
+#endif
+
+#endif
+
 /* clang-format on */
-
-#include "roughness.glsl"
-
-float envMapMaxLevelGGX, envMapMaxLevelCharlie;
 
 vec3 convertLinearRGBToSRGB(vec3 c) {
   return mix((pow(c, vec3(1.0 / 2.4)) * vec3(1.055)) - vec3(5.5e-2), c * vec3(12.92), lessThan(c, vec3(3.1308e-3)));  //
@@ -79,6 +140,16 @@ vec3 convertSRGBToLinearRGB(vec3 c) {
 vec4 convertSRGBToLinearRGB(vec4 c) {
   return vec4(convertSRGBToLinearRGB(c.xyz), c.w);  //
 }
+
+#ifdef MBOIT
+ #include "mboit.glsl"
+#endif
+
+#ifdef DEPTHONLY
+#else
+#include "roughness.glsl"
+
+float envMapMaxLevelGGX, envMapMaxLevelCharlie;
 
 const float PI = 3.14159265358979323846,     //
     PI2 = 6.283185307179586476925286766559,  //
@@ -242,6 +313,8 @@ vec3 getIBLRadianceCharlie(vec3 normal, vec3 viewDirection, float sheenRoughness
          ao;
 }
 
+#ifdef SHADOWS
+
 float computeMSM(in vec4 moments, in float fragmentDepth, in float depthBias, in float momentBias) {
   vec4 b = mix(moments, vec4(0.5), momentBias);
   vec3 z;
@@ -268,14 +341,7 @@ float computeMSM(in vec4 moments, in float fragmentDepth, in float depthBias, in
   z[2] = (p * -0.5) + r;
   vec4 switchVal = (z[2] < z[0]) ? vec4(z[1], z[0], 1.0, 1.0) : ((z[1] < z[0]) ? vec4(z[0], z[1], 0.0, 1.0) : vec4(0.0));
   float quotient = (switchVal[0] * z[2] - b[0] * (switchVal[0] + z[2]) + b[1]) / ((z[2] - switchVal[1]) * (z[0] - z[1]));
-  return clamp((switchVal[2] + (switchVal[3] * quotient)), 0.0, 1.0);
-}
-
-vec2 getShadowOffsets(const in vec3 p, const in vec3 N, const in vec3 L) {
-  float cos_alpha = clamp(dot(N, L), 0.0, 1.0);
-  float offset_scale_N = sqrt(1.0 - (cos_alpha * cos_alpha));  // sin(acos(L?N))
-  float offset_scale_L = offset_scale_N / cos_alpha;           // tan(acos(L?N))
-  return (vec2(offset_scale_N, min(2.0, offset_scale_L)) * vec2(0.0002, 0.00005)) + vec2(0.0, 0.0);
+  return 1.0 - clamp((switchVal[2] + (switchVal[3] * quotient)), 0.0, 1.0);
 }
 
 float linearStep(float a, float b, float v) {
@@ -288,7 +354,15 @@ float reduceLightBleeding(float pMax, float amount) {
 
 float getMSMShadowIntensity(vec4 moments, float depth, float depthBias, float momentBias) {
   vec4 b = mix(moments, vec4(0.5), momentBias);
-  float d = depth - depthBias, l32d22 = fma(-b.x, b.y, b.z), d22 = fma(-b.x, b.x, b.y), squaredDepthVariance = fma(-b.y, b.y, b.w), d33d22 = dot(vec2(squaredDepthVariance, -l32d22), vec2(d22, l32d22)), invD22 = 1.0 / d22, l32 = l32d22 * invD22;
+  float                                                  //
+      d = depth - depthBias,                             //
+      l32d22 = fma(-b.x, b.y, b.z),                      //
+      d22 = fma(-b.x, b.x, b.y),                         //
+      squaredDepthVariance = fma(-b.y, b.y, b.w),        //
+      d33d22 = dot(vec2(squaredDepthVariance, -l32d22),  //
+                   vec2(d22, l32d22)),                   //
+      invD22 = 1.0 / d22,                                //
+      l32 = l32d22 * invD22;
   vec3 c = vec3(1.0, d - b.x, d * d);
   c.z -= b.y + (l32 * c.y);
   c.yz *= vec2(invD22, d22 / d33d22);
@@ -297,8 +371,30 @@ float getMSMShadowIntensity(vec4 moments, float depth, float depthBias, float mo
   vec2 pq = c.yx / c.z;
   vec3 z = vec3(d, vec2(-(pq.x * 0.5)) + (vec2(-1.0, 1.0) * sqrt(((pq.x * pq.x) * 0.25) - pq.y)));
   vec4 s = (z.z < z.x) ? vec3(z.y, z.x, 1.0).xyzz : ((z.y < z.x) ? vec4(z.x, z.y, 0.0, 1.0) : vec4(0.0));
-  return clamp((s.z + (s.w * ((((s.x * z.z) - (b.x * (s.x + z.z))) + b.y) / ((z.z - s.y) * (z.x - z.y))))) * 1.03, 0.0, 1.0);
+  return 1.0 - clamp((s.z + (s.w * ((((s.x * z.z) - (b.x * (s.x + z.z))) + b.y) / ((z.z - s.y) * (z.x - z.y))))) * 1.03, 0.0, 1.0);
 }
+
+float doCascadedShadowMapMSMShadow(const in int cascadedShadowMapIndex, const in vec3 lightDirection) {
+  mat4 shadowMapMatrix = uCascadedShadowMaps.shadowMapMatrices[cascadedShadowMapIndex];
+  vec4 shadowNDC = shadowMapMatrix * vec4(inWorldSpacePosition, 1.0);
+  shadowNDC /= shadowNDC.w;
+  shadowNDC.xy = fma(shadowNDC.xy, vec2(0.5), vec2(0.5));
+  if (all(greaterThanEqual(shadowNDC, vec4(0.0))) && all(lessThanEqual(shadowNDC, vec4(1.0)))) {
+    vec4 moments = (textureLod(uCascadedShadowMapTexture, vec3(shadowNDC.xy, float(int(cascadedShadowMapIndex))), 0.0) +  //
+                    vec2(-0.035955884801, 0.0).xyyy) *                                                                    //
+                   mat4(0.2227744146, 0.0771972861, 0.7926986636, 0.0319417555,                                           //
+                        0.1549679261, 0.1394629426, 0.7963415838, -0.172282317,                                           //
+                        0.1451988946, 0.2120202157, 0.7258694464, -0.2758014811,                                          //
+                        0.163127443, 0.2591432266, 0.6539092497, -0.3376131734);
+    float depthBias = clamp(0.005 * tan(acos(clamp(dot(inNormal, -lightDirection), -1.0, 1.0))), 0.0, 0.1) * 0.15;
+    return clamp(reduceLightBleeding(getMSMShadowIntensity(moments, shadowNDC.z, depthBias, 3e-4), 0.25), 0.0, 1.0);
+  } else {
+    return 1.0;
+  }
+}
+
+#endif
+#endif
 
 const uint smPBRMetallicRoughness = 0u,  //
     smPBRSpecularGlossiness = 1u,        //
@@ -306,6 +402,11 @@ const uint smPBRMetallicRoughness = 0u,  //
 
 uvec2 texCoordIndices = uMaterial.alphaCutOffFlagsTex0Tex1.zw;
 vec2 texCoords[2] = vec2[2](inTexCoord0, inTexCoord1);
+
+vec2 textureUV(const sampler2D tex, const in int textureIndex, const in vec4 defaultValue) {
+  uint which = (texCoordIndices[textureIndex >> 3] >> ((uint(textureIndex) & 7u) << 2u)) & 0xfu;
+  return (which < 0x2u) ? (uMaterial.textureTransforms[textureIndex] * vec3(texCoords[int(which)], 1.0).xyzz).xy : inTexCoord0;
+}
 
 vec4 textureFetch(const sampler2D tex, const in int textureIndex, const in vec4 defaultValue) {
   uint which = (texCoordIndices[textureIndex >> 3] >> ((uint(textureIndex) & 7u) << 2u)) & 0xfu;
@@ -325,17 +426,14 @@ vec4 textureFetchSRGB(const sampler2D tex, const in int textureIndex, const in v
 }
 
 void main() {
+#ifndef DEPTHONLY
   envMapMaxLevelGGX = textureQueryLevels(uImageBasedLightingEnvMaps[0]);
   envMapMaxLevelCharlie = textureQueryLevels(uImageBasedLightingEnvMaps[1]);
   flags = uMaterial.alphaCutOffFlagsTex0Tex1.y;
   shadingModel = (flags >> 0u) & 0xfu;
-#ifdef SHADOWMAP
-  vec4 t = uFrameGlobals.viewProjectionMatrix * vec4(vWorldSpacePosition, 1.0);
-  float d = fma(t.z / t.w, 0.5, 0.5);
-  float s = d * d;
-  vec4 m = vec4(d, s, s * d, s * s);
-  oOutput = m;
-  float alpha = textureFetch(uTextures[0], 0, vec4(1.0)).w * uMaterial.baseColorFactor.w * vColor.w;
+#endif
+#ifdef DEPTHONLY
+  float alpha = textureFetch(uTextures[0], 0, vec4(1.0)).w * uMaterial.baseColorFactor.w * inColor0.w;
 #else
   vec4 color = vec4(0.0);
 #ifdef EXTRAEMISSIONOUTPUT
@@ -364,14 +462,14 @@ void main() {
           vec3 dielectricSpecularF0 = clamp(F0 * specularColorFactor * specularFactor, vec3(0.0), vec3(1.0));
           vec4 baseColor = textureFetchSRGB(uTextures[0], 0, vec4(1.0)) * uMaterial.baseColorFactor;
           vec2 metallicRoughness = clamp(textureFetch(uTextures[1], 1, vec4(1.0)).zy * uMaterial.metallicRoughnessNormalScaleOcclusionStrengthFactor.xy, vec2(0.0, 1e-3), vec2(1.0));
-          diffuseColorAlpha = vec4(max(vec3(0.0), baseColor.xyz * (vec3(1.0) - max(max(dielectricSpecularF0.x, dielectricSpecularF0.y), dielectricSpecularF0.z)) * (1.0 - metallicRoughness.x)), baseColor.w);
-          F0 = mix(F0, baseColor.xyz, metallicRoughness.x);
+          diffuseColorAlpha = vec4(max(vec3(0.0), baseColor.xyz * (1.0 - metallicRoughness.x)), baseColor.w);
+          F0 = mix(dielectricSpecularF0, baseColor.xyz, metallicRoughness.x);
           perceptualRoughness = metallicRoughness.y;
           break;
         }
         case smPBRSpecularGlossiness: {
           vec4 specularGlossiness = textureFetchSRGB(uTextures[1], 1, vec4(1.0)) * vec4(uMaterial.specularFactor.xyz, uMaterial.metallicRoughnessNormalScaleOcclusionStrengthFactor.y);
-          diffuseColorAlpha = textureFetchSRGB(uTextures[0], 0, vec4(1.0)) * uMaterial.baseColorFactor * vec2((1.0 - max(max(specularGlossiness.x, specularGlossiness.y), specularGlossiness.z)), 1.0).xxxy;
+          diffuseColorAlpha = textureFetchSRGB(uTextures[0], 0, vec4(1.0)) * uMaterial.baseColorFactor;
           F0 = specularGlossiness.xyz;
           perceptualRoughness = clamp(1.0 - specularGlossiness.w, 1e-3, 1.0);
           break;
@@ -464,33 +562,61 @@ void main() {
             vec3 lightVector = light.positionRange.xyz - inWorldSpacePosition.xyz;
             vec3 normalizedLightVector = normalize(lightVector);
 #ifdef SHADOWS
-            if ((uShadows != 0) && ((light.metaData.y & 0x80000000u) == 0u)) {
+            if (/*(uShadows != 0) &&*/ ((light.metaData.y & 0x80000000u) == 0u)) {
               switch (light.metaData.x) {
-                case 1u: {  // Directional
-                  imageLightBasedLightDirection = light.directionZFar.xyz;
+#if 0
+                case 1u: { // Directional 
+                  // imageLightBasedLightDirection = light.directionZFar.xyz;
                   // fall-through
                 }
                 case 3u: {  // Spot
-                  vec4 shadowNDC = light.shadowMapMatrix * vec4(vWorldSpacePosition, 1.0);
+                  vec4 shadowNDC = light.shadowMapMatrix * vec4(inWorldSpacePosition, 1.0);                  
                   shadowNDC /= shadowNDC.w;
                   if (all(greaterThanEqual(shadowNDC, vec4(-1.0))) && all(lessThanEqual(shadowNDC, vec4(1.0)))) {
                     shadowNDC.xyz = fma(shadowNDC.xyz, vec3(0.5), vec3(0.5));
                     vec4 moments = (textureLod(uNormalShadowMapArrayTexture, vec3(shadowNDC.xy, float(int(light.metaData.y))), 0.0) + vec2(-0.035955884801, 0.0).xyyy) * mat4(0.2227744146, 0.0771972861, 0.7926986636, 0.0319417555, 0.1549679261, 0.1394629426, 0.7963415838, -0.172282317, 0.1451988946, 0.2120202157, 0.7258694464, -0.2758014811, 0.163127443, 0.2591432266, 0.6539092497, -0.3376131734);
-                    lightAttenuation *= 1.0 - reduceLightBleeding(getMSMShadowIntensity(moments, shadowNDC.z, 5e-3, 1e-2), 0.0);
+                    lightAttenuation *= reduceLightBleeding(getMSMShadowIntensity(moments, shadowNDC.z, 5e-3, 1e-2), 0.0);
                   }
                   break;
                 }
                 case 2u: {  // Point
                   float znear = 1e-2, zfar = max(1.0, light.directionZFar.w);
-                  vec3 vector = light.positionRange.xyz - vWorldSpacePosition;
+                  vec3 vector = light.positionRange.xyz - inWorldSpacePosition;
                   vec4 moments = (textureLod(uCubeMapShadowMapArrayTexture, vec4(vec3(normalize(vector)), float(int(light.metaData.y))), 0.0) + vec2(-0.035955884801, 0.0).xyyy) * mat4(0.2227744146, 0.0771972861, 0.7926986636, 0.0319417555, 0.1549679261, 0.1394629426, 0.7963415838, -0.172282317, 0.1451988946, 0.2120202157, 0.7258694464, -0.2758014811, 0.163127443, 0.2591432266, 0.6539092497, -0.3376131734);
-                  lightAttenuation *= 1.0 - reduceLightBleeding(getMSMShadowIntensity(moments, clamp((length(vector) - znear) / (zfar - znear), 0.0, 1.0), 5e-3, 1e-2), 0.0);
+                  lightAttenuation *= reduceLightBleeding(getMSMShadowIntensity(moments, clamp((length(vector) - znear) / (zfar - znear), 0.0, 1.0), 5e-3, 1e-2), 0.0);
+                  break;
+                }
+#endif
+                case 4u: {  // Primary directional
+                  imageLightBasedLightDirection = light.directionZFar.xyz;
+                  litIntensity = lightAttenuation;
+                  float viewSpaceDepth = -inViewSpacePosition.z;
+                  for (int cascadedShadowMapIndex = 0; cascadedShadowMapIndex < NUM_SHADOW_CASCADES; cascadedShadowMapIndex++) {
+                    vec2 shadowMapSplitDepth = uCascadedShadowMaps.shadowMapSplitDepths[cascadedShadowMapIndex].xy;
+                    if ((viewSpaceDepth >= shadowMapSplitDepth.x) && (viewSpaceDepth <= shadowMapSplitDepth.y)) {
+                      float shadow = doCascadedShadowMapMSMShadow(cascadedShadowMapIndex, light.directionZFar.xyz);
+                      int nextCascadedShadowMapIndex = cascadedShadowMapIndex + 1;
+                      if (nextCascadedShadowMapIndex < NUM_SHADOW_CASCADES) {
+                        vec2 nextShadowMapSplitDepth = uCascadedShadowMaps.shadowMapSplitDepths[nextCascadedShadowMapIndex].xy;
+                        if ((viewSpaceDepth >= nextShadowMapSplitDepth.x) && (viewSpaceDepth <= nextShadowMapSplitDepth.y)) {
+                          float splitFade = smoothstep(nextShadowMapSplitDepth.x, shadowMapSplitDepth.y, viewSpaceDepth);
+                          if (splitFade > 0.0) {
+                            shadow = mix(shadow, doCascadedShadowMapMSMShadow(nextCascadedShadowMapIndex, light.directionZFar.xyz), splitFade);
+                          }
+                        }
+                      }
+                      lightAttenuation *= shadow;
+                      break;
+                    }
+                  }
                   break;
                 }
               }
+#if 0              
               if (lightIndex == 0) {
                 litIntensity = lightAttenuation;
               }
+#endif
             }
 #endif
             switch (light.metaData.x) {
@@ -514,6 +640,10 @@ void main() {
 #endif
                 lightAttenuation *= angularAttenuation * angularAttenuation;
                 lightDirection = normalizedLightVector;
+                break;
+              }
+              case 4u: {  // Primary directional
+                imageLightBasedLightDirection = lightDirection = -light.directionZFar.xyz;
                 break;
               }
               default: {
@@ -562,7 +692,7 @@ void main() {
           lightTreeNodeIndex += max(1u, lightTreeNode.aabbMinSkipCount.w);
         }
       }
-      if (lightTreeNodeIndex == 0u) {
+/*    if (lightTreeNodeIndex == 0u) {
         doSingleLight(vec3(1.7, 1.15, 0.70),              //
                       vec3(1.0),                          //
                       normalize(-vec3(0.5, -1.0, -1.0)),  //
@@ -581,7 +711,7 @@ void main() {
                       clearcoatF0,                        //
                       clearcoatRoughness,                 //
                       specularWeight);                    //
-      }
+      }*/
 #elif 1
       doSingleLight(vec3(1.7, 1.15, 0.70),              //
                     vec3(1.0),                          //
@@ -631,16 +761,96 @@ void main() {
     }
   }
   float alpha = color.w * inColor0.w, outputAlpha = mix(1.0, color.w * inColor0.w, float(int(uint((flags >> 5u) & 1u))));
-  outFragColor = vec4(color.xyz * inColor0.xyz, outputAlpha);
+  vec4 finalColor = vec4(color.xyz * inColor0.xyz, outputAlpha);
+#if !defined(MBOIT)
+  outFragColor = finalColor;
 #ifdef EXTRAEMISSIONOUTPUT
   outFragEmission = vec4(emissionColor.xyz * inColor0.xyz, outputAlpha);
 #endif
 #endif
+#endif
+
 #ifdef ALPHATEST
   if (alpha < uintBitsToFloat(uMaterial.alphaCutOffFlagsTex0Tex1.x)) {
-    discard;
-  }
+#if defined(MBOIT)
+#if defined(MBOIT) && defined(MBOITPASS1)    
+    alpha = 0.0;    
+#else
+    finalColor = vec4(alpha = 0.0);    
 #endif
+#else 
+    discard;
+#endif
+#if defined(MBOIT)
+  }else{
+#if defined(MBOIT) && defined(MBOITPASS1)    
+    alpha = 1.0;    
+#else
+    finalColor.w = alpha = 1.0;    
+#endif
+#endif
+  }
+#if !defined(MBOIT)
+#ifdef MSAA
+#if 0
+  vec2 alphaTextureSize = textureSize(uTextures[0]).xy;
+  vec2 alphaTextureUV = textureUV(0) * alphaTextureSize;
+  vec4 alphaDXY = vec4(vec2(dFdx(alphaTextureXY)), vec2(dFdy(alphaTextureXY)));
+  alpha *= 1.0 + (max(0.0, max(dot(alphaDXY.xy, alphaDXY.xy), dot(alphaDXY.zw, alphaDXY.zw)) * 0.5) * 0.25);
+#endif
+  alpha = clamp(((alpha - uintBitsToFloat(uMaterial.alphaCutOffFlagsTex0Tex1.x)) / max(fwidth(alpha), 1e-4)) + 0.5, 0.0, 1.0);
+  if (alpha < 1e-2) {
+    alpha = 0.0;
+  }
+#ifndef DEPTHONLY  
+  outFragColor.w = finalColor.w = alpha;
+#endif
+#endif
+#endif
+#endif
+
+#if defined(MBOIT)
+  float depth = MBOIT_WarpDepth(clamp(-inViewSpacePosition.z, uMBOIT.mboitZNearZFar.x, uMBOIT.mboitZNearZFar.y), uMBOIT.mboitZNearZFar.z, uMBOIT.mboitZNearZFar.w);
+  float transmittance = clamp(1.0 - alpha, 1e-4, 1.0);
+#ifdef MBOITPASS1
+  {
+    float b0;
+    vec4 b1234;
+    vec4 b56;
+    MBOIT6_GenerateMoments(depth, transmittance, b0, b1234, b56);
+    outFragMBOITMoments0 = vec4(b0, b1234.xyz);
+    outFragMBOITMoments1 = vec4(b1234.w, b56.xy, 0.0);
+  }
+#elif defined(MBOITPASS2)
+  {
+#ifdef MSAA
+    vec4 mboitMoments0 = subpassLoad(uMBOITMoments0, gl_SampleID); 
+    vec4 mboitMoments1 = subpassLoad(uMBOITMoments1, gl_SampleID); 
+#else    
+    vec4 mboitMoments0 = subpassLoad(uMBOITMoments0); 
+    vec4 mboitMoments1 = subpassLoad(uMBOITMoments1); 
+#endif
+    float b0 = mboitMoments0.x;
+    vec4 b1234 = vec4(mboitMoments0.yzw, mboitMoments1.x);
+    vec4 b56 = vec3(mboitMoments1.yz, 0.0).xyzz;
+    float transmittance_at_depth = 1.0;
+    float total_transmittance = 1.0;
+    MBOIT6_ResolveMoments(transmittance_at_depth,  //
+                          total_transmittance,     //
+                          depth,                   //
+                          5e-5,                    // moment_bias
+                          0.04,                    // overestimation
+                          b0,                      //
+                          b1234,                   //
+                          b56);
+    if(isinf(transmittance_at_depth) || isnan(transmittance_at_depth)){
+      transmittance_at_depth = 1.0;
+    }
+    outFragColor = vec4(finalColor.xyz, 1.0) * (finalColor.w * transmittance_at_depth);
+  } 
+#endif
+#endif
+
 }
 
 /*oid main() {

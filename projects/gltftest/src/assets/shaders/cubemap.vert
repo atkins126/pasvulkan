@@ -8,7 +8,7 @@
 //layout(location = 0) in vec3 inPosition;
 
 layout(location = 0) out vec2 outTexCoord;
-layout(location = 1) out int outFaceIndex;
+layout(location = 1) flat out int outFaceIndex;
 
 void main(){
   // For 18 vertices (6x attribute-less-rendered "full-screen" triangles)
