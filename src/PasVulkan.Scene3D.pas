@@ -92,7 +92,8 @@ type EpvScene3D=class(Exception);
 
      TpvScene3D=class(TpvResource)
       public
-       const MaxVisibleLights=65536;
+       const MaxRenderPassIndices=32;
+             MaxVisibleLights=65536;
              // Light cluster index 3D grid size = ceil(CanvasWidth/64) x ceil(CanvasHeight/64) x 16
              LightClusterTileWidthBits=6;
              LightClusterTileHeightBits=6;
@@ -184,6 +185,10 @@ type EpvScene3D=class(Exception);
             TJointBlocks=array of TJointBlock;
             TMaxJointBlocks=array[0..9] of TJointBlock;
             PMaxJointBlocks=^TMaxJointBlocks;
+            TOnSetRenderPassResources=procedure(const aCommandBuffer:TpvVulkanCommandBuffer;
+                                                const aPipelineLayout:TpvVulkanPipelineLayout;
+                                                const aRenderPassIndex:TpvSizeInt;
+                                                const aSwapChainImageIndex:TpvSizeInt) of object;
             { TBaseObject }
             TBaseObject=class(TpvResource)
              private
@@ -266,6 +271,7 @@ type EpvScene3D=class(Exception);
               procedure Upload; override;
               procedure Unload; override;
               function GetHashData:THashData;
+              procedure AssignFromDefault;
               procedure AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceSampler:TPasGLTF.TSampler);
              published
               property Sampler:TpvVulkanSampler read fSampler;
@@ -1069,6 +1075,7 @@ type EpvScene3D=class(Exception);
                                     const aCommandBuffer:TpvVulkanCommandBuffer;
                                     var aPipeline:TpvVulkanPipeline;
                                     const aPipelineLayout:TpvVulkanPipelineLayout;
+                                    const aOnSetRenderPassResources:TOnSetRenderPassResources;
                                     const aMaterialAlphaModes:TpvScene3D.TMaterial.TAlphaModes=[TpvScene3D.TMaterial.TAlphaMode.Opaque,TpvScene3D.TMaterial.TAlphaMode.Blend,TpvScene3D.TMaterial.TAlphaMode.Mask]);
                     public
                      constructor Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil); override;
@@ -1128,17 +1135,22 @@ type EpvScene3D=class(Exception);
               fInstanceListLock:TPasMPSlimReaderWriterLock;
               fInstances:TInstances;
               fBoundingBox:TpvAABB;
+              fSetGroupResourcesDone:array[0..MaxRenderPassIndices-1] of boolean;
               procedure ConstructBuffers;
               procedure CollectMaterialPrimitives;
               procedure Prepare(const aSwapChainImageIndex:TpvSizeInt;
                                 const aRenderPassIndex:TpvSizeInt;
                                 const aFrustums:TpvFrustumDynamicArray);
+              procedure SetGroupResources(const aCommandBuffer:TpvVulkanCommandBuffer;
+                                          const aPipelineLayout:TpvVulkanPipelineLayout;
+                                          const aRenderPassIndex:TpvSizeInt);
               procedure Draw(const aGraphicsPipelines:TpvScene3D.TGraphicsPipelines;
                              const aSwapChainImageIndex:TpvSizeInt;
                              const aRenderPassIndex:TpvSizeInt;
                              const aCommandBuffer:TpvVulkanCommandBuffer;
                              var aPipeline:TpvVulkanPipeline;
                              const aPipelineLayout:TpvVulkanPipelineLayout;
+                             const aOnSetRenderPassResources:TOnSetRenderPassResources;
                              const aMaterialAlphaModes:TpvScene3D.TMaterial.TAlphaModes=[TpvScene3D.TMaterial.TAlphaMode.Opaque,TpvScene3D.TMaterial.TAlphaMode.Blend,TpvScene3D.TMaterial.TAlphaMode.Mask]);
              public
               constructor Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil); override;
@@ -1174,6 +1186,7 @@ type EpvScene3D=class(Exception);
       private
        fLock:TPasMPSpinLock;
        fUploaded:TPasMPBool32;
+       fDefaultSampler:TSampler;
        fWhiteTexture:TpvVulkanTexture;
        fWhiteTextureLock:TPasMPSlimReaderWriterLock;
        fDefaultNormalMapTexture:TpvVulkanTexture;
@@ -1217,6 +1230,8 @@ type EpvScene3D=class(Exception);
        fBoundingBox:TpvAABB;
        fSwapChainImageBufferMemoryBarriers:TSwapChainImageBufferMemoryBarriers;
        fViews:TViews;
+       fVertexStagePushConstants:array[0..MaxRenderPassIndices-1] of TpvScene3D.TVertexStagePushConstants;
+       fSetGlobalResourcesDone:array[0..MaxRenderPassIndices-1] of boolean;
        procedure AddSwapChainImageBufferMemoryBarrier(const aSwapChainImageIndex:TpvSizeInt;
                                                       const aBuffer:TpvVulkanBuffer);
        procedure UploadWhiteTexture;
@@ -1233,6 +1248,10 @@ type EpvScene3D=class(Exception);
                                             const aRoot:TpvSizeInt;
                                             var aLightItemArray:TpvScene3D.TLightItems);
        function GetLightUserDataIndex(const aUserData:TpvPtrInt):TpvUInt32;
+       procedure SetGlobalResources(const aCommandBuffer:TpvVulkanCommandBuffer;
+                                    const aPipelineLayout:TpvVulkanPipelineLayout;
+                                    const aRenderPassIndex:TpvSizeInt;
+                                    const aSwapChainImageIndex:TpvSizeInt);
       public
        constructor Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil); override;
        destructor Destroy; override;
@@ -1264,6 +1283,7 @@ type EpvScene3D=class(Exception);
                       const aCountViews:TpvSizeInt;
                       const aCommandBuffer:TpvVulkanCommandBuffer;
                       const aPipelineLayout:TpvVulkanPipelineLayout;
+                      const aOnSetRenderPassResources:TOnSetRenderPassResources;
                       const aMaterialAlphaModes:TpvScene3D.TMaterial.TAlphaModes=[TpvScene3D.TMaterial.TAlphaMode.Opaque,TpvScene3D.TMaterial.TAlphaMode.Blend,TpvScene3D.TMaterial.TAlphaMode.Mask]);
        procedure GetZNearZFar(const aViewMatrix:TpvMatrix4x4;
                               const aAspectRatio:TpvScalar;
@@ -1663,6 +1683,16 @@ begin
  result.AddressModeT:=fAddressModeT;
 end;
 
+procedure TpvScene3D.TSampler.AssignFromDefault;
+begin
+ fName:='';
+ fMinFilter:=VK_FILTER_LINEAR;
+ fMagFilter:=VK_FILTER_LINEAR;
+ fMipmapMode:=VK_SAMPLER_MIPMAP_MODE_NEAREST;
+ fAddressModeS:=VK_SAMPLER_ADDRESS_MODE_REPEAT;
+ fAddressModeT:=VK_SAMPLER_ADDRESS_MODE_REPEAT;
+end;
+
 procedure TpvScene3D.TSampler.AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceSampler:TPasGLTF.TSampler);
 begin
  fName:=aSourceSampler.Name;
@@ -1904,28 +1934,28 @@ end;
 
 function TpvScene3D.TTexture.GetDescriptorImageInfo:TVkDescriptorImageInfo;
 begin
- if assigned(fSampler) and assigned(TSampler(fSampler.GetResource).fSampler) then begin
-  result.Sampler:=TSampler(fSampler.GetResource).fSampler.Handle;
+ if assigned(fSampler) and assigned(fSampler.fSampler) then begin
+  result.Sampler:=fSampler.fSampler.Handle;
  end else begin
   result.Sampler:=VK_NULL_HANDLE;
  end;
- if assigned(fImage) and assigned(TImage(fImage.GetResource).fTexture.ImageView) then begin
-  result.ImageView:=TImage(fImage.GetResource).fTexture.ImageView.Handle;
+ if assigned(fImage) and assigned(fImage.fTexture.ImageView) then begin
+  result.ImageView:=fImage.fTexture.ImageView.Handle;
  end else begin
   result.ImageView:=VK_NULL_HANDLE;
  end;
- result.ImageLayout:=TImage(fImage.GetResource).fTexture.ImageLayout;
+ result.ImageLayout:=fImage.fTexture.ImageLayout;
 end;
 
 function TpvScene3D.TTexture.GetHashData:THashData;
 begin
  if assigned(fImage) then begin
-  result.Image:=TImage(fImage.GetResource);
+  result.Image:=fImage;
  end else begin
   result.Image:=nil;
  end;
  if assigned(fSampler) then begin
-  result.Sampler:=TSampler(fSampler.GetResource);
+  result.Sampler:=fSampler;
  end else begin
   result.Sampler:=nil;
  end;
@@ -1933,25 +1963,29 @@ end;
 
 procedure TpvScene3D.TTexture.AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceTexture:TPasGLTF.TTexture;const aImageMap:TImages;const aSamplerMap:TSamplers);
 begin
+
  fName:=aSourceTexture.Name;
+
  if (aSourceTexture.Source>=0) and (aSourceTexture.Source<aImageMap.Count) then begin
   fImage:=aImageMap[aSourceTexture.Source];
-  if assigned(fImage) then begin
-   fImage.IncRef;
-  end;
  end else begin
   fImage:=nil;
 //raise EPasGLTFInvalidDocument.Create('Image index out of range');
  end;
+ if assigned(fImage) then begin
+  fImage.IncRef;
+ end;
+
  if (aSourceTexture.Sampler>=0) and (aSourceTexture.Sampler<aSamplerMap.Count) then begin
   fSampler:=aSamplerMap[aSourceTexture.Sampler];
-  if assigned(fSampler) then begin
-   fSampler.IncRef;
-  end;
  end else begin
-  fSampler:=nil;
+  fSampler:=SceneInstance.fDefaultSampler;
 //raise EPasGLTFInvalidDocument.Create('Sampler index out of range');
  end;
+ if assigned(fSampler) then begin
+  fSampler.IncRef;
+ end;
+
 end;
 
 { TpvScene3D.TMaterial.TTextureReference }
@@ -5546,18 +5580,29 @@ begin
  end;
 end;
 
+procedure TpvScene3D.TGroup.SetGroupResources(const aCommandBuffer:TpvVulkanCommandBuffer;
+                                              const aPipelineLayout:TpvVulkanPipelineLayout;
+                                              const aRenderPassIndex:TpvSizeInt);
+const Offsets:TVkDeviceSize=0;
+begin
+ if not fSetGroupResourcesDone[aRenderPassIndex] then begin
+  fSetGroupResourcesDone[aRenderPassIndex]:=true;
+  aCommandBuffer.CmdBindVertexBuffers(0,1,@fVulkanVertexBuffer.Handle,@Offsets);
+  aCommandBuffer.CmdBindIndexBuffer(fVulkanMaterialIndexBuffer.Handle,0,TVkIndexType.VK_INDEX_TYPE_UINT32);
+ end;
+end;
+
 procedure TpvScene3D.TGroup.Draw(const aGraphicsPipelines:TpvScene3D.TGraphicsPipelines;
                                  const aSwapChainImageIndex:TpvSizeInt;
                                  const aRenderPassIndex:TpvSizeInt;
                                  const aCommandBuffer:TpvVulkanCommandBuffer;
                                  var aPipeline:TpvVulkanPipeline;
                                  const aPipelineLayout:TpvVulkanPipelineLayout;
+                                 const aOnSetRenderPassResources:TOnSetRenderPassResources;
                                  const aMaterialAlphaModes:TpvScene3D.TMaterial.TAlphaModes);
-const Offsets:TVkDeviceSize=0;
 var Instance:TpvScene3D.TGroup.TInstance;
 begin
- aCommandBuffer.CmdBindVertexBuffers(0,1,@fVulkanVertexBuffer.Handle,@Offsets);
- aCommandBuffer.CmdBindIndexBuffer(fVulkanMaterialIndexBuffer.Handle,0,TVkIndexType.VK_INDEX_TYPE_UINT32);
+ fSetGroupResourcesDone[aRenderPassIndex]:=false;
  for Instance in fInstances do begin
   Instance.Draw(aGraphicsPipelines,
                 aSwapChainImageIndex,
@@ -5565,6 +5610,7 @@ begin
                 aCommandBuffer,
                 aPipeline,
                 aPipelineLayout,
+                aOnSetRenderPassResources,
                 aMaterialAlphaModes);
  end;
 end;
@@ -6744,6 +6790,7 @@ procedure TpvScene3D.TGroup.TInstance.Draw(const aGraphicsPipelines:TpvScene3D.T
                                            const aCommandBuffer:TpvVulkanCommandBuffer;
                                            var aPipeline:TpvVulkanPipeline;
                                            const aPipelineLayout:TpvVulkanPipelineLayout;
+                                           const aOnSetRenderPassResources:TOnSetRenderPassResources;
                                            const aMaterialAlphaModes:TpvScene3D.TMaterial.TAlphaModes);
 var SceneMaterialIndex,PrimitiveIndexRangeIndex,
     IndicesStart,IndicesCount:TpvSizeInt;
@@ -6757,6 +6804,7 @@ var SceneMaterialIndex,PrimitiveIndexRangeIndex,
  procedure Flush;
  var Pipeline:TpvVulkanPipeline;
      PrimitiveTopology:TpvScene3D.TPrimitiveTopology;
+     WasMeshFirst:boolean;
  begin
   if IndicesCount>0 then begin
    PrimitiveTopology:=PrimitiveIndexRange^.PrimitiveTopology;
@@ -6767,11 +6815,13 @@ var SceneMaterialIndex,PrimitiveIndexRangeIndex,
      aCommandBuffer.CmdBindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS,Pipeline.Handle);
     end;
    end;
+   WasMeshFirst:=MeshFirst;
    if MeshFirst then begin
     MeshFirst:=false;
+    fSceneInstance.SetGlobalResources(aCommandBuffer,aPipelineLayout,aRenderPassIndex,aSwapChainImageIndex);
     aCommandBuffer.CmdBindDescriptorSets(VK_PIPELINE_BIND_POINT_GRAPHICS,
                                          aPipelineLayout.Handle,
-                                         0,
+                                         1,
                                          1,
                                          @fVulkanDescriptorSets[aSwapChainImageIndex].Handle,
                                          0,
@@ -6781,11 +6831,17 @@ var SceneMaterialIndex,PrimitiveIndexRangeIndex,
     MaterialFirst:=false;
     aCommandBuffer.CmdBindDescriptorSets(VK_PIPELINE_BIND_POINT_GRAPHICS,
                                          aPipelineLayout.Handle,
-                                         1,
+                                         2,
                                          1,
                                          @Material.fVulkanDescriptorSet.Handle,
                                          0,
                                          nil);
+   end;
+   if WasMeshFirst then begin
+    fGroup.SetGroupResources(aCommandBuffer,aPipelineLayout,aRenderPassIndex);
+    if assigned(aOnSetRenderPassResources) then begin
+     aOnSetRenderPassResources(aCommandBuffer,aPipelineLayout,aRenderPassIndex,aSwapChainImageIndex);
+    end;
    end;
    aCommandBuffer.CmdDrawIndexed(IndicesCount,1,IndicesStart,0,0);
    IndicesCount:=0;
@@ -6891,6 +6947,9 @@ begin
  fGroupInstanceListLock:=TPasMPSlimReaderWriterLock.Create;
  fGroupInstances:=TGroup.TInstances.Create;
  fGroupInstances.OwnsObjects:=false;
+
+ fDefaultSampler:=TSampler.Create(pvApplication.ResourceManager,self);
+ fDefaultSampler.AssignFromDefault;
 
  fWhiteTexture:=nil;
 
@@ -7037,6 +7096,8 @@ begin
  FreeAndNil(fWhiteTexture);
 
  FreeAndNil(fDefaultNormalMapTexture);
+
+ FreeAndNil(fDefaultSampler);
 
  while fGroupInstances.Count>0 do begin
   fGroupInstances[fGroupInstances.Count-1].Free;
@@ -7278,6 +7339,7 @@ begin
   try
    if not fUploaded then begin
     try
+     fDefaultSampler.Upload;
      UploadWhiteTexture;
      for Index:=0 to length(fLightBuffers)-1 do begin
       fLightBuffers[Index].Upload;
@@ -7386,6 +7448,7 @@ begin
       Image.Unload;
      end;
      FreeAndNil(fWhiteTexture);
+     fDefaultSampler.Unload;
     finally
      fUploaded:=false;
     end;
@@ -7960,6 +8023,28 @@ begin
 
 end;
 
+procedure TpvScene3D.SetGlobalResources(const aCommandBuffer:TpvVulkanCommandBuffer;
+                                        const aPipelineLayout:TpvVulkanPipelineLayout;
+                                        const aRenderPassIndex:TpvSizeInt;
+                                        const aSwapChainImageIndex:TpvSizeInt);
+begin
+ if not fSetGlobalResourcesDone[aRenderPassIndex] then begin
+  fSetGlobalResourcesDone[aRenderPassIndex]:=true;
+  aCommandBuffer.CmdPushConstants(aPipelineLayout.Handle,
+                                  TVkShaderStageFlags(TVkShaderStageFlagBits.VK_SHADER_STAGE_VERTEX_BIT),
+                                  0,
+                                  SizeOf(TpvScene3D.TVertexStagePushConstants),
+                                  @fVertexStagePushConstants[aRenderPassIndex]);
+  aCommandBuffer.CmdBindDescriptorSets(VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                       aPipelineLayout.Handle,
+                                       0,
+                                       1,
+                                       @fGlobalVulkanDescriptorSets[aSwapChainImageIndex].Handle,
+                                       0,
+                                       nil);
+ end;
+end;
+
 procedure TpvScene3D.Draw(const aGraphicsPipelines:TpvScene3D.TGraphicsPipelines;
                           const aSwapChainImageIndex:TpvSizeInt;
                           const aRenderPassIndex:TpvSizeInt;
@@ -7967,8 +8052,9 @@ procedure TpvScene3D.Draw(const aGraphicsPipelines:TpvScene3D.TGraphicsPipelines
                           const aCountViews:TpvSizeInt;
                           const aCommandBuffer:TpvVulkanCommandBuffer;
                           const aPipelineLayout:TpvVulkanPipelineLayout;
+                          const aOnSetRenderPassResources:TOnSetRenderPassResources;
                           const aMaterialAlphaModes:TpvScene3D.TMaterial.TAlphaModes=[TpvScene3D.TMaterial.TAlphaMode.Opaque,TpvScene3D.TMaterial.TAlphaMode.Blend,TpvScene3D.TMaterial.TAlphaMode.Mask]);
-var VertexStagePushConstants:TpvScene3D.TVertexStagePushConstants;
+var VertexStagePushConstants:TpvScene3D.PVertexStagePushConstants;
     Group:TpvScene3D.TGroup;
     VisibleBit:TPasMPUInt32;
     Pipeline:TpvVulkanPipeline;
@@ -7980,8 +8066,9 @@ begin
 
   VisibleBit:=TpvUInt32(1) shl (aRenderPassIndex and 31);
 
-  VertexStagePushConstants.ViewBaseIndex:=aViewBaseIndex;
-  VertexStagePushConstants.CountViews:=aCountViews;
+  VertexStagePushConstants:=@fVertexStagePushConstants[aRenderPassIndex];
+  VertexStagePushConstants^.ViewBaseIndex:=aViewBaseIndex;
+  VertexStagePushConstants^.CountViews:=aCountViews;
 
   if fSwapChainImageBufferMemoryBarriers[aSwapChainImageIndex].Count>0 then begin
    aCommandBuffer.CmdPipelineBarrier(TVkPipelineStageFlags(VK_PIPELINE_STAGE_HOST_BIT),
@@ -7996,19 +8083,7 @@ begin
    fSwapChainImageBufferMemoryBarriers[aSwapChainImageIndex].Count:=0;
   end;
 
-  aCommandBuffer.CmdPushConstants(aPipelineLayout.Handle,
-                                  TVkShaderStageFlags(TVkShaderStageFlagBits.VK_SHADER_STAGE_VERTEX_BIT),
-                                  0,
-                                  SizeOf(TpvScene3D.TVertexStagePushConstants),
-                                  @VertexStagePushConstants);
-
-  aCommandBuffer.CmdBindDescriptorSets(VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                       aPipelineLayout.Handle,
-                                       2,
-                                       1,
-                                       @fGlobalVulkanDescriptorSets[aSwapChainImageIndex].Handle,
-                                       0,
-                                       nil);
+  fSetGlobalResourcesDone[aRenderPassIndex]:=false;
 
   for Group in fGroups do begin
    Group.Draw(aGraphicsPipelines,
@@ -8017,6 +8092,7 @@ begin
               aCommandBuffer,
               Pipeline,
               aPipelineLayout,
+              aOnSetRenderPassResources,
               aMaterialAlphaModes);
   end;
 

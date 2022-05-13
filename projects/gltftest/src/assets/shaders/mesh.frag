@@ -42,27 +42,14 @@ layout(location = 1) out vec4 outFragEmission;
 #endif
 #endif
 
-/* clang-format off */
-layout(std140, set = 1, binding = 0) uniform uboMaterial {
-  vec4 baseColorFactor;
-  vec4 specularFactor;
-  vec4 emissiveFactor;
-  vec4 metallicRoughnessNormalScaleOcclusionStrengthFactor;
-  vec4 sheenColorFactorSheenIntensityFactor;
-  vec4 clearcoatFactorClearcoatRoughnessFactor;
-  vec4 ior;
-  uvec4 alphaCutOffFlagsTex0Tex1;
-  mat4 textureTransforms[16];
-} uMaterial;
-
-layout(set = 1, binding = 1) uniform sampler2D uTextures[];
+// Global descriptor set
 
 struct View {
   mat4 viewMatrix;
   mat4 projectionMatrix;
 };
 
-layout(std140, set = 2, binding = 0) uniform uboViews {
+layout(std140, set = 0, binding = 0) uniform uboViews {
   View views[512];
 } uView;
 
@@ -75,7 +62,7 @@ struct Light {
   mat4 shadowMapMatrix;
 };
 
-layout(std430, set = 2, binding = 1) buffer LightItemData {
+layout(std430, set = 0, binding = 1) buffer LightItemData {
 //uvec4 lightMetaData;
   Light lights[];
 };
@@ -85,9 +72,46 @@ struct LightTreeNode {
   uvec4 aabbMaxUserData;
 };
 
-layout(std430, set = 2, binding = 2) buffer LightTreeNodeData {
+layout(std430, set = 0, binding = 2) buffer LightTreeNodeData {
   LightTreeNode lightTreeNodes[];
 };
+#endif
+
+// Material descriptor set
+
+/* clang-format off */
+layout(std140, set = 2, binding = 0) uniform uboMaterial {
+  vec4 baseColorFactor;
+  vec4 specularFactor;
+  vec4 emissiveFactor;
+  vec4 metallicRoughnessNormalScaleOcclusionStrengthFactor;
+  vec4 sheenColorFactorSheenIntensityFactor;
+  vec4 clearcoatFactorClearcoatRoughnessFactor;
+  vec4 ior;
+  uvec4 alphaCutOffFlagsTex0Tex1;
+  mat4 textureTransforms[16];
+} uMaterial;
+
+layout(set = 2, binding = 1) uniform sampler2D uTextures[];
+
+// Pass descriptor set
+
+#ifdef DEPTHONLY
+#else
+layout(set = 3, binding = 0) uniform sampler2D uImageBasedLightingBRDFTextures[];  // 0 = GGX, 1 = Charlie, 2 = Sheen E
+
+layout(set = 3, binding = 1) uniform samplerCube uImageBasedLightingEnvMaps[];  // 0 = GGX, 1 = Charlie, 2 = Lambertian
+
+#ifdef SHADOWS
+layout(std140, set = 3, binding = 2) uniform uboCascadedShadowMaps {
+  mat4 shadowMapMatrices[NUM_SHADOW_CASCADES];
+  vec4 shadowMapSplitDepths[NUM_SHADOW_CASCADES];
+} uCascadedShadowMaps;
+
+layout(set = 3, binding = 3) uniform sampler2DArray uCascadedShadowMapTexture;
+
+#endif
+
 #endif
 
 #if defined(MBOIT)
@@ -105,24 +129,6 @@ layout(input_attachment_index = 1, set = 3, binding = 6) uniform subpassInputMS 
 layout(input_attachment_index = 0, set = 3, binding = 5) uniform subpassInput uMBOITMoments0;
 layout(input_attachment_index = 1, set = 3, binding = 6) uniform subpassInput uMBOITMoments1;
 #endif
-#endif
-
-#endif
-
-#ifdef DEPTHONLY
-#else
-layout(set = 3, binding = 0) uniform sampler2D uImageBasedLightingBRDFTextures[];  // 0 = GGX, 1 = Charlie, 2 = Sheen E
-
-layout(set = 3, binding = 1) uniform samplerCube uImageBasedLightingEnvMaps[];  // 0 = GGX, 1 = Charlie, 2 = Lambertian
-
-#ifdef SHADOWS
-layout(std140, set = 3, binding = 2) uniform uboCascadedShadowMaps {
-  mat4 shadowMapMatrices[NUM_SHADOW_CASCADES];
-  vec4 shadowMapSplitDepths[NUM_SHADOW_CASCADES];
-} uCascadedShadowMaps;
-
-layout(set = 3, binding = 3) uniform sampler2DArray uCascadedShadowMapTexture;
-
 #endif
 
 #endif

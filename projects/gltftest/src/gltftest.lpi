@@ -22,13 +22,13 @@
     </PublishOptions>
     <RunParams>
       <local>
-        <CommandLineParams Value="hamster.glb /max-msaa 2"/>
+        <CommandLineParams Value="/nvidia-aftermath"/>
       </local>
       <FormatVersion Value="2"/>
       <Modes Count="1">
         <Mode0 Name="default">
           <local>
-            <CommandLineParams Value="hamster.glb /max-msaa 2"/>
+            <CommandLineParams Value="/nvidia-aftermath"/>
           </local>
         </Mode0>
       </Modes>
