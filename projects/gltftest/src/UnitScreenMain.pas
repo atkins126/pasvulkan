@@ -47,9 +47,7 @@ uses SysUtils,
 type { TScreenMain }
      TScreenMain=class(TpvApplicationScreen)
       public
-        const CascadedShadowMapWidth=512;
-              CascadedShadowMapHeight=512;
-              CountCascadedShadowMapCascades=4;
+        const CountCascadedShadowMapCascades=4;
         type TCameraMode=(
               Orbit,
               FirstPerson
@@ -465,6 +463,7 @@ type { TScreenMain }
        fKeyYawDec:boolean;
        fKeyRollInc:boolean;
        fKeyRollDec:boolean;
+       fCascadedShadowMapSize:TpvInt32;
        procedure CalculateCascadedShadowMaps(const aSwapChainImageIndex:Int32;const aViewLeft,aViewRight:TpvScene3D.TView);
       public
 
@@ -502,6 +501,9 @@ type { TScreenMain }
 
        function Scrolled(const aRelativeAmount:TpvVector2):boolean; override;
 
+      published
+       property CascadedShadowMapWidth:TpvInt32 read fCascadedShadowMapSize;
+       property CascadedShadowMapHeight:TpvInt32 read fCascadedShadowMapSize;
      end;
 
 implementation
@@ -529,8 +531,8 @@ inherited Create(aFrameGraph);
  Queue:=aFrameGraph.UniversalQueue;
 
  Size:=TpvFrameGraph.TImageSize.Create(TpvFrameGraph.TImageSize.TKind.Absolute,
-                                       CascadedShadowMapWidth,
-                                       CascadedShadowMapHeight,
+                                       fParent.CascadedShadowMapWidth,
+                                       fParent.CascadedShadowMapHeight,
                                        1.0,
                                        CountCascadedShadowMapCascades);
 
@@ -693,8 +695,8 @@ begin
      VulkanGraphicsPipeline.VertexInputState.AddVertexInputAttributeDescription(9,0,VK_FORMAT_R32_UINT,TVkPtrUInt(pointer(@TpvScene3D.PVertex(nil)^.CountJointBlocks)));
      VulkanGraphicsPipeline.VertexInputState.AddVertexInputAttributeDescription(10,0,VK_FORMAT_R32_UINT,TVkPtrUInt(pointer(@TpvScene3D.PVertex(nil)^.Flags)));
 
-     VulkanGraphicsPipeline.ViewPortState.AddViewPort(0.0,0.0,CascadedShadowMapWidth,CascadedShadowMapHeight,0.0,1.0);
-     VulkanGraphicsPipeline.ViewPortState.AddScissor(0,0,CascadedShadowMapWidth,CascadedShadowMapHeight);
+     VulkanGraphicsPipeline.ViewPortState.AddViewPort(0.0,0.0,fParent.CascadedShadowMapWidth,fParent.CascadedShadowMapHeight,0.0,1.0);
+     VulkanGraphicsPipeline.ViewPortState.AddScissor(0,0,fParent.CascadedShadowMapWidth,fParent.CascadedShadowMapHeight);
 
      VulkanGraphicsPipeline.RasterizationState.DepthClampEnable:=false;
      VulkanGraphicsPipeline.RasterizationState.RasterizerDiscardEnable:=false;
@@ -859,8 +861,8 @@ begin
 //SeparateCommandBuffer:=true;
 
  Size:=TpvFrameGraph.TImageSize.Create(TpvFrameGraph.TImageSize.TKind.Absolute,
-                                       CascadedShadowMapWidth,
-                                       CascadedShadowMapHeight,
+                                       fParent.CascadedShadowMapWidth,
+                                       fParent.CascadedShadowMapHeight,
                                        1.0,
                                        CountCascadedShadowMapCascades);
 
@@ -1017,8 +1019,8 @@ begin
  fVulkanGraphicsPipeline.InputAssemblyState.Topology:=VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
  fVulkanGraphicsPipeline.InputAssemblyState.PrimitiveRestartEnable:=false;
 
- fVulkanGraphicsPipeline.ViewPortState.AddViewPort(0.0,0.0,CascadedShadowMapWidth,CascadedShadowMapHeight,0.0,1.0);
- fVulkanGraphicsPipeline.ViewPortState.AddScissor(0,0,CascadedShadowMapWidth,CascadedShadowMapHeight);
+ fVulkanGraphicsPipeline.ViewPortState.AddViewPort(0.0,0.0,fParent.CascadedShadowMapWidth,fParent.CascadedShadowMapHeight,0.0,1.0);
+ fVulkanGraphicsPipeline.ViewPortState.AddScissor(0,0,fParent.CascadedShadowMapWidth,fParent.CascadedShadowMapHeight);
 
  fVulkanGraphicsPipeline.RasterizationState.DepthClampEnable:=false;
  fVulkanGraphicsPipeline.RasterizationState.RasterizerDiscardEnable:=false;
@@ -1142,8 +1144,8 @@ begin
 //SeparateCommandBuffer:=true;
 
  Size:=TpvFrameGraph.TImageSize.Create(TpvFrameGraph.TImageSize.TKind.Absolute,
-                                       CascadedShadowMapWidth,
-                                       CascadedShadowMapHeight,
+                                       fParent.CascadedShadowMapWidth,
+                                       fParent.CascadedShadowMapHeight,
                                        1.0,
                                        CountCascadedShadowMapCascades);
 
@@ -1309,8 +1311,8 @@ begin
  fVulkanGraphicsPipeline.InputAssemblyState.Topology:=VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
  fVulkanGraphicsPipeline.InputAssemblyState.PrimitiveRestartEnable:=false;
 
- fVulkanGraphicsPipeline.ViewPortState.AddViewPort(0.0,0.0,CascadedShadowMapWidth,CascadedShadowMapHeight,0.0,1.0);
- fVulkanGraphicsPipeline.ViewPortState.AddScissor(0,0,CascadedShadowMapWidth,CascadedShadowMapHeight);
+ fVulkanGraphicsPipeline.ViewPortState.AddViewPort(0.0,0.0,fParent.CascadedShadowMapWidth,fParent.CascadedShadowMapHeight,0.0,1.0);
+ fVulkanGraphicsPipeline.ViewPortState.AddScissor(0,0,fParent.CascadedShadowMapWidth,fParent.CascadedShadowMapHeight);
 
  fVulkanGraphicsPipeline.RasterizationState.DepthClampEnable:=false;
  fVulkanGraphicsPipeline.RasterizationState.RasterizerDiscardEnable:=false;
@@ -3930,6 +3932,8 @@ var GLTF:TPasGLTF.TDocument;
 begin
  inherited Create;
 
+ fCascadedShadowMapSize:=Max(16,UnitApplication.Application.ShadowMapSize);
+
  case TpvVulkanVendorID(pvApplication.VulkanDevice.PhysicalDevice.Properties.vendorID) of
   TpvVulkanVendorID.ImgTec,
   TpvVulkanVendorID.ARM,
@@ -4043,22 +4047,22 @@ begin
 
  if pvApplication.VulkanDevice.PhysicalDevice.Properties.deviceType=VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU then begin
 
-{ if (SampleCounts and TVkSampleCountFlags(VK_SAMPLE_COUNT_64_BIT))<>0 then begin
+  if (UnitApplication.Application.MaxShadowMSAA>=64) and ((SampleCounts and TVkSampleCountFlags(VK_SAMPLE_COUNT_64_BIT))<>0) then begin
    fVulkanShadowMapSampleCountFlagBits:=TVkSampleCountFlagBits(VK_SAMPLE_COUNT_64_BIT);
    fCountCascadedShadowMapMSAASamples:=64;
-  end else if (SampleCounts and TVkSampleCountFlags(VK_SAMPLE_COUNT_32_BIT))<>0 then begin
+  end else if (UnitApplication.Application.MaxShadowMSAA>=32) and ((SampleCounts and TVkSampleCountFlags(VK_SAMPLE_COUNT_32_BIT))<>0) then begin
    fVulkanShadowMapSampleCountFlagBits:=TVkSampleCountFlagBits(VK_SAMPLE_COUNT_32_BIT);
    fCountCascadedShadowMapMSAASamples:=32;
-  end else if (SampleCounts and TVkSampleCountFlags(VK_SAMPLE_COUNT_16_BIT))<>0 then begin
+  end else if (UnitApplication.Application.MaxShadowMSAA>=16) and ((SampleCounts and TVkSampleCountFlags(VK_SAMPLE_COUNT_16_BIT))<>0) then begin
    fVulkanShadowMapSampleCountFlagBits:=TVkSampleCountFlagBits(VK_SAMPLE_COUNT_16_BIT);
    fCountCascadedShadowMapMSAASamples:=16;
-  end else}if (SampleCounts and TVkSampleCountFlags(VK_SAMPLE_COUNT_8_BIT))<>0 then begin
+  end else if (UnitApplication.Application.MaxShadowMSAA>=8) and ((SampleCounts and TVkSampleCountFlags(VK_SAMPLE_COUNT_8_BIT))<>0) then begin
    fVulkanShadowMapSampleCountFlagBits:=TVkSampleCountFlagBits(VK_SAMPLE_COUNT_8_BIT);
    fCountCascadedShadowMapMSAASamples:=8;
-  end else if (SampleCounts and TVkSampleCountFlags(VK_SAMPLE_COUNT_4_BIT))<>0 then begin
+  end else if (UnitApplication.Application.MaxShadowMSAA>=4) and ((SampleCounts and TVkSampleCountFlags(VK_SAMPLE_COUNT_4_BIT))<>0) then begin
    fVulkanShadowMapSampleCountFlagBits:=TVkSampleCountFlagBits(VK_SAMPLE_COUNT_4_BIT);
    fCountCascadedShadowMapMSAASamples:=4;
-  end else if (SampleCounts and TVkSampleCountFlags(VK_SAMPLE_COUNT_2_BIT))<>0 then begin
+  end else if (UnitApplication.Application.MaxShadowMSAA>=2) and ((SampleCounts and TVkSampleCountFlags(VK_SAMPLE_COUNT_2_BIT))<>0) then begin
    fVulkanShadowMapSampleCountFlagBits:=TVkSampleCountFlagBits(VK_SAMPLE_COUNT_2_BIT);
    fCountCascadedShadowMapMSAASamples:=2;
   end else begin
@@ -4540,8 +4544,7 @@ end;
 
 procedure TScreenMain.CalculateCascadedShadowMaps(const aSwapChainImageIndex:Int32;const aViewLeft,aViewRight:TpvScene3D.TView);
 {$undef UseSphereBasedCascadedShadowMaps}
-const CascadedShadowMapSplitConstant=0.9;
-      FrustumCorners:array[0..7] of TpvVector3=
+const FrustumCorners:array[0..7] of TpvVector3=
        (
         (x:-1.0;y:-1.0;z:0.0),
         (x:1.0;y:-1.0;z:0.0),
@@ -4558,12 +4561,14 @@ var CascadedShadowMapIndex,Index:TpvSizeInt;
     SceneWorldSpaceBoundingBox,
     SceneLightSpaceBoundingBox,
     LightSpaceAABB:TpvAABB;
+    SceneWorldSpaceSphere,
+    LightSpaceSphere:TpvSphere;
+    SceneClipWorldSpaceSphere:TpvSphere;
     LightForwardVector,LightSideVector,
     LightUpVector,LightSpaceCorner:TpvVector3;
 {$ifdef UseSphereBasedCascadedShadowMaps}
     {SplitCenter,SplitBounds,}SplitOffset,SplitScale:TpvVector3;
     Offset,Step:TpvVector2;
-    LightSpaceSphere:TpvSphere;
 {$else}
     UnitsPerTexel:TpvVector2;
     ShadowOrigin,RoundedOrigin,RoundOffset:TpvVector2;
@@ -4575,9 +4580,13 @@ var CascadedShadowMapIndex,Index:TpvSizeInt;
     FromViewSpaceToLightSpaceMatrixLeft,
     FromViewSpaceToLightSpaceMatrixRight,
     InverseProjectionMatrixLeft,
-    InverseProjectionMatrixRight:TpvMatrix4x4;
+    InverseProjectionMatrixRight,
+    ViewMatrix:TpvMatrix4x4;
+    CascadedShadowMapSplitLambda,
+    CascadedShadowMapSplitOverlap,
     MinZ,MaxZ,MinZExtents,MaxZExtents,ZMargin,
-    Ratio,FadeStartValue,LastValue,Value,
+    Ratio,SplitValue,UniformSplitValue,LogSplitValue,
+    FadeStartValue,LastValue,Value,
 {$ifdef UseSphereBasedCascadedShadowMaps}
     Border,RoundedUpLightSpaceSphereRadius,
 {$endif}
@@ -4590,11 +4599,29 @@ begin
 
  SceneWorldSpaceBoundingBox:=fScene3D.BoundingBox;
 
+ SceneWorldSpaceSphere:=TpvSphere.CreateFromAABB(SceneWorldSpaceBoundingBox);
+
  if IsInfinite(fZFar) then begin
-  zNear:=0.1;
-  zFar:=Max(SceneWorldSpaceBoundingBox.Radius,1.0);
   RealZNear:=0.1;
-  RealZFar:=Max(zFar*4.0,4096.0);
+  RealZFar:=1.0;
+  for Index:=0 to 1 do begin
+   if Index=0 then begin
+    ViewMatrix:=aViewLeft.ViewMatrix;
+   end else begin
+    ViewMatrix:=aViewRight.ViewMatrix;
+   end;
+   ViewMatrix:=ViewMatrix.SimpleInverse;
+   if SceneWorldSpaceSphere.Contains(ViewMatrix.Translation.xyz) then begin
+    if not SceneWorldSpaceSphere.RayIntersection(ViewMatrix.Translation.xyz,-ViewMatrix.Forwards.xyz,Value) then begin
+     Value:=SceneWorldSpaceSphere.Radius;
+    end;
+   end else begin
+    Value:=SceneWorldSpaceSphere.Center.DistanceTo(ViewMatrix.Translation.xyz)+SceneWorldSpaceSphere.Radius;
+   end;
+   RealZFar:=Max(RealZFar,Value);
+  end;
+  zNear:=RealZNear;
+  zFar:=RealZFar;
   DoNeedRefitNearFarPlanes:=true;
  end else begin
   zNear:=abs(fZNear);
@@ -4603,6 +4630,12 @@ begin
   RealZFar:=zFar;
   DoNeedRefitNearFarPlanes:=fZFar<0.0;
  end;
+
+ CascadedShadowMapSplitLambda:=0.5;
+
+ CascadedShadowMapSplitOverlap:=0.1;
+
+ SceneClipWorldSpaceSphere:=TpvSphere.Create(SceneWorldSpaceSphere.Center,Max(SceneWorldSpaceSphere.Radius,RealZFar*0.5));
 
  ProjectionMatrix:=aViewLeft.ProjectionMatrix;
  if DoNeedRefitNearFarPlanes then begin
@@ -4649,9 +4682,23 @@ begin
  LightViewMatrix.RawComponents[3,2]:=0.0;
  LightViewMatrix.RawComponents[3,3]:=1.0;
 
- FromViewSpaceToLightSpaceMatrixLeft:=aViewLeft.ViewMatrix.Inverse*LightViewMatrix;
-
- FromViewSpaceToLightSpaceMatrixRight:=aViewRight.ViewMatrix.Inverse*LightViewMatrix;
+ for Index:=0 to 1 do begin
+  if Index=0 then begin
+   ViewMatrix:=aViewLeft.ViewMatrix;
+  end else begin
+   ViewMatrix:=aViewRight.ViewMatrix;
+  end;
+  ViewMatrix:=ViewMatrix.SimpleInverse;
+  if not SceneClipWorldSpaceSphere.Contains(ViewMatrix.Translation.xyz) then begin
+   ViewMatrix.Translation.xyz:=SceneClipWorldSpaceSphere.Center+((ViewMatrix.Translation.xyz-SceneClipWorldSpaceSphere.Center).Normalize*SceneClipWorldSpaceSphere.Radius);
+  end;
+  ViewMatrix:=ViewMatrix*LightViewMatrix;
+  if Index=0 then begin
+   FromViewSpaceToLightSpaceMatrixLeft:=ViewMatrix;
+  end else begin
+   FromViewSpaceToLightSpaceMatrixRight:=ViewMatrix;
+  end;
+ end;
 
  SceneLightSpaceBoundingBox:=SceneWorldSpaceBoundingBox.Transform(LightViewMatrix);
 
@@ -4672,9 +4719,11 @@ begin
  Ratio:=zFar/zNear;
  LastValue:=0.0;
  for CascadedShadowMapIndex:=1 to CountCascadedShadowMapCascades-1 do begin
-  Value:=(CascadedShadowMapSplitConstant*zNear*power(Ratio,CascadedShadowMapIndex/CountCascadedShadowMapCascades))+
-         ((1.0-CascadedShadowMapSplitConstant)*(zNear+((CascadedShadowMapIndex/CountCascadedShadowMapCascades)*(zFar-zNear))));
-  FadeStartValue:=Min(Max(((Value-LastValue)*0.5{0.95})+LastValue,Min(zNear,RealZNear)),Max(zFar,RealZFar));
+  SplitValue:=CascadedShadowMapIndex/CountCascadedShadowMapCascades;
+  UniformSplitValue:=((1.0-SplitValue)*zNear)+(SplitValue*zFar);
+  LogSplitValue:=zNear*power(Ratio,SplitValue);
+  Value:=((1.0-CascadedShadowMapSplitLambda)*UniformSplitValue)+(CascadedShadowMapSplitLambda*LogSplitValue);
+  FadeStartValue:=Min(Max((Value*(1.0-CascadedShadowMapSplitOverlap))+(LastValue*CascadedShadowMapSplitOverlap),Min(zNear,RealZNear)),Max(zFar,RealZFar));
   LastValue:=Value;
   CascadedShadowMaps^[CascadedShadowMapIndex].SplitDepths.x:=Min(Max(FadeStartValue,Min(zNear,RealZNear)),Max(zFar,RealZFar));
   CascadedShadowMaps^[CascadedShadowMapIndex-1].SplitDepths.y:=Min(Max(Value,Min(zNear,RealZNear)),Max(zFar,RealZFar));
@@ -4722,6 +4771,12 @@ begin
   end;
 
   //LightSpaceAABB:=SceneLightSpaceBoundingBox;
+
+//UnitsPerTexel:=(LightSpaceAABB.Max.xy-LightSpaceAABB.Min.xy)/TpvVector2.InlineableCreate(CascadedShadowMapWidth,CascadedShadowMapHeight);
+
+  LightSpaceSphere:=TpvSphere.CreateFromAABB(LightSpaceAABB);
+  LightSpaceSphere.Radius:=ceil(LightSpaceSphere.Radius*16)/16;
+  LightSpaceAABB:=LightSpaceSphere.ToAABB;
 
 {$ifdef UseSphereBasedCascadedShadowMaps}
   LightSpaceSphere:=TpvSphere.CreateFromAABB(LightSpaceAABB);
@@ -4788,13 +4843,12 @@ begin
 
   LightViewProjectionMatrix:=LightViewMatrix*LightProjectionMatrix;
 
-//ShadowOrigin:=(LightViewProjectionMatrix*TpvVector4.WAxis).xy*TpvVector2.InlineableCreate(CascadedShadowMapWidth*0.5,CascadedShadowMapHeight*0.5);
   ShadowOrigin:=(LightViewProjectionMatrix.MulHomogen(TpvVector3.Origin)).xy*TpvVector2.InlineableCreate(CascadedShadowMapWidth*0.5,CascadedShadowMapHeight*0.5);
   RoundedOrigin.x:=round(ShadowOrigin.x);
   RoundedOrigin.y:=round(ShadowOrigin.y);
   RoundOffset:=(RoundedOrigin-ShadowOrigin)*TpvVector2.InlineableCreate(2.0/CascadedShadowMapWidth,2.0/CascadedShadowMapHeight);
   LightProjectionMatrix[3,0]:=LightProjectionMatrix[3,0]+RoundOffset.x;
-  LightProjectionMatrix[3,1]:=LightProjectionMatrix[3,1]+RoundOffset.y;  {}
+  LightProjectionMatrix[3,1]:=LightProjectionMatrix[3,1]+RoundOffset.y;
 
 {$endif}
 
