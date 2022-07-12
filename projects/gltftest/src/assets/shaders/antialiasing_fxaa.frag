@@ -36,5 +36,6 @@ void main(){
   vec4 rgbA = (1.0 / 2.0) * (textureLod(uTexture, vec3(p.xy + (dir * ((1.0 / 3.0) - 0.5)), float(gl_ViewIndex)), 0.0).xyzw + textureLod(uTexture, vec3(p.xy + (dir * ((2.0 / 3.0) - 0.5)), float(gl_ViewIndex)), 0.0).xyzw),
        rgbB = (rgbA * (1.0 / 2.0)) + ((1.0 / 4.0) * (textureLod(uTexture, vec3(p.xy + (dir * ((0.0 / 3.0) - 0.5)), float(gl_ViewIndex)), 0.0).xyzw + textureLod(uTexture, vec3(p.xy + (dir * ((3.0 / 3.0) - 0.5)), float(gl_ViewIndex)), 0.0).xyzw));
   float lumaB = dot(rgbB.xyz, luma);
-  outFragColor = ((lumaB < lumaMin) || (lumaB > lumaMax)) ? rgbA : rgbB;
+  vec4 outColor = ((lumaB < lumaMin) || (lumaB > lumaMax)) ? rgbA : rgbB;
+  outFragColor = vec4(mix(pow((outColor.xyz + vec3(5.5e-2)) / vec3(1.055), vec3(2.4)), outColor.xyz / vec3(12.92), lessThan(outColor.xyz, vec3(4.045e-2))), outColor.w);
 }

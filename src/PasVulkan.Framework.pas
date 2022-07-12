@@ -324,6 +324,7 @@ type EpvVulkanException=class(Exception);
        destructor Destroy; override;
        procedure Initialize;
        procedure InstallDebugReportCallback;
+       function GetAPIVersionString:TpvRawByteString;
        property ApplicationInfo:TVkApplicationInfo read fApplicationInfo write SetApplicationInfo;
       published
        property ApplicationName:TpvVulkanCharString read GetApplicationName write SetApplicationName;
@@ -358,7 +359,10 @@ type EpvVulkanException=class(Exception);
        fVulkan11Properties:TVkPhysicalDeviceVulkan11Properties;}
        fMultiviewFeaturesKHR:TVkPhysicalDeviceMultiviewFeaturesKHR;
        fMultiviewPropertiesKHR:TVkPhysicalDeviceMultiviewPropertiesKHR;
+       fDescriptorIndexingFeaturesEXT:TVkPhysicalDeviceDescriptorIndexingFeaturesEXT;
+       fShaderDemoteToHelperInvocationFeaturesEXT:TVkPhysicalDeviceShaderDemoteToHelperInvocationFeaturesEXT;
        fFragmentShaderInterlockFeaturesEXT:TVkPhysicalDeviceFragmentShaderInterlockFeaturesEXT;
+       fBufferDeviceAddressFeaturesKHR:TVkPhysicalDeviceBufferDeviceAddressFeaturesKHR;
        fFeatures2KHR:TVkPhysicalDeviceFeatures2KHR;
        fProperties2KHR:TVkPhysicalDeviceProperties2KHR;
        fQueueFamilyProperties:TVkQueueFamilyPropertiesArray;
@@ -372,6 +376,7 @@ type EpvVulkanException=class(Exception);
        fMultiViewGeometryShader:boolean;
        fMaxMultiViewViewCount:TpvUInt32;
        fMaxMultiViewInstanceIndex:TpvUInt32;
+       fShaderDemoteToHelperInvocation:boolean;
        fFragmentShaderSampleInterlock:boolean;
        fFragmentShaderPixelInterlock:boolean;
        fFragmentShaderShadingRateInterlock:boolean;
@@ -411,7 +416,10 @@ type EpvVulkanException=class(Exception);
        property Vulkan11Properties:TVkPhysicalDeviceVulkan11Properties read fVulkan11Properties;}
        property MultiviewFeaturesKHR:TVkPhysicalDeviceMultiviewFeaturesKHR read fMultiviewFeaturesKHR;
        property MultiviewPropertiesKHR:TVkPhysicalDeviceMultiviewPropertiesKHR read fMultiviewPropertiesKHR;
+       property DescriptorIndexingFeaturesEXT:TVkPhysicalDeviceDescriptorIndexingFeaturesEXT read fDescriptorIndexingFeaturesEXT;
+       property ShaderDemoteToHelperInvocationFeaturesEXT:TVkPhysicalDeviceShaderDemoteToHelperInvocationFeaturesEXT read fShaderDemoteToHelperInvocationFeaturesEXT;
        property FragmentShaderInterlockFeaturesEXT:TVkPhysicalDeviceFragmentShaderInterlockFeaturesEXT read fFragmentShaderInterlockFeaturesEXT;
+       property BufferDeviceAddressFeaturesKHR:TVkPhysicalDeviceBufferDeviceAddressFeaturesKHR read fBufferDeviceAddressFeaturesKHR;
        property Features2KHR:TVkPhysicalDeviceFeatures2KHR read fFeatures2KHR;
        property Properties2KHR:TVkPhysicalDeviceProperties2KHR read fProperties2KHR;
       published
@@ -428,6 +436,7 @@ type EpvVulkanException=class(Exception);
        property MultiViewGeometryShader:boolean read fMultiViewGeometryShader;
        property MaxMultiViewViewCount:TpvUInt32 read fMaxMultiViewViewCount;
        property MaxMultiViewInstanceIndex:TpvUInt32 read fMaxMultiViewInstanceIndex;
+       property ShaderDemoteToHelperInvocation:boolean read fShaderDemoteToHelperInvocation;
        property FragmentShaderSampleInterlock:boolean read fFragmentShaderSampleInterlock;
        property FragmentShaderPixelInterlock:boolean read fFragmentShaderPixelInterlock;
        property FragmentShaderShadingRateInterlock:boolean read fFragmentShaderShadingRateInterlock;
@@ -585,12 +594,16 @@ type EpvVulkanException=class(Exception);
        fMemoryManager:TpvVulkanDeviceMemoryManager;
        fDebugMarker:TpvVulkanDeviceDebugMarker;
        fCanvasCommon:TObject;
+       fImageFormatList:boolean;
        fUseNVIDIADeviceDiagnostics:boolean;
        fNVIDIADeviceDiagnosticsFlags:TVkDeviceDiagnosticsConfigFlagsNV;
        fNVIDIADeviceDiagnosticsConfigCreateInfoNV:TVkDeviceDiagnosticsConfigCreateInfoNV;
+       fDescriptorIndexingFeaturesEXT:TVkPhysicalDeviceDescriptorIndexingFeaturesEXT;
+       fShaderDemoteToHelperInvocationFeaturesEXT:TVkPhysicalDeviceShaderDemoteToHelperInvocationFeaturesEXT;
 //     fPhysicalDeviceVulkan11Features:TVkPhysicalDeviceVulkan11Features;
-       fPhysicalDeviceMultiviewFeatures:TVkPhysicalDeviceMultiviewFeatures;
-       fPhysicalDeviceFragmentShaderInterlockFeaturesEXT:TVkPhysicalDeviceFragmentShaderInterlockFeaturesEXT;
+       fMultiviewFeaturesKHR:TVkPhysicalDeviceMultiviewFeaturesKHR;
+       fFragmentShaderInterlockFeaturesEXT:TVkPhysicalDeviceFragmentShaderInterlockFeaturesEXT;
+       fBufferDeviceAddressFeaturesKHR:TVkPhysicalDeviceBufferDeviceAddressFeaturesKHR;
       protected
       public
        constructor Create(const aInstance:TpvVulkanInstance;
@@ -638,6 +651,7 @@ type EpvVulkanException=class(Exception);
        property MemoryManager:TpvVulkanDeviceMemoryManager read fMemoryManager;
        property DebugMarker:TpvVulkanDeviceDebugMarker read fDebugMarker;
        property CanvasCommon:TObject read fCanvasCommon write fCanvasCommon;
+       property ImageFormatList:boolean read fImageFormatList;
        property UseNVIDIADeviceDiagnostics:boolean read fUseNVIDIADeviceDiagnostics write fUseNVIDIADeviceDiagnostics;
        property NVIDIADeviceDiagnosticsFlags:TVkDeviceDiagnosticsConfigFlagsNV read fNVIDIADeviceDiagnosticsFlags write fNVIDIADeviceDiagnosticsFlags;
      end;
@@ -707,7 +721,8 @@ type EpvVulkanException=class(Exception);
       (
        PersistentMapped,
        OwnSingleMemoryChunk,
-       DedicatedAllocation
+       DedicatedAllocation,
+       BufferDeviceAddress
       );
 
      PpvVulkanDeviceMemoryChunkFlags=^TpvVulkanDeviceMemoryChunkFlags;
@@ -881,7 +896,8 @@ type EpvVulkanException=class(Exception);
       (
        PersistentMapped,
        OwnSingleMemoryChunk,
-       DedicatedAllocation
+       DedicatedAllocation,
+       BufferDeviceAddress
       );
 
      PpvVulkanDeviceMemoryBlockFlags=^TpvVulkanDeviceMemoryBlockFlags;
@@ -1019,7 +1035,8 @@ type EpvVulkanException=class(Exception);
       (
        PersistentMapped,
        OwnSingleMemoryChunk,
-       DedicatedAllocation
+       DedicatedAllocation,
+       BufferDeviceAddress
       );
 
      PpvVulkanBufferFlags=^TpvVulkanBufferFlags;
@@ -1037,6 +1054,8 @@ type EpvVulkanException=class(Exception);
        fQueueFamilyIndices:TpvVulkanQueueFamilyIndices;
        fCountQueueFamilyIndices:TpvInt32;
        fDescriptorBufferInfo:TVkDescriptorBufferInfo;
+       fDeviceAddress:TVkDeviceAddress;
+       function GetDeviceAddress:TVkDeviceAddress;
        procedure Bind;
       public
        constructor Create(const aDevice:TpvVulkanDevice;
@@ -1056,6 +1075,13 @@ type EpvVulkanException=class(Exception);
                           const aUsage:TVkBufferUsageFlags;
                           const aSharingMode:TVkSharingMode=VK_SHARING_MODE_EXCLUSIVE); reintroduce; overload;
        destructor Destroy; override;
+       procedure ClearData(const aTransferQueue:TpvVulkanQueue;
+                           const aTransferCommandBuffer:TpvVulkanCommandBuffer;
+                           const aTransferFence:TpvVulkanFence;
+                           const aDataOffset:TVkDeviceSize;
+                           const aDataSize:TVkDeviceSize;
+                           const aUseTemporaryStagingBufferMode:TpvVulkanBufferUseTemporaryStagingBufferMode=TpvVulkanBufferUseTemporaryStagingBufferMode.Automatic;
+                           const aForceFlush:boolean=false);
        procedure UploadData(const aTransferQueue:TpvVulkanQueue;
                             const aTransferCommandBuffer:TpvVulkanCommandBuffer;
                             const aTransferFence:TpvVulkanFence;
@@ -1086,6 +1112,7 @@ type EpvVulkanException=class(Exception);
        property Handle:TVkBuffer read fBufferHandle;
        property Size:TVkDeviceSize read fSize;
        property Memory:TpvVulkanDeviceMemoryBlock read fMemoryBlock;
+       property DeviceAddress:TVkDeviceAddress read fDeviceAddress;
      end;
 
      TpvVulkanBufferView=class(TpvVulkanObject)
@@ -1224,6 +1251,7 @@ type EpvVulkanException=class(Exception);
        procedure CmdSetLineWidth(lineWidth:TpvFloat);
        procedure CmdSetDepthBias(depthBiasConstantFactor:TpvFloat;depthBiasClamp:TpvFloat;depthBiasSlopeFactor:TpvFloat);
        procedure CmdSetBlendConstants(const blendConstants:TpvFloat);
+       procedure CmdSetCullMode(const cullMode:TVkCullModeFlags);
        procedure CmdSetDepthBounds(minDepthBounds:TpvFloat;maxDepthBounds:TpvFloat);
        procedure CmdSetStencilCompareMask(faceMask:TVkStencilFaceFlags;compareMask:TpvUInt32);
        procedure CmdSetStencilWriteMask(faceMask:TVkStencilFaceFlags;writeMask:TpvUInt32);
@@ -1445,7 +1473,8 @@ type EpvVulkanException=class(Exception);
                           const aSharingMode:TVkSharingMode;
                           const aQueueFamilyIndexCount:TpvUInt32;
                           const aQueueFamilyIndices:PpvUInt32;
-                          const aInitialLayout:TVkImageLayout); reintroduce; overload;
+                          const aInitialLayout:TVkImageLayout;
+                          const aAdditionalFormat:TVkFormat=VK_FORMAT_UNDEFINED); reintroduce; overload;
        constructor Create(const aDevice:TpvVulkanDevice;
                           const aFlags:TVkImageCreateFlags;
                           const aImageType:TVkImageType;
@@ -1460,7 +1489,8 @@ type EpvVulkanException=class(Exception);
                           const aUsage:TVkImageUsageFlags;
                           const aSharingMode:TVkSharingMode;
                           const aQueueFamilyIndices:array of TpvUInt32;
-                          const aInitialLayout:TVkImageLayout); reintroduce; overload;
+                          const aInitialLayout:TVkImageLayout;
+                          const aAdditionalFormat:TVkFormat=VK_FORMAT_UNDEFINED); reintroduce; overload;
        destructor Destroy; override;
        procedure SetLayout(const aAspectMask:TVkImageAspectFlags;
                            const aOldImageLayout:TVkImageLayout;
@@ -2149,6 +2179,7 @@ type EpvVulkanException=class(Exception);
        fDescriptorSetLayoutBinding:TVkDescriptorSetLayoutBinding;
        fImmutableSamplers:TVkSamplerArray;
        fCountImmutableSamplers:TpvInt32;
+       fBindingFlags:TVkDescriptorBindingFlags;
        function GetBinding:TpvUInt32;
        procedure SetBinding(const aBinding:TpvUInt32);
        function GetDescriptorType:TVkDescriptorType;
@@ -2161,7 +2192,8 @@ type EpvVulkanException=class(Exception);
        constructor Create(const aBinding:TpvUInt32;
                           const aDescriptorType:TVkDescriptorType;
                           const aDescriptorCount:TpvUInt32;
-                          const aStageFlags:TVkShaderStageFlags);
+                          const aStageFlags:TVkShaderStageFlags;
+                          const aBindingFlags:TVkDescriptorBindingFlags=0);
        destructor Destroy; override;
        procedure AddImmutableSampler(const aImmutableSampler:TpvVulkanSampler);
        procedure AddImmutableSamplers(const aImmutableSamplers:array of TpvVulkanSampler);
@@ -2171,6 +2203,7 @@ type EpvVulkanException=class(Exception);
        property DescriptorType:TVkDescriptorType read GetDescriptorType write SetDescriptorType;
        property DescriptorCount:TpvUInt32 read GetDescriptorCount write SetDescriptorCount;
        property StageFlags:TVkShaderStageFlags read GetStageFlags write SetStageFlags;
+       property BindingFlags:TVkDescriptorBindingFlags read fBindingFlags write fBindingFlags;
      end;
 
      TpvVulkanDescriptorSetLayoutBindingList=TpvObjectGenericList<TpvVulkanDescriptorSetLayoutBinding>;
@@ -2179,16 +2212,19 @@ type EpvVulkanException=class(Exception);
       private
        fDevice:TpvVulkanDevice;
        fDescriptorSetLayoutHandle:TVkDescriptorSetLayout;
+       fFlags:TVkDescriptorSetLayoutCreateFlags;
        fDescriptorSetLayoutBindingList:TpvVulkanDescriptorSetLayoutBindingList;
        fDescriptorSetLayoutBindingArray:TVkDescriptorSetLayoutBindingArray;
+       fExtendedBinding:boolean;
       public
-       constructor Create(const aDevice:TpvVulkanDevice);
+       constructor Create(const aDevice:TpvVulkanDevice;const aFlags:TVkDescriptorSetLayoutCreateFlags=0;const aExtendedBinding:boolean=false);
        destructor Destroy; override;
        procedure AddBinding(const aBinding:TpvUInt32;
                             const aDescriptorType:TVkDescriptorType;
                             const aDescriptorCount:TpvUInt32;
                             const aStageFlags:TVkShaderStageFlags;
-                            const aImmutableSamplers:array of TpvVulkanSampler);
+                            const aImmutableSamplers:array of TpvVulkanSampler;
+                            const aBindingFlags:TVkDescriptorBindingFlags=0);
        procedure Initialize;
        property Device:TpvVulkanDevice read fDevice;
        property Handle:TVkDescriptorSetLayout read fDescriptorSetLayoutHandle;
@@ -2923,6 +2959,7 @@ type EpvVulkanException=class(Exception);
        fImageLayout:TVkImageLayout;
        fImage:TpvVulkanImage;
        fImageView:TpvVulkanImageView;
+       fSRGBImageView:TpvVulkanImageView;
        fImageViewType:TVkImageViewType;
        fSampler:TpvVulkanSampler;
        fDescriptorImageInfo:TVkDescriptorImageInfo;
@@ -2968,7 +3005,8 @@ type EpvVulkanException=class(Exception);
                                     const aMipMapSizeStored:boolean;
                                     const aSwapEndianness:boolean;
                                     const aSwapEndiannessTexels:TpvInt32;
-                                    const aDDSStructure:boolean=true);
+                                    const aDDSStructure:boolean=true;
+                                    const aAdditionalSRGB:boolean=false);
        constructor CreateFromStream(const aDevice:TpvVulkanDevice;
                                     const aGraphicsQueue:TpvVulkanQueue;
                                     const aGraphicsCommandBuffer:TpvVulkanCommandBuffer;
@@ -2989,7 +3027,8 @@ type EpvVulkanException=class(Exception);
                                     const aMipMapSizeStored:boolean;
                                     const aSwapEndianness:boolean;
                                     const aSwapEndiannessTexels:TpvInt32;
-                                    const aDDSStructure:boolean=true);
+                                    const aDDSStructure:boolean=true;
+                                    const aAdditionalSRGB:boolean=false);
        constructor CreateFromKTX(const aDevice:TpvVulkanDevice;
                                  const aGraphicsQueue:TpvVulkanQueue;
                                  const aGraphicsCommandBuffer:TpvVulkanCommandBuffer;
@@ -2997,7 +3036,8 @@ type EpvVulkanException=class(Exception);
                                  const aTransferQueue:TpvVulkanQueue;
                                  const aTransferCommandBuffer:TpvVulkanCommandBuffer;
                                  const aTransferFence:TpvVulkanFence;
-                                 const aStream:TStream);
+                                 const aStream:TStream;
+                                 const aAdditionalSRGB:boolean=false);
        constructor CreateFromKTX2(const aDevice:TpvVulkanDevice;
                                   const aGraphicsQueue:TpvVulkanQueue;
                                   const aGraphicsCommandBuffer:TpvVulkanCommandBuffer;
@@ -3005,7 +3045,8 @@ type EpvVulkanException=class(Exception);
                                   const aTransferQueue:TpvVulkanQueue;
                                   const aTransferCommandBuffer:TpvVulkanCommandBuffer;
                                   const aTransferFence:TpvVulkanFence;
-                                  const aStream:TStream);
+                                  const aStream:TStream;
+                                  const aAdditionalSRGB:boolean=false);
        constructor CreateFromDDS(const aDevice:TpvVulkanDevice;
                                  const aGraphicsQueue:TpvVulkanQueue;
                                  const aGraphicsCommandBuffer:TpvVulkanCommandBuffer;
@@ -3013,7 +3054,8 @@ type EpvVulkanException=class(Exception);
                                  const aTransferQueue:TpvVulkanQueue;
                                  const aTransferCommandBuffer:TpvVulkanCommandBuffer;
                                  const aTransferFence:TpvVulkanFence;
-                                 const aStream:TStream);
+                                 const aStream:TStream;
+                                 const aAdditionalSRGB:boolean=false);
        constructor CreateFromHDR(const aDevice:TpvVulkanDevice;
                                  const aGraphicsQueue:TpvVulkanQueue;
                                  const aGraphicsCommandBuffer:TpvVulkanCommandBuffer;
@@ -3023,7 +3065,8 @@ type EpvVulkanException=class(Exception);
                                  const aTransferFence:TpvVulkanFence;
                                  const aStream:TStream;
                                  const aMipMaps:boolean;
-                                 const aSRGB:boolean);
+                                 const aSRGB:boolean;
+                                 const aAdditionalSRGB:boolean=false);
        constructor CreateFromTGA(const aDevice:TpvVulkanDevice;
                                  const aGraphicsQueue:TpvVulkanQueue;
                                  const aGraphicsCommandBuffer:TpvVulkanCommandBuffer;
@@ -3033,7 +3076,8 @@ type EpvVulkanException=class(Exception);
                                  const aTransferFence:TpvVulkanFence;
                                  const aStream:TStream;
                                  const aMipMaps:boolean;
-                                 const aSRGB:boolean);
+                                 const aSRGB:boolean;
+                                 const aAdditionalSRGB:boolean=false);
        constructor CreateFromPNG(const aDevice:TpvVulkanDevice;
                                  const aGraphicsQueue:TpvVulkanQueue;
                                  const aGraphicsCommandBuffer:TpvVulkanCommandBuffer;
@@ -3043,7 +3087,8 @@ type EpvVulkanException=class(Exception);
                                  const aTransferFence:TpvVulkanFence;
                                  const aStream:TStream;
                                  const aMipMaps:boolean;
-                                 const aSRGB:boolean);
+                                 const aSRGB:boolean;
+                                 const aAdditionalSRGB:boolean=false);
        constructor CreateFromJPEG(const aDevice:TpvVulkanDevice;
                                   const aGraphicsQueue:TpvVulkanQueue;
                                   const aGraphicsCommandBuffer:TpvVulkanCommandBuffer;
@@ -3053,7 +3098,8 @@ type EpvVulkanException=class(Exception);
                                   const aTransferFence:TpvVulkanFence;
                                   const aStream:TStream;
                                   const aMipMaps:boolean;
-                                  const aSRGB:boolean);
+                                  const aSRGB:boolean;
+                                  const aAdditionalSRGB:boolean=false);
        constructor CreateFromBMP(const aDevice:TpvVulkanDevice;
                                  const aGraphicsQueue:TpvVulkanQueue;
                                  const aGraphicsCommandBuffer:TpvVulkanCommandBuffer;
@@ -3063,7 +3109,8 @@ type EpvVulkanException=class(Exception);
                                  const aTransferFence:TpvVulkanFence;
                                  const aStream:TStream;
                                  const aMipMaps:boolean;
-                                 const aSRGB:boolean);
+                                 const aSRGB:boolean;
+                                 const aAdditionalSRGB:boolean=false);
        constructor CreateFromImage(const aDevice:TpvVulkanDevice;
                                    const aGraphicsQueue:TpvVulkanQueue;
                                    const aGraphicsCommandBuffer:TpvVulkanCommandBuffer;
@@ -3073,7 +3120,8 @@ type EpvVulkanException=class(Exception);
                                    const aTransferFence:TpvVulkanFence;
                                    const aStream:TStream;
                                    const aMipMaps:boolean;
-                                   const aSRGB:boolean);
+                                   const aSRGB:boolean;
+                                   const aAdditionalSRGB:boolean=false);
        constructor CreateDefault(const aDevice:TpvVulkanDevice;
                                  const aGraphicsQueue:TpvVulkanQueue;
                                  const aGraphicsCommandBuffer:TpvVulkanCommandBuffer;
@@ -3089,7 +3137,8 @@ type EpvVulkanException=class(Exception);
                                  const aCountFaces:TpvInt32;
                                  const aMipmaps:boolean;
                                  const aBorder:boolean;
-                                 const aSRGB:boolean);
+                                 const aSRGB:boolean;
+                                 const aAdditionalSRGB:boolean=false);
        destructor Destroy; override;
        class procedure GetMipMapSize(const aFormat:TVkFormat;const aMipMapWidth,aMipMapHeight:TpvInt32;out aMipMapSize:TVkUInt32;out aCompressed:boolean); static;
        class procedure SwapEndianness(const aData:TpvPointer;
@@ -3126,6 +3175,7 @@ type EpvVulkanException=class(Exception);
        property ImageLayout:TVkImageLayout read fImageLayout;
        property Image:TpvVulkanImage read fImage;
        property ImageView:TpvVulkanImageView read fImageView;
+       property SRGBImageView:TpvVulkanImageView read fSRGBImageView;
        property ImageViewType:TVkImageViewType read fImageViewType;
        property Sampler:TpvVulkanSampler read fSampler;
        property MemoryBlock:TpvVulkanDeviceMemoryBlock read fMemoryBlock;
@@ -6512,8 +6562,8 @@ begin
  end;
  if (fApplicationInfo.apiVersion and VK_API_VERSION_WITHOUT_PATCH_MASK)<VK_API_VERSION_1_0 then begin
   fApplicationInfo.apiVersion:=VK_API_VERSION_1_0;
- end else if (fApplicationInfo.apiVersion and VK_API_VERSION_WITHOUT_PATCH_MASK)>VK_API_VERSION_1_2 then begin
-  fApplicationInfo.apiVersion:=VK_API_VERSION_1_2;
+ end else if (fApplicationInfo.apiVersion and VK_API_VERSION_WITHOUT_PATCH_MASK)>VK_API_VERSION_1_3 then begin
+  fApplicationInfo.apiVersion:=VK_API_VERSION_1_3;
  end;
 
  fValidation:=aValidation;
@@ -6620,6 +6670,13 @@ begin
  SetLength(fEnabledExtensionNameStrings,0);
  SetLength(fRawEnabledExtensionNameStrings,0);
  inherited Destroy;
+end;
+
+function TpvVulkanInstance.GetAPIVersionString:TpvRawByteString;
+begin
+ result:=TpvRawByteString(IntToStr((fApplicationInfo.apiVersion and $7fffffff) shr 22)+'.'+
+                          IntToStr((fApplicationInfo.apiVersion shr 12) and $3ff)+'.'+
+                          IntToStr(fApplicationInfo.apiVersion and $fff));
 end;
 
 procedure TpvVulkanInstance.SetApplicationInfo(const NewApplicationInfo:TVkApplicationInfo);
@@ -6942,6 +6999,24 @@ begin
  end;
 
  begin
+  FillChar(fDescriptorIndexingFeaturesEXT,SizeOf(TVkPhysicalDeviceDescriptorIndexingFeaturesEXT),#0);
+  fDescriptorIndexingFeaturesEXT.sType:=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT;
+  if AvailableExtensionNames.IndexOf(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME)>0 then begin
+   fDescriptorIndexingFeaturesEXT.pNext:=fFeatures2KHR.pNext;
+   fFeatures2KHR.pNext:=@fDescriptorIndexingFeaturesEXT;
+  end;
+ end;
+
+ begin
+  FillChar(fShaderDemoteToHelperInvocationFeaturesEXT,SizeOf(TVkPhysicalDeviceShaderDemoteToHelperInvocationFeaturesEXT),#0);
+  fShaderDemoteToHelperInvocationFeaturesEXT.sType:=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DEMOTE_TO_HELPER_INVOCATION_FEATURES_EXT;
+  if AvailableExtensionNames.IndexOf(VK_EXT_SHADER_DEMOTE_TO_HELPER_INVOCATION_EXTENSION_NAME)>0 then begin
+   fShaderDemoteToHelperInvocationFeaturesEXT.pNext:=fFeatures2KHR.pNext;
+   fFeatures2KHR.pNext:=@fShaderDemoteToHelperInvocationFeaturesEXT;
+  end;
+ end;
+
+ begin
   FillChar(fFragmentShaderInterlockFeaturesEXT,SizeOf(TVkPhysicalDeviceFragmentShaderInterlockFeaturesEXT),#0);
   fFragmentShaderInterlockFeaturesEXT.sType:=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_INTERLOCK_FEATURES_EXT;
   if AvailableExtensionNames.IndexOf(VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME)>0 then begin
@@ -6950,7 +7025,17 @@ begin
   end;
  end;
 
- if (fInstance.APIVersion and VK_API_VERSION_WITHOUT_PATCH_MASK)=VK_API_VERSION_1_0 then begin
+ begin
+  FillChar(fBufferDeviceAddressFeaturesKHR,SizeOf(TVkPhysicalDeviceBufferDeviceAddressFeaturesKHR),#0);
+  fBufferDeviceAddressFeaturesKHR.sType:=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES_KHR;
+  if AvailableExtensionNames.IndexOf(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME)>0 then begin
+   fBufferDeviceAddressFeaturesKHR.pNext:=fFeatures2KHR.pNext;
+   fFeatures2KHR.pNext:=@fBufferDeviceAddressFeaturesKHR;
+  end;
+ end;
+
+ if ((fInstance.APIVersion and VK_API_VERSION_WITHOUT_PATCH_MASK)=VK_API_VERSION_1_0) and
+    assigned(fInstance.Commands.Commands.GetPhysicalDeviceFeatures2KHR) then begin
   fInstance.Commands.GetPhysicalDeviceFeatures2KHR(Handle,@fFeatures2KHR);
  end else begin
   fInstance.Commands.GetPhysicalDeviceFeatures2(Handle,@fFeatures2KHR);
@@ -6982,7 +7067,8 @@ begin
 
  end;
 
- if (fInstance.APIVersion and VK_API_VERSION_WITHOUT_PATCH_MASK)=VK_API_VERSION_1_0 then begin
+ if ((fInstance.APIVersion and VK_API_VERSION_WITHOUT_PATCH_MASK)=VK_API_VERSION_1_0) and
+    assigned(fInstance.Commands.Commands.GetPhysicalDeviceProperties2KHR) then begin
   fInstance.Commands.GetPhysicalDeviceProperties2KHR(Handle,@fProperties2KHR);
  end else begin
   fInstance.Commands.GetPhysicalDeviceProperties2(Handle,@fProperties2KHR);
@@ -7001,6 +7087,8 @@ begin
 
  fMaxMultiViewViewCount:=fMultiviewPropertiesKHR.maxMultiviewViewCount;
  fMaxMultiViewInstanceIndex:=fMultiviewPropertiesKHR.maxMultiviewInstanceIndex;
+
+ fShaderDemoteToHelperInvocation:=fShaderDemoteToHelperInvocationFeaturesEXT.shaderDemoteToHelperInvocation<>VK_FALSE;
 
  fFragmentShaderSampleInterlock:=fFragmentShaderInterlockFeaturesEXT.fragmentShaderSampleInterlock<>VK_FALSE;
  fFragmentShaderPixelInterlock:=fFragmentShaderInterlockFeaturesEXT.fragmentShaderPixelInterlock<>VK_FALSE;
@@ -7731,6 +7819,8 @@ begin
  fComputeQueues:=nil;
  fTransferQueues:=nil;
 
+ fImageFormatList:=false;
+
  fUseNVIDIADeviceDiagnostics:=false;
 
  fNVIDIADeviceDiagnosticsFlags:=TVkDeviceDiagnosticsConfigFlagsNV(VK_DEVICE_DIAGNOSTICS_CONFIG_ENABLE_SHADER_DEBUG_INFO_BIT_NV) or
@@ -8279,28 +8369,61 @@ begin
 
   end else}begin
 
-   FillChar(fPhysicalDeviceMultiviewFeatures,SizeOf(TVkPhysicalDeviceMultiviewFeatures),#0);
-   fPhysicalDeviceMultiviewFeatures.sType:=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTIVIEW_FEATURES;
-   if (PhysicalDevice.fMultiviewFeaturesKHR.multiview<>VK_FALSE) or
+   FillChar(fMultiviewFeaturesKHR,SizeOf(TVkPhysicalDeviceMultiviewFeatures),#0);
+   fMultiviewFeaturesKHR.sType:=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTIVIEW_FEATURES_KHR;
+   if (fEnabledExtensionNames.IndexOf(VK_KHR_MULTIVIEW_EXTENSION_NAME)>=0) and
+      (PhysicalDevice.fMultiviewFeaturesKHR.multiview<>VK_FALSE) or
       (PhysicalDevice.fMultiviewFeaturesKHR.multiviewTessellationShader<>VK_FALSE) or
       (PhysicalDevice.fMultiviewFeaturesKHR.multiviewGeometryShader<>VK_FALSE) then begin
-    fPhysicalDeviceMultiviewFeatures.multiview:=PhysicalDevice.fMultiviewFeaturesKHR.multiview;
-    fPhysicalDeviceMultiviewFeatures.multiviewTessellationShader:=PhysicalDevice.fMultiviewFeaturesKHR.multiviewTessellationShader;
-    fPhysicalDeviceMultiviewFeatures.multiviewGeometryShader:=PhysicalDevice.fMultiviewFeaturesKHR.multiviewGeometryShader;
-    fPhysicalDeviceMultiviewFeatures.pNext:=DeviceCreateInfo.pNext;
-    DeviceCreateInfo.pNext:=@fPhysicalDeviceMultiviewFeatures;
+    fMultiviewFeaturesKHR.multiview:=PhysicalDevice.fMultiviewFeaturesKHR.multiview;
+    fMultiviewFeaturesKHR.multiviewTessellationShader:=PhysicalDevice.fMultiviewFeaturesKHR.multiviewTessellationShader;
+    fMultiviewFeaturesKHR.multiviewGeometryShader:=PhysicalDevice.fMultiviewFeaturesKHR.multiviewGeometryShader;
+    fMultiviewFeaturesKHR.pNext:=DeviceCreateInfo.pNext;
+    DeviceCreateInfo.pNext:=@fMultiviewFeaturesKHR;
    end;
 
-   FillChar(fPhysicalDeviceFragmentShaderInterlockFeaturesEXT,SizeOf(TVkPhysicalDeviceFragmentShaderInterlockFeaturesEXT),#0);
-   fPhysicalDeviceFragmentShaderInterlockFeaturesEXT.sType:=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_INTERLOCK_FEATURES_EXT;
-   if (PhysicalDevice.fFragmentShaderInterlockFeaturesEXT.fragmentShaderPixelInterlock<>VK_FALSE) or
-      (PhysicalDevice.fFragmentShaderInterlockFeaturesEXT.fragmentShaderSampleInterlock<>VK_FALSE) or
-      (PhysicalDevice.fFragmentShaderInterlockFeaturesEXT.fragmentShaderShadingRateInterlock<>VK_FALSE) then begin
-    fPhysicalDeviceFragmentShaderInterlockFeaturesEXT.fragmentShaderPixelInterlock:=PhysicalDevice.fFragmentShaderInterlockFeaturesEXT.fragmentShaderPixelInterlock;
-    fPhysicalDeviceFragmentShaderInterlockFeaturesEXT.fragmentShaderSampleInterlock:=PhysicalDevice.fFragmentShaderInterlockFeaturesEXT.fragmentShaderSampleInterlock;
-    fPhysicalDeviceFragmentShaderInterlockFeaturesEXT.fragmentShaderShadingRateInterlock:=PhysicalDevice.fFragmentShaderInterlockFeaturesEXT.fragmentShaderShadingRateInterlock;
-    fPhysicalDeviceFragmentShaderInterlockFeaturesEXT.pNext:=DeviceCreateInfo.pNext;
-    DeviceCreateInfo.pNext:=@fPhysicalDeviceFragmentShaderInterlockFeaturesEXT;
+   FillChar(fDescriptorIndexingFeaturesEXT,SizeOf(TVkPhysicalDeviceDescriptorIndexingFeaturesEXT),#0);
+   fDescriptorIndexingFeaturesEXT.sType:=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT;
+   if (fEnabledExtensionNames.IndexOf(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME)>=0) and
+      assigned(PhysicalDevice.DescriptorIndexingFeaturesEXT.pNext) then begin
+    fDescriptorIndexingFeaturesEXT:=PhysicalDevice.DescriptorIndexingFeaturesEXT;
+    fDescriptorIndexingFeaturesEXT.pNext:=DeviceCreateInfo.pNext;
+    DeviceCreateInfo.pNext:=@fDescriptorIndexingFeaturesEXT;
+   end;
+
+   FillChar(fShaderDemoteToHelperInvocationFeaturesEXT,SizeOf(TVkPhysicalDeviceShaderDemoteToHelperInvocationFeaturesEXT),#0);
+   fShaderDemoteToHelperInvocationFeaturesEXT.sType:=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DEMOTE_TO_HELPER_INVOCATION_FEATURES_EXT;
+   if (fEnabledExtensionNames.IndexOf(VK_EXT_SHADER_DEMOTE_TO_HELPER_INVOCATION_EXTENSION_NAME)>=0) and
+      (PhysicalDevice.fShaderDemoteToHelperInvocationFeaturesEXT.shaderDemoteToHelperInvocation<>VK_FALSE) then begin
+    fShaderDemoteToHelperInvocationFeaturesEXT.shaderDemoteToHelperInvocation:=PhysicalDevice.fShaderDemoteToHelperInvocationFeaturesEXT.shaderDemoteToHelperInvocation;
+    fShaderDemoteToHelperInvocationFeaturesEXT.pNext:=DeviceCreateInfo.pNext;
+    DeviceCreateInfo.pNext:=@fShaderDemoteToHelperInvocationFeaturesEXT;
+   end;
+
+   FillChar(fFragmentShaderInterlockFeaturesEXT,SizeOf(TVkPhysicalDeviceFragmentShaderInterlockFeaturesEXT),#0);
+   fFragmentShaderInterlockFeaturesEXT.sType:=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_INTERLOCK_FEATURES_EXT;
+   if (fEnabledExtensionNames.IndexOf(VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME)>=0) and
+      ((PhysicalDevice.fFragmentShaderInterlockFeaturesEXT.fragmentShaderPixelInterlock<>VK_FALSE) or
+       (PhysicalDevice.fFragmentShaderInterlockFeaturesEXT.fragmentShaderSampleInterlock<>VK_FALSE) or
+       (PhysicalDevice.fFragmentShaderInterlockFeaturesEXT.fragmentShaderShadingRateInterlock<>VK_FALSE)) then begin
+    fFragmentShaderInterlockFeaturesEXT.fragmentShaderPixelInterlock:=PhysicalDevice.fFragmentShaderInterlockFeaturesEXT.fragmentShaderPixelInterlock;
+    fFragmentShaderInterlockFeaturesEXT.fragmentShaderSampleInterlock:=PhysicalDevice.fFragmentShaderInterlockFeaturesEXT.fragmentShaderSampleInterlock;
+    fFragmentShaderInterlockFeaturesEXT.fragmentShaderShadingRateInterlock:=PhysicalDevice.fFragmentShaderInterlockFeaturesEXT.fragmentShaderShadingRateInterlock;
+    fFragmentShaderInterlockFeaturesEXT.pNext:=DeviceCreateInfo.pNext;
+    DeviceCreateInfo.pNext:=@fFragmentShaderInterlockFeaturesEXT;
+   end;
+
+   FillChar(fBufferDeviceAddressFeaturesKHR,SizeOf(TVkPhysicalDeviceBufferDeviceAddressFeaturesKHR),#0);
+   fBufferDeviceAddressFeaturesKHR.sType:=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES_KHR;
+   if (fEnabledExtensionNames.IndexOf(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME)>=0) and
+      ((PhysicalDevice.fBufferDeviceAddressFeaturesKHR.bufferDeviceAddress<>VK_FALSE) or
+       (PhysicalDevice.fBufferDeviceAddressFeaturesKHR.bufferDeviceAddressCaptureReplay<>VK_FALSE) or
+       (PhysicalDevice.fBufferDeviceAddressFeaturesKHR.bufferDeviceAddressMultiDevice<>VK_FALSE)) then begin
+    fBufferDeviceAddressFeaturesKHR.bufferDeviceAddress:=PhysicalDevice.fBufferDeviceAddressFeaturesKHR.bufferDeviceAddress;
+    fBufferDeviceAddressFeaturesKHR.bufferDeviceAddressCaptureReplay:=PhysicalDevice.fBufferDeviceAddressFeaturesKHR.bufferDeviceAddressCaptureReplay;
+    fBufferDeviceAddressFeaturesKHR.bufferDeviceAddressMultiDevice:=PhysicalDevice.fBufferDeviceAddressFeaturesKHR.bufferDeviceAddressMultiDevice;
+    fBufferDeviceAddressFeaturesKHR.pNext:=DeviceCreateInfo.pNext;
+    DeviceCreateInfo.pNext:=@fBufferDeviceAddressFeaturesKHR;
    end;
 
   end;
@@ -8404,6 +8527,9 @@ begin
   fMemoryManager.Initialize;
 
   fDebugMarker.Initialize;
+
+  fImageFormatList:=((fInstance.APIVersion and VK_API_VERSION_WITHOUT_PATCH_MASK)>=VK_API_VERSION_1_2) or
+                    (fEnabledExtensionNames.IndexOf(VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME)>=0);
 
  end;
 
@@ -8923,6 +9049,7 @@ constructor TpvVulkanDeviceMemoryChunk.Create(const aMemoryManager:TpvVulkanDevi
 type TBlacklistedHeaps=array of TpvUInt32;
 var Index,HeapIndex,CurrentScore,BestScore,CountBlacklistedHeaps,BlacklistedHeapIndex:TpvInt32;
     MemoryAllocateInfo:TVkMemoryAllocateInfo;
+    MemoryAllocateFlagsInfoKHR:TVkMemoryAllocateFlagsInfoKHR;
     PhysicalDevice:TpvVulkanPhysicalDevice;
     CurrentSize,BestSize,CurrentWantedChunkSize,BestWantedChunkSize:TVkDeviceSize;
     Found,OK:boolean;
@@ -9058,6 +9185,13 @@ begin
    MemoryAllocateInfo.pNext:=aMemoryDedicatedAllocateInfo;
    MemoryAllocateInfo.allocationSize:=BestWantedChunkSize;
    MemoryAllocateInfo.memoryTypeIndex:=fMemoryTypeIndex;
+
+   if TpvVulkanDeviceMemoryChunkFlag.BufferDeviceAddress in aMemoryChunkFlags then begin
+    FillChar(MemoryAllocateFlagsInfoKHR,SizeOf(TVkMemoryAllocateFlagsInfoKHR),#0);
+    MemoryAllocateFlagsInfoKHR.sType:=VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO_KHR;
+  	MemoryAllocateFlagsInfoKHR.flags:=TVkMemoryAllocateFlagsKHR(VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT_KHR);
+		MemoryAllocateInfo.pNext:=@MemoryAllocateFlagsInfoKHR;
+   end;
 
    ResultCode:=fMemoryManager.fDevice.Commands.AllocateMemory(fMemoryManager.fDevice.fDeviceHandle,@MemoryAllocateInfo,fMemoryManager.fDevice.fAllocationCallbacks,@fMemoryHandle);
 
@@ -10304,7 +10438,7 @@ function TpvVulkanDeviceMemoryManager.AllocateMemoryBlock(const aMemoryBlockFlag
                                                           const aMemoryPreferredHeapFlags:TVkMemoryHeapFlags;
                                                           const aMemoryAvoidHeapFlags:TVkMemoryHeapFlags;
                                                           const aMemoryAllocationType:TpvVulkanDeviceMemoryAllocationType;
-                                                          const aMemoryDedicatedAllocationDataHandle:TpvPointer=nil):TpvVulkanDeviceMemoryBlock;
+                                                          const aMemoryDedicatedAllocationDataHandle:TpvPointer):TpvVulkanDeviceMemoryBlock;
 var TryIteration:TpvInt32;
     MemoryChunk:TpvVulkanDeviceMemoryChunk;
     MemoryChunkBlock:TpvVulkanDeviceMemoryChunkBlock;
@@ -10330,6 +10464,10 @@ begin
 
  if TpvVulkanDeviceMemoryBlockFlag.OwnSingleMemoryChunk in aMemoryBlockFlags then begin
   Include(MemoryChunkFlags,TpvVulkanDeviceMemoryChunkFlag.OwnSingleMemoryChunk);
+ end;
+
+ if TpvVulkanDeviceMemoryBlockFlag.BufferDeviceAddress in aMemoryBlockFlags then begin
+  Include(MemoryChunkFlags,TpvVulkanDeviceMemoryChunkFlag.BufferDeviceAddress);
  end;
 
  if assigned(aMemoryDedicatedAllocationDataHandle) and
@@ -10438,7 +10576,7 @@ begin
         ((MemoryChunk.fMemoryHeapFlags and HeapFlags)=HeapFlags) and
         ((aMemoryAvoidHeapFlags=0) or ((MemoryChunk.fMemoryHeapFlags and aMemoryAvoidHeapFlags)=0)) and
         ((MemoryChunk.fSize-MemoryChunk.fUsed)>=aMemoryBlockSize) and
-        ((MemoryChunk.fMemoryChunkFlags*[TpvVulkanDeviceMemoryChunkFlag.PersistentMapped])=(MemoryChunkFlags*[TpvVulkanDeviceMemoryChunkFlag.PersistentMapped])) and
+        ((MemoryChunk.fMemoryChunkFlags*[TpvVulkanDeviceMemoryChunkFlag.PersistentMapped,TpvVulkanDeviceMemoryChunkFlag.BufferDeviceAddress])=(MemoryChunkFlags*[TpvVulkanDeviceMemoryChunkFlag.PersistentMapped,TpvVulkanDeviceMemoryChunkFlag.BufferDeviceAddress])) and
         (not (TpvVulkanDeviceMemoryChunkFlag.OwnSingleMemoryChunk in MemoryChunk.fMemoryChunkFlags)) then begin
       if MemoryChunk.AllocateMemory(MemoryChunkBlock,Offset,aMemoryBlockSize,Alignment,aMemoryAllocationType) then begin
        result:=TpvVulkanDeviceMemoryBlock.Create(self,MemoryChunk,MemoryChunkBlock,Offset,aMemoryBlockSize);
@@ -10602,6 +10740,11 @@ begin
    Exclude(fBufferFlags,TpvVulkanBufferFlag.DedicatedAllocation);
   end;
 
+  if (aUsage and TVkBufferUsageFlags(VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT_KHR))<>0 then begin
+   Include(fBufferFlags,TpvVulkanBufferFlag.BufferDeviceAddress);
+   Include(MemoryBlockFlags,TpvVulkanDeviceMemoryBlockFlag.BufferDeviceAddress);
+  end;
+
   fMemoryBlock:=fDevice.fMemoryManager.AllocateMemoryBlock(MemoryBlockFlags,
                                                            fMemoryRequirements.Size,
                                                            fMemoryRequirements.Alignment,
@@ -10624,6 +10767,8 @@ begin
   fDescriptorBufferInfo.buffer:=fBufferHandle;
   fDescriptorBufferInfo.offset:=0;
   fDescriptorBufferInfo.range:=fSize;
+
+  fDeviceAddress:=GetDeviceAddress;
 
  except
 
@@ -10675,6 +10820,126 @@ end;
 procedure TpvVulkanBuffer.Bind;
 begin
  VulkanCheckResult(fDevice.Commands.BindBufferMemory(fDevice.fDeviceHandle,fBufferHandle,fMemoryBlock.fMemoryChunk.fMemoryHandle,fMemoryBlock.fOffset));
+end;
+
+function TpvVulkanBuffer.GetDeviceAddress:TVkDeviceAddress;
+var BufferDeviceAddressInfoKHR:TVkBufferDeviceAddressInfoKHR;
+begin
+ if TpvVulkanBufferFlag.BufferDeviceAddress in fBufferFlags then begin
+  FillChar(BufferDeviceAddressInfoKHR,SizeOf(TVkBufferDeviceAddressInfoKHR),#0);
+  BufferDeviceAddressInfoKHR.sType:=VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO_KHR;
+  BufferDeviceAddressInfoKHR.pNext:=nil;
+  BufferDeviceAddressInfoKHR.buffer:=fBufferHandle;
+  if assigned(fDevice.Commands.Commands.GetBufferDeviceAddressKHR) then begin
+   result:=fDevice.Commands.GetBufferDeviceAddressKHR(fDevice.fDeviceHandle,@BufferDeviceAddressInfoKHR);
+  end else if assigned(fDevice.Commands.Commands.GetBufferDeviceAddress) then begin
+   result:=fDevice.Commands.GetBufferDeviceAddress(fDevice.fDeviceHandle,@BufferDeviceAddressInfoKHR);
+  end else begin
+   result:=0;
+  end;
+ end else begin
+  result:=0;
+ end;
+end;
+
+procedure TpvVulkanBuffer.ClearData(const aTransferQueue:TpvVulkanQueue;
+                                    const aTransferCommandBuffer:TpvVulkanCommandBuffer;
+                                    const aTransferFence:TpvVulkanFence;
+                                    const aDataOffset:TVkDeviceSize;
+                                    const aDataSize:TVkDeviceSize;
+                                    const aUseTemporaryStagingBufferMode:TpvVulkanBufferUseTemporaryStagingBufferMode=TpvVulkanBufferUseTemporaryStagingBufferMode.Automatic;
+                                    const aForceFlush:boolean=false);
+var StagingBuffer:TpvVulkanBuffer;
+    p:TpvPointer;
+    VkBufferCopy:TVkBufferCopy;
+    DataSize,NonCoherentAtomSize:TVkDeviceSize;
+begin
+
+ if (aUseTemporaryStagingBufferMode=TpvVulkanBufferUseTemporaryStagingBufferMode.Yes) or
+    ((aUseTemporaryStagingBufferMode=TpvVulkanBufferUseTemporaryStagingBufferMode.Automatic) and
+     ((fMemoryPropertyFlags and TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))=0)) then begin
+
+  StagingBuffer:=TpvVulkanBuffer.Create(fDevice,
+                                        aDataSize,
+                                        TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_SRC_BIT),
+                                        VK_SHARING_MODE_EXCLUSIVE,
+                                        [],
+                                        TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                        0,
+                                        0,
+                                        0,
+                                        0,
+                                        0,
+                                        [TpvVulkanBufferFlag.OwnSingleMemoryChunk,
+                                         TpvVulkanBufferFlag.DedicatedAllocation]);
+  try
+
+   p:=StagingBuffer.Memory.MapMemory;
+   try
+    if assigned(p) then begin
+     FillChar(p^,aDataSize,#0);
+    end else begin
+     raise EpvVulkanException.Create('Vulkan buffer memory block map failed');
+    end;
+   finally
+    StagingBuffer.Memory.UnmapMemory;
+   end;
+
+   VkBufferCopy.srcOffset:=0;
+   VkBufferCopy.dstOffset:=aDataOffset;
+   VkBufferCopy.size:=aDataSize;
+
+   aTransferCommandBuffer.Reset(TVkCommandBufferResetFlags(VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT));
+   aTransferCommandBuffer.BeginRecording;
+   aTransferCommandBuffer.CmdCopyBuffer(StagingBuffer.Handle,Handle,1,@VkBufferCopy);
+   aTransferCommandBuffer.EndRecording;
+   aTransferCommandBuffer.Execute(aTransferQueue,0,nil,nil,aTransferFence,true);
+
+  finally
+   StagingBuffer.Free;
+  end;
+
+ end else begin
+
+  if (fMemoryPropertyFlags and TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))<>0 then begin
+   p:=Memory.MapMemory(aDataOffset,aDataSize);
+   try
+    if assigned(p) then begin
+     FillChar(p^,aDataSize,#0);
+     if aForceFlush or ((fMemoryPropertyFlags and TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))=0) then begin
+      DataSize:=aDataSize;
+      NonCoherentAtomSize:=fDevice.fPhysicalDevice.fProperties.limits.nonCoherentAtomSize;
+      if NonCoherentAtomSize>0 then begin
+       if (NonCoherentAtomSize and (NonCoherentAtomSize-1))=0 then begin
+        if (DataSize and (NonCoherentAtomSize-1))<>0 then begin
+         inc(DataSize,NonCoherentAtomSize-(DataSize and (NonCoherentAtomSize-1)));
+         if (aDataOffset+aDataSize)>=Memory.Size then begin
+          DataSize:=Memory.Size-(aDataOffset+aDataSize);
+         end;
+        end;
+       end else begin
+        if (DataSize mod NonCoherentAtomSize)=0 then begin
+         inc(DataSize,NonCoherentAtomSize-(DataSize mod NonCoherentAtomSize));
+         if (aDataOffset+aDataSize)>=Memory.Size then begin
+          DataSize:=Memory.Size-(aDataOffset+aDataSize);
+         end;
+        end;
+       end;
+      end;
+      Memory.FlushMappedMemoryRange(p,DataSize);
+     end;
+    end else begin
+     raise EpvVulkanException.Create('Vulkan buffer memory block map failed');
+    end;
+   finally
+    Memory.UnmapMemory;
+   end;
+  end else begin
+   raise EpvVulkanException.Create('Vulkan buffer memory block map failed');
+  end;
+
+ end;
+
 end;
 
 procedure TpvVulkanBuffer.UploadData(const aTransferQueue:TpvVulkanQueue;
@@ -11417,6 +11682,15 @@ end;
 procedure TpvVulkanCommandBuffer.CmdSetBlendConstants(const blendConstants:TpvFloat);
 begin
  fDevice.fDeviceVulkan.CmdSetBlendConstants(fCommandBufferHandle,blendConstants);
+end;
+
+procedure TpvVulkanCommandBuffer.CmdSetCullMode(const cullMode:TVkCullModeFlags);
+begin
+ if assigned(fDevice.fDeviceVulkan.Commands.CmdSetCullMode) then begin
+  fDevice.fDeviceVulkan.Commands.CmdSetCullMode(fCommandBufferHandle,cullMode);
+ end else begin
+  fDevice.fDeviceVulkan.Commands.CmdSetCullModeExt(fCommandBufferHandle,cullMode);
+ end;
 end;
 
 procedure TpvVulkanCommandBuffer.CmdSetDepthBounds(minDepthBounds:TpvFloat;maxDepthBounds:TpvFloat);
@@ -12335,8 +12609,11 @@ constructor TpvVulkanImage.Create(const aDevice:TpvVulkanDevice;
                                   const aSharingMode:TVkSharingMode;
                                   const aQueueFamilyIndexCount:TpvUInt32;
                                   const aQueueFamilyIndices:PpvUInt32;
-                                  const aInitialLayout:TVkImageLayout);
+                                  const aInitialLayout:TVkImageLayout;
+                                  const aAdditionalFormat:TVkFormat);
 var ImageCreateInfo:TVkImageCreateInfo;
+    ImageFormatListCreateInfoKHR:TVkImageFormatListCreateInfoKHR;
+    Formats:array[0..1] of TVkFormat;
 begin
 
  inherited Create;
@@ -12368,6 +12645,17 @@ begin
  ImageCreateInfo.pQueueFamilyIndices:=TpvPointer(aQueueFamilyIndices);
  ImageCreateInfo.initialLayout:=aInitialLayout;
 
+ if fDevice.fImageFormatList and (aAdditionalFormat<>VK_FORMAT_UNDEFINED) then begin
+  FillChar(ImageFormatListCreateInfoKHR,SizeOf(TVkImageFormatListCreateInfoKHR),#0);
+  ImageFormatListCreateInfoKHR.sType:=VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO_KHR;
+  ImageFormatListCreateInfoKHR.pNext:=nil;
+  ImageCreateInfo.pNext:=@ImageFormatListCreateInfoKHR;
+  ImageFormatListCreateInfoKHR.pViewFormats:=@Formats[0];
+  ImageFormatListCreateInfoKHR.viewFormatCount:=2;
+  Formats[0]:=aFormat;
+  Formats[1]:=aAdditionalFormat;
+ end;
+
  VulkanCheckResult(fDevice.fDeviceVulkan.CreateImage(fDevice.fDeviceHandle,@ImageCreateInfo,fDevice.fAllocationCallbacks,@fImageHandle));
 
 end;
@@ -12386,8 +12674,11 @@ constructor TpvVulkanImage.Create(const aDevice:TpvVulkanDevice;
                                   const aUsage:TVkImageUsageFlags;
                                   const aSharingMode:TVkSharingMode;
                                   const aQueueFamilyIndices:array of TpvUInt32;
-                                  const aInitialLayout:TVkImageLayout);
+                                  const aInitialLayout:TVkImageLayout;
+                                  const aAdditionalFormat:TVkFormat=VK_FORMAT_UNDEFINED);
 var ImageCreateInfo:TVkImageCreateInfo;
+    ImageFormatListCreateInfoKHR:TVkImageFormatListCreateInfoKHR;
+    Formats:array[0..1] of TVkFormat;
 begin
 
  inherited Create;
@@ -12422,6 +12713,17 @@ begin
   ImageCreateInfo.pQueueFamilyIndices:=nil;
  end;
  ImageCreateInfo.initialLayout:=aInitialLayout;
+
+ if fDevice.fImageFormatList and (aAdditionalFormat<>VK_FORMAT_UNDEFINED) then begin
+  FillChar(ImageFormatListCreateInfoKHR,SizeOf(TVkImageFormatListCreateInfoKHR),#0);
+  ImageFormatListCreateInfoKHR.sType:=VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO_KHR;
+  ImageFormatListCreateInfoKHR.pNext:=nil;
+  ImageCreateInfo.pNext:=@ImageFormatListCreateInfoKHR;
+  ImageFormatListCreateInfoKHR.pViewFormats:=@Formats[0];
+  ImageFormatListCreateInfoKHR.viewFormatCount:=2;
+  Formats[0]:=aFormat;
+  Formats[1]:=aAdditionalFormat;
+ end;
 
  VulkanCheckResult(fDevice.fDeviceVulkan.CreateImage(fDevice.fDeviceHandle,@ImageCreateInfo,fDevice.fAllocationCallbacks,@fImageHandle));
 
@@ -15702,7 +16004,8 @@ end;
 constructor TpvVulkanDescriptorSetLayoutBinding.Create(const aBinding:TpvUInt32;
                                                        const aDescriptorType:TVkDescriptorType;
                                                        const aDescriptorCount:TpvUInt32;
-                                                       const aStageFlags:TVkShaderStageFlags);
+                                                       const aStageFlags:TVkShaderStageFlags;
+                                                       const aBindingFlags:TVkDescriptorBindingFlags);
 begin
  inherited Create;
 
@@ -15711,6 +16014,8 @@ begin
  fDescriptorSetLayoutBinding.descriptorType:=aDescriptorType;
  fDescriptorSetLayoutBinding.descriptorCount:=aDescriptorCount;
  fDescriptorSetLayoutBinding.stageFlags:=aStageFlags;
+
+ fBindingFlags:=aBindingFlags;
 
  fImmutableSamplers:=nil;
  fCountImmutableSamplers:=0;
@@ -15788,7 +16093,7 @@ begin
  fDescriptorSetLayoutBinding.pImmutableSamplers:=@fImmutableSamplers[0];
 end;
 
-constructor TpvVulkanDescriptorSetLayout.Create(const aDevice:TpvVulkanDevice);
+constructor TpvVulkanDescriptorSetLayout.Create(const aDevice:TpvVulkanDevice;const aFlags:TVkDescriptorSetLayoutCreateFlags=0;const aExtendedBinding:boolean=false);
 begin
  inherited Create;
 
@@ -15799,7 +16104,11 @@ begin
  fDescriptorSetLayoutBindingList:=TpvVulkanDescriptorSetLayoutBindingList.Create;
  fDescriptorSetLayoutBindingList.OwnsObjects:=true;
 
+ fFlags:=aFlags;
+
  fDescriptorSetLayoutBindingArray:=nil;
+
+ fExtendedBinding:=aExtendedBinding;
 
 end;
 
@@ -15818,10 +16127,11 @@ procedure TpvVulkanDescriptorSetLayout.AddBinding(const aBinding:TpvUInt32;
                                                   const aDescriptorType:TVkDescriptorType;
                                                   const aDescriptorCount:TpvUInt32;
                                                   const aStageFlags:TVkShaderStageFlags;
-                                                  const aImmutableSamplers:array of TpvVulkanSampler);
+                                                  const aImmutableSamplers:array of TpvVulkanSampler;
+                                                  const aBindingFlags:TVkDescriptorBindingFlags=0);
 var DescriptorSetLayoutBinding:TpvVulkanDescriptorSetLayoutBinding;
 begin
- DescriptorSetLayoutBinding:=TpvVulkanDescriptorSetLayoutBinding.Create(aBinding,aDescriptorType,aDescriptorCount,aStageFlags);
+ DescriptorSetLayoutBinding:=TpvVulkanDescriptorSetLayoutBinding.Create(aBinding,aDescriptorType,aDescriptorCount,aStageFlags,aBindingFlags);
  fDescriptorSetLayoutBindingList.Add(DescriptorSetLayoutBinding);
  DescriptorSetLayoutBinding.AddImmutableSamplers(aImmutableSamplers);
  DescriptorSetLayoutBinding.Initialize;
@@ -15830,24 +16140,48 @@ end;
 procedure TpvVulkanDescriptorSetLayout.Initialize;
 var Index:TpvInt32;
     DescriptorSetLayoutCreateInfo:TVkDescriptorSetLayoutCreateInfo;
+    DescriptorSetLayoutBindingFlagsCreateInfoEXT:TVkDescriptorSetLayoutBindingFlagsCreateInfoEXT;
+    DescriptorBindingFlags:array of TVkDescriptorBindingFlags;
 begin
  if fDescriptorSetLayoutHandle=VK_NULL_HANDLE then begin
-  FillChar(DescriptorSetLayoutCreateInfo,SizeOf(TVkDescriptorSetLayoutCreateInfo),#0);
-  DescriptorSetLayoutCreateInfo.sType:=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-  SetLength(fDescriptorSetLayoutBindingArray,fDescriptorSetLayoutBindingList.Count);
-  if length(fDescriptorSetLayoutBindingArray)>0 then begin
-   for Index:=0 to length(fDescriptorSetLayoutBindingArray)-1 do begin
-    fDescriptorSetLayoutBindingArray[Index]:=TpvVulkanDescriptorSetLayoutBinding(fDescriptorSetLayoutBindingList[Index]).fDescriptorSetLayoutBinding;
+  DescriptorBindingFlags:=nil;
+  try
+   FillChar(DescriptorSetLayoutCreateInfo,SizeOf(TVkDescriptorSetLayoutCreateInfo),#0);
+   DescriptorSetLayoutCreateInfo.sType:=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+   DescriptorSetLayoutCreateInfo.flags:=fFlags;
+   SetLength(fDescriptorSetLayoutBindingArray,fDescriptorSetLayoutBindingList.Count);
+   if length(fDescriptorSetLayoutBindingArray)>0 then begin
+    if fExtendedBinding then begin
+     SetLength(DescriptorBindingFlags,length(fDescriptorSetLayoutBindingArray));
+     FillChar(DescriptorSetLayoutBindingFlagsCreateInfoEXT,SizeOf(TVkDescriptorSetLayoutBindingFlagsCreateInfoEXT),#0);
+     DescriptorSetLayoutBindingFlagsCreateInfoEXT.sType:=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO_EXT;
+     DescriptorSetLayoutBindingFlagsCreateInfoEXT.pNext:=nil;
+     DescriptorSetLayoutBindingFlagsCreateInfoEXT.bindingCount:=length(fDescriptorSetLayoutBindingArray);
+     DescriptorSetLayoutBindingFlagsCreateInfoEXT.pBindingFlags:=@DescriptorBindingFlags[0];
+     DescriptorSetLayoutCreateInfo.pNext:=@DescriptorSetLayoutBindingFlagsCreateInfoEXT;
+    end;
+    for Index:=0 to length(fDescriptorSetLayoutBindingArray)-1 do begin
+     fDescriptorSetLayoutBindingArray[Index]:=TpvVulkanDescriptorSetLayoutBinding(fDescriptorSetLayoutBindingList[Index]).fDescriptorSetLayoutBinding;
+     if fExtendedBinding then begin
+      DescriptorBindingFlags[Index]:=TpvVulkanDescriptorSetLayoutBinding(fDescriptorSetLayoutBindingList[Index]).fBindingFlags;
+     end;
+    end;
+    DescriptorSetLayoutCreateInfo.bindingCount:=length(fDescriptorSetLayoutBindingArray);
+    DescriptorSetLayoutCreateInfo.pBindings:=@fDescriptorSetLayoutBindingArray[0];
    end;
-   DescriptorSetLayoutCreateInfo.bindingCount:=length(fDescriptorSetLayoutBindingArray);
-   DescriptorSetLayoutCreateInfo.pBindings:=@fDescriptorSetLayoutBindingArray[0];
+   VulkanCheckResult(fDevice.fDeviceVulkan.CreateDescriptorSetLayout(fDevice.fDeviceHandle,@DescriptorSetLayoutCreateInfo,fDevice.fAllocationCallbacks,@fDescriptorSetLayoutHandle));
+  finally
+   DescriptorBindingFlags:=nil;
   end;
-  VulkanCheckResult(fDevice.fDeviceVulkan.CreateDescriptorSetLayout(fDevice.fDeviceHandle,@DescriptorSetLayoutCreateInfo,fDevice.fAllocationCallbacks,@fDescriptorSetLayoutHandle));
  end;
 end;
 
 constructor TpvVulkanDescriptorSet.Create(const aDescriptorPool:TpvVulkanDescriptorPool;
                                           const aDescriptorSetLayout:TpvVulkanDescriptorSetLayout);
+var Index:TpvSizeInt;
+    DescriptorSetLayoutBinding:TpvVulkanDescriptorSetLayoutBinding;
+    DescriptorSetVariableDescriptorCountAllocateInfoEXT:TVkDescriptorSetVariableDescriptorCountAllocateInfoEXT;
+    Count:TpvUInt32;
 begin
  inherited Create;
 
@@ -15871,6 +16205,24 @@ begin
  fDescriptorSetAllocateInfo.descriptorPool:=fDescriptorPool.fDescriptorPoolHandle;
  fDescriptorSetAllocateInfo.descriptorSetCount:=1;
  fDescriptorSetAllocateInfo.pSetLayouts:=@fDescriptorSetLayout.fDescriptorSetLayoutHandle;
+
+ if fDescriptorSetLayout.fExtendedBinding and (fDescriptorSetLayout.fDescriptorSetLayoutBindingList.Count>0) then begin
+  Count:=0;
+  for Index:=0 to fDescriptorSetLayout.fDescriptorSetLayoutBindingList.Count-1 do begin
+   DescriptorSetLayoutBinding:=TpvVulkanDescriptorSetLayoutBinding(fDescriptorSetLayout.fDescriptorSetLayoutBindingList[Index]);
+   if (DescriptorSetLayoutBinding.BindingFlags and TVkDescriptorBindingFlags(VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT_EXT))<>0 then begin
+    Count:=DescriptorSetLayoutBinding.DescriptorCount;
+    break;
+   end;
+  end;
+  if Count>0 then begin
+   FillChar(DescriptorSetVariableDescriptorCountAllocateInfoEXT,SizeOf(TVkDescriptorSetVariableDescriptorCountAllocateInfoEXT),#0);
+   DescriptorSetVariableDescriptorCountAllocateInfoEXT.sType:=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO_EXT;
+   DescriptorSetVariableDescriptorCountAllocateInfoEXT.descriptorSetCount:=fDescriptorSetAllocateInfo.descriptorSetCount;
+   DescriptorSetVariableDescriptorCountAllocateInfoEXT.pDescriptorCounts:=@Count;
+   fDescriptorSetAllocateInfo.pNext:=@DescriptorSetVariableDescriptorCountAllocateInfoEXT;
+  end;
+ end;
 
  fDevice.fDeviceVulkan.AllocateDescriptorSets(fDevice.fDeviceHandle,@fDescriptorSetAllocateInfo,@fDescriptorSetHandle);
 
@@ -18491,17 +18843,22 @@ constructor TpvVulkanTexture.CreateFromMemory(const aDevice:TpvVulkanDevice;
                                               const aMipMapSizeStored:boolean;
                                               const aSwapEndianness:boolean;
                                               const aSwapEndiannessTexels:TpvInt32;
-                                              const aDDSStructure:boolean=true);
+                                              const aDDSStructure:boolean;
+                                              const aAdditionalSRGB:boolean);
 var MaxDimension,MaxMipMapLevels:TpvInt32;
     FormatProperties:TVkFormatProperties;
     Usage:TVkImageUsageFlags;
     ImageCreateFlags:TVkImageCreateFlags;
     ImageType:TVkImageType;
-    MemoryRequirements:TVkMemoryRequirements;
+    MemoryRequirements,SRGBMemoryRequirements:TVkMemoryRequirements;
     ImageBlit:TVkImageBlit;
     RequiresDedicatedAllocation,
-    PrefersDedicatedAllocation:boolean;
+    PrefersDedicatedAllocation,
+    SRGBRequiresDedicatedAllocation,
+    SRGBPrefersDedicatedAllocation:boolean;
     MemoryBlockFlags:TpvVulkanDeviceMemoryBlockFlags;
+    AdditionalSRGB:boolean;
+    SRGBFormat:TVkFormat;
 begin
 
  inherited Create;
@@ -18572,6 +18929,147 @@ begin
 
  FormatProperties:=fDevice.fPhysicalDevice.GetFormatProperties(aFormat);
 
+ if aAdditionalSRGB then begin
+  case aFormat of
+   VK_FORMAT_R8_UNORM:begin
+    SRGBFormat:=VK_FORMAT_R8_SRGB;
+   end;
+   VK_FORMAT_R8G8_UNORM:begin
+    SRGBFormat:=VK_FORMAT_R8G8_SRGB;
+   end;
+   VK_FORMAT_R8G8B8_UNORM:begin
+    SRGBFormat:=VK_FORMAT_R8G8B8_SRGB;
+   end;
+   VK_FORMAT_B8G8R8_UNORM:begin
+    SRGBFormat:=VK_FORMAT_B8G8R8_SRGB;
+   end;
+   VK_FORMAT_R8G8B8A8_UNORM:begin
+    SRGBFormat:=VK_FORMAT_R8G8B8A8_SRGB;
+   end;
+   VK_FORMAT_B8G8R8A8_UNORM:begin
+    SRGBFormat:=VK_FORMAT_B8G8R8A8_SRGB;
+   end;
+   VK_FORMAT_A8B8G8R8_UNORM_PACK32:begin
+    SRGBFormat:=VK_FORMAT_A8B8G8R8_SRGB_PACK32;
+   end;
+   VK_FORMAT_BC1_RGB_UNORM_BLOCK:begin
+    SRGBFormat:=VK_FORMAT_BC1_RGB_SRGB_BLOCK;
+   end;
+   VK_FORMAT_BC1_RGBA_UNORM_BLOCK:begin
+    SRGBFormat:=VK_FORMAT_BC1_RGBA_SRGB_BLOCK;
+   end;
+   VK_FORMAT_BC2_UNORM_BLOCK:begin
+    SRGBFormat:=VK_FORMAT_BC2_SRGB_BLOCK;
+   end;
+   VK_FORMAT_BC3_UNORM_BLOCK:begin
+    SRGBFormat:=VK_FORMAT_BC3_SRGB_BLOCK;
+   end;
+   VK_FORMAT_BC7_UNORM_BLOCK:begin
+    SRGBFormat:=VK_FORMAT_BC7_SRGB_BLOCK;
+   end;
+   VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK:begin
+    SRGBFormat:=VK_FORMAT_ETC2_R8G8B8_SRGB_BLOCK;
+   end;
+   VK_FORMAT_ETC2_R8G8B8A1_UNORM_BLOCK:begin
+    SRGBFormat:=VK_FORMAT_ETC2_R8G8B8A1_SRGB_BLOCK;
+   end;
+   VK_FORMAT_ETC2_R8G8B8A8_UNORM_BLOCK:begin
+    SRGBFormat:=VK_FORMAT_ETC2_R8G8B8A8_SRGB_BLOCK;
+   end;
+   VK_FORMAT_ASTC_4x4_UNORM_BLOCK:begin
+    SRGBFormat:=VK_FORMAT_ASTC_4x4_SRGB_BLOCK;
+   end;
+   VK_FORMAT_ASTC_5x4_UNORM_BLOCK:begin
+    SRGBFormat:=VK_FORMAT_ASTC_5x4_SRGB_BLOCK;
+   end;
+   VK_FORMAT_ASTC_5x5_UNORM_BLOCK:begin
+    SRGBFormat:=VK_FORMAT_ASTC_5x5_SRGB_BLOCK;
+   end;
+   VK_FORMAT_ASTC_6x5_UNORM_BLOCK:begin
+    SRGBFormat:=VK_FORMAT_ASTC_6x5_SRGB_BLOCK;
+   end;
+   VK_FORMAT_ASTC_6x6_UNORM_BLOCK:begin
+    SRGBFormat:=VK_FORMAT_ASTC_6x6_SRGB_BLOCK;
+   end;
+   VK_FORMAT_ASTC_8x5_UNORM_BLOCK:begin
+    SRGBFormat:=VK_FORMAT_ASTC_8x5_SRGB_BLOCK;
+   end;
+   VK_FORMAT_ASTC_8x6_UNORM_BLOCK:begin
+    SRGBFormat:=VK_FORMAT_ASTC_8x6_SRGB_BLOCK;
+   end;
+   VK_FORMAT_ASTC_8x8_UNORM_BLOCK:begin
+    SRGBFormat:=VK_FORMAT_ASTC_8x8_SRGB_BLOCK;
+   end;
+   VK_FORMAT_ASTC_10x5_UNORM_BLOCK:begin
+    SRGBFormat:=VK_FORMAT_ASTC_10x5_SRGB_BLOCK;
+   end;
+   VK_FORMAT_ASTC_10x6_UNORM_BLOCK:begin
+    SRGBFormat:=VK_FORMAT_ASTC_10x6_SRGB_BLOCK;
+   end;
+   VK_FORMAT_ASTC_10x8_UNORM_BLOCK:begin
+    SRGBFormat:=VK_FORMAT_ASTC_10x8_SRGB_BLOCK;
+   end;
+   VK_FORMAT_ASTC_10x10_UNORM_BLOCK:begin
+    SRGBFormat:=VK_FORMAT_ASTC_10x10_SRGB_BLOCK;
+   end;
+   VK_FORMAT_ASTC_12x10_UNORM_BLOCK:begin
+    SRGBFormat:=VK_FORMAT_ASTC_12x10_SRGB_BLOCK;
+   end;
+   VK_FORMAT_ASTC_12x12_UNORM_BLOCK:begin
+    SRGBFormat:=VK_FORMAT_ASTC_12x12_SRGB_BLOCK;
+   end;
+   VK_FORMAT_PVRTC1_2BPP_UNORM_BLOCK_IMG:begin
+    SRGBFormat:=VK_FORMAT_PVRTC1_2BPP_SRGB_BLOCK_IMG;
+   end;
+   VK_FORMAT_PVRTC1_4BPP_UNORM_BLOCK_IMG:begin
+    SRGBFormat:=VK_FORMAT_PVRTC1_4BPP_SRGB_BLOCK_IMG;
+   end;
+   VK_FORMAT_PVRTC2_2BPP_UNORM_BLOCK_IMG:begin
+    SRGBFormat:=VK_FORMAT_PVRTC2_2BPP_SRGB_BLOCK_IMG;
+   end;
+   VK_FORMAT_PVRTC2_4BPP_UNORM_BLOCK_IMG:begin
+    SRGBFormat:=VK_FORMAT_PVRTC2_4BPP_SRGB_BLOCK_IMG;
+   end;
+   VK_FORMAT_ASTC_3x3x3_UNORM_BLOCK_EXT:begin
+    SRGBFormat:=VK_FORMAT_ASTC_3x3x3_SRGB_BLOCK_EXT;
+   end;
+   VK_FORMAT_ASTC_4x3x3_UNORM_BLOCK_EXT:begin
+    SRGBFormat:=VK_FORMAT_ASTC_4x3x3_SRGB_BLOCK_EXT;
+   end;
+   VK_FORMAT_ASTC_4x4x3_UNORM_BLOCK_EXT:begin
+    SRGBFormat:=VK_FORMAT_ASTC_4x4x3_SRGB_BLOCK_EXT;
+   end;
+   VK_FORMAT_ASTC_4x4x4_UNORM_BLOCK_EXT:begin
+    SRGBFormat:=VK_FORMAT_ASTC_4x4x4_SRGB_BLOCK_EXT;
+   end;
+   VK_FORMAT_ASTC_5x4x4_UNORM_BLOCK_EXT:begin
+    SRGBFormat:=VK_FORMAT_ASTC_5x4x4_SRGB_BLOCK_EXT;
+   end;
+   VK_FORMAT_ASTC_5x5x4_UNORM_BLOCK_EXT:begin
+    SRGBFormat:=VK_FORMAT_ASTC_5x5x4_SRGB_BLOCK_EXT;
+   end;
+   VK_FORMAT_ASTC_5x5x5_UNORM_BLOCK_EXT:begin
+    SRGBFormat:=VK_FORMAT_ASTC_5x5x5_SRGB_BLOCK_EXT;
+   end;
+   VK_FORMAT_ASTC_6x5x5_UNORM_BLOCK_EXT:begin
+    SRGBFormat:=VK_FORMAT_ASTC_6x5x5_SRGB_BLOCK_EXT;
+   end;
+   VK_FORMAT_ASTC_6x6x5_UNORM_BLOCK_EXT:begin
+    SRGBFormat:=VK_FORMAT_ASTC_6x6x5_SRGB_BLOCK_EXT;
+   end;
+   VK_FORMAT_ASTC_6x6x6_UNORM_BLOCK_EXT:begin
+    SRGBFormat:=VK_FORMAT_ASTC_6x6x6_SRGB_BLOCK_EXT;
+   end;
+   else begin
+    SRGBFormat:=VK_FORMAT_UNDEFINED;
+   end;
+  end;
+  AdditionalSRGB:=SRGBFormat<>VK_FORMAT_UNDEFINED;
+ end else begin
+  SRGBFormat:=VK_FORMAT_UNDEFINED;
+  AdditionalSRGB:=false;
+ end;
+
  if (TpvVulkanTextureUsageFlag.Sampled in aUsageFlags) and ((FormatProperties.optimalTilingFeatures and TVkFormatFeatureFlags(VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT))=0) then begin
   raise EpvVulkanTextureException.Create('Texture format '+IntToStr(TpvInt32(aFormat))+' can''t be sampled');
  end;
@@ -18636,6 +19134,9 @@ begin
  if aCountFaces=6 then begin
   ImageCreateFlags:=ImageCreateFlags or TVkImageCreateFlags(VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT);
  end;
+ if AdditionalSRGB then begin
+  ImageCreateFlags:=ImageCreateFlags or TVkImageCreateFlags(VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT);
+ end;
 
  if aDepth>0 then begin
   ImageType:=VK_IMAGE_TYPE_3D;
@@ -18658,12 +19159,50 @@ begin
                                VK_SHARING_MODE_EXCLUSIVE,
                                0,
                                nil,
-                               VK_IMAGE_LAYOUT_UNDEFINED
+                               VK_IMAGE_LAYOUT_UNDEFINED,
+                               SRGBFormat
                               );
 
  MemoryRequirements:=fDevice.fMemoryManager.GetImageMemoryRequirements(fImage.fImageHandle,
                                                                        RequiresDedicatedAllocation,
                                                                        PrefersDedicatedAllocation);
+
+{if SRGBFormat<>VK_FORMAT_UNDEFINED then begin
+  fSRGBImage:=TpvVulkanImage.Create(fDevice,
+                                    ImageCreateFlags,
+                                    ImageType,
+                                    SRGBFormat,
+                                    Max(1,fWidth),
+                                    Max(1,fHeight),
+                                    Max(1,fDepth),
+                                    Max(1,fCountStorageLevels),
+                                    Max(1,fTotalCountArrayLayers),
+                                    fSampleCount,
+                                    VK_IMAGE_TILING_OPTIMAL,
+                                    Usage,
+                                    VK_SHARING_MODE_EXCLUSIVE,
+                                    0,
+                                    nil,
+                                    VK_IMAGE_LAYOUT_UNDEFINED
+                                   );
+  SRGBMemoryRequirements:=fDevice.fMemoryManager.GetImageMemoryRequirements(fSRGBImage.fImageHandle,
+                                                                            SRGBRequiresDedicatedAllocation,
+                                                                            SRGBPrefersDedicatedAllocation);
+
+  if (MemoryRequirements.alignment<>SRGBMemoryRequirements.alignment) or
+     (MemoryRequirements.memoryTypeBits<>SRGBMemoryRequirements.memoryTypeBits) or
+     (MemoryRequirements.size<>SRGBMemoryRequirements.size) then begin
+   raise EpvVulkanMemoryAllocationException.Create('Memory requirement differs for additional SRGB texture image');
+  end;
+
+  RequiresDedicatedAllocation:=RequiresDedicatedAllocation or SRGBRequiresDedicatedAllocation;
+  PrefersDedicatedAllocation:=PrefersDedicatedAllocation or SRGBPrefersDedicatedAllocation;
+
+ end else begin
+
+  fSRGBImage:=nil;
+
+ end;}
 
  MemoryBlockFlags:=[];
 
@@ -18693,6 +19232,13 @@ begin
                                                          fImage.fImageHandle,
                                                          fMemoryBlock.fMemoryChunk.fMemoryHandle,
                                                          fMemoryBlock.fOffset));
+
+(*if assigned(fSRGBImage) then begin
+{ VulkanCheckResult(fDevice.fDeviceVulkan.BindImageMemory(fDevice.fDeviceHandle,
+                                                          fSRGBImage.fImageHandle,
+                                                          fMemoryBlock.fMemoryChunk.fMemoryHandle,
+                                                          fMemoryBlock.fOffset));}
+ end;*)
 
  Upload(aGraphicsQueue,
         aGraphicsCommandBuffer,
@@ -18744,6 +19290,23 @@ begin
                                        0,
                                        Max(1,fTotalCountArrayLayers));
 
+ if AdditionalSRGB then begin
+  fSRGBImageView:=TpvVulkanImageView.Create(fDevice,
+                                            fImage,
+                                            fImageViewType,
+                                            SRGBFormat,
+                                            VK_COMPONENT_SWIZZLE_IDENTITY,
+                                            VK_COMPONENT_SWIZZLE_IDENTITY,
+                                            VK_COMPONENT_SWIZZLE_IDENTITY,
+                                            VK_COMPONENT_SWIZZLE_IDENTITY,
+                                            TVkImageAspectFlags(VK_IMAGE_ASPECT_COLOR_BIT),
+                                            0,
+                                            Max(1,fCountStorageLevels),
+                                            0,
+                                            Max(1,fTotalCountArrayLayers));
+ end;
+
+
  if assigned(fSampler) then begin
   fDescriptorImageInfo.sampler:=fSampler.fSamplerHandle;
  end else begin
@@ -18778,7 +19341,8 @@ constructor TpvVulkanTexture.CreateFromStream(const aDevice:TpvVulkanDevice;
                                               const aMipMapSizeStored:boolean;
                                               const aSwapEndianness:boolean;
                                               const aSwapEndiannessTexels:TpvInt32;
-                                              const aDDSStructure:boolean=true);
+                                              const aDDSStructure:boolean;
+                                              const aAdditionalSRGB:boolean);
 var Data:TpvPointer;
     DataSize:TpvUInt32;
 begin
@@ -18809,7 +19373,8 @@ begin
                    aMipMapSizeStored,
                    aSwapEndianness,
                    aSwapEndiannessTexels,
-                   aDDSStructure);
+                   aDDSStructure,
+                   aAdditionalSRGB);
  finally
   FreeMem(Data);
  end;
@@ -18822,7 +19387,8 @@ constructor TpvVulkanTexture.CreateFromKTX(const aDevice:TpvVulkanDevice;
                                            const aTransferQueue:TpvVulkanQueue;
                                            const aTransferCommandBuffer:TpvVulkanCommandBuffer;
                                            const aTransferFence:TpvVulkanFence;
-                                           const aStream:TStream);
+                                           const aStream:TStream;
+                                           const aAdditionalSRGB:boolean);
 type PKTXIdentifier=^TKTXIdentifier;
      TKTXIdentifier=array[0..11] of TpvUInt8;
      PKTXHeader=^TKTXHeader;
@@ -18953,7 +19519,8 @@ begin
                    true,
                    MustSwap,
                    KTXHeader.GLTypeSize,
-                   false);
+                   false,
+                   aAdditionalSRGB);
  finally
   FreeMem(Data);
  end;
@@ -18967,7 +19534,8 @@ constructor TpvVulkanTexture.CreateFromKTX2(const aDevice:TpvVulkanDevice;
                                             const aTransferQueue:TpvVulkanQueue;
                                             const aTransferCommandBuffer:TpvVulkanCommandBuffer;
                                             const aTransferFence:TpvVulkanFence;
-                                            const aStream:TStream);
+                                            const aStream:TStream;
+                                            const aAdditionalSRGB:boolean);
 const	SUPERCOMPRESSION_NONE=0;
       SUPERCOMPRESSION_CRN=1;
       SUPERCOMPRESSION_ZLIB=2;
@@ -19199,7 +19767,8 @@ constructor TpvVulkanTexture.CreateFromDDS(const aDevice:TpvVulkanDevice;
                                            const aTransferQueue:TpvVulkanQueue;
                                            const aTransferCommandBuffer:TpvVulkanCommandBuffer;
                                            const aTransferFence:TpvVulkanFence;
-                                           const aStream:TStream);
+                                           const aStream:TStream;
+                                           const aAdditionalSRGB:boolean);
 const DDS_MAGIC=$20534444;
       DDSD_CAPS=$00000001;
       DDSD_HEIGHT=$00000002;
@@ -19988,7 +20557,8 @@ begin
                    false,
                    false,
                    1,
-                   true);
+                   true,
+                   aAdditionalSRGB);
  finally
   FreeMem(Data);
  end;     
@@ -20003,7 +20573,8 @@ constructor TpvVulkanTexture.CreateFromHDR(const aDevice:TpvVulkanDevice;
                                            const aTransferFence:TpvVulkanFence;
                                            const aStream:TStream;
                                            const aMipMaps:boolean;
-                                           const aSRGB:boolean);
+                                           const aSRGB:boolean;
+                                           const aAdditionalSRGB:boolean);
 const RGBE_DATA_RED=0;
       RGBE_DATA_GREEN=1;
       RGBE_DATA_BLUE=2;
@@ -20288,7 +20859,8 @@ begin
                     false,
                     false,
                     1,
-                    true);
+                    true,
+                    aAdditionalSRGB);
   end else begin
    raise EpvVulkanTextureException.Create('Invalid HDR stream');
   end;
@@ -20308,7 +20880,8 @@ constructor TpvVulkanTexture.CreateFromTGA(const aDevice:TpvVulkanDevice;
                                            const aTransferFence:TpvVulkanFence;
                                            const aStream:TStream;
                                            const aMipMaps:boolean;
-                                           const aSRGB:boolean);
+                                           const aSRGB:boolean;
+                                           const aAdditionalSRGB:boolean);
 var Data,ImageData:TpvPointer;
     DataSize,ImageWidth,ImageHeight:TpvInt32;
 begin
@@ -20344,7 +20917,8 @@ begin
                      false,
                      false,
                      1,
-                     true);
+                     true,
+                     aAdditionalSRGB);
    end else begin
     raise EpvVulkanTextureException.Create('Invalid TGA stream');
    end;
@@ -20367,7 +20941,8 @@ constructor TpvVulkanTexture.CreateFromPNG(const aDevice:TpvVulkanDevice;
                                            const aTransferFence:TpvVulkanFence;
                                            const aStream:TStream;
                                            const aMipMaps:boolean;
-                                           const aSRGB:boolean);
+                                           const aSRGB:boolean;
+                                           const aAdditionalSRGB:boolean);
 var Data,ImageData:TpvPointer;
     DataSize,ImageWidth,ImageHeight,VulkanBytesPerPixel,x,y,Index:TpvInt32;
     PNGPixelFormat:TpvPNGPixelFormat;
@@ -20444,7 +21019,8 @@ begin
                      false,
                      false,
                      1,
-                     true);
+                     true,
+                     aAdditionalSRGB);
    end else begin
     raise EpvVulkanTextureException.Create('Invalid PNG stream');
    end;
@@ -20467,7 +21043,8 @@ constructor TpvVulkanTexture.CreateFromJPEG(const aDevice:TpvVulkanDevice;
                                             const aTransferFence:TpvVulkanFence;
                                             const aStream:TStream;
                                             const aMipMaps:boolean;
-                                            const aSRGB:boolean);
+                                            const aSRGB:boolean;
+                                            const aAdditionalSRGB:boolean);
 var Data,ImageData:TpvPointer;
     DataSize,ImageWidth,ImageHeight:TpvInt32;
 begin
@@ -20503,7 +21080,8 @@ begin
                      false,
                      false,
                      1,
-                     true);
+                     true,
+                     aAdditionalSRGB);
    end else begin
     raise EpvVulkanTextureException.Create('Invalid JPEG stream');
    end;
@@ -20526,7 +21104,8 @@ constructor TpvVulkanTexture.CreateFromBMP(const aDevice:TpvVulkanDevice;
                                            const aTransferFence:TpvVulkanFence;
                                            const aStream:TStream;
                                            const aMipMaps:boolean;
-                                           const aSRGB:boolean);
+                                           const aSRGB:boolean;
+                                           const aAdditionalSRGB:boolean);
 var Data,ImageData:TpvPointer;
     DataSize,ImageWidth,ImageHeight:TpvInt32;
 begin
@@ -20562,7 +21141,8 @@ begin
                      false,
                      false,
                      1,
-                     true);
+                     true,
+                     aAdditionalSRGB);
    end else begin
     raise EpvVulkanTextureException.Create('Invalid BMP stream');
    end;
@@ -20585,7 +21165,8 @@ constructor TpvVulkanTexture.CreateFromImage(const aDevice:TpvVulkanDevice;
                                              const aTransferFence:TpvVulkanFence;
                                              const aStream:TStream;
                                              const aMipMaps:boolean;
-                                             const aSRGB:boolean);
+                                             const aSRGB:boolean;
+                                             const aAdditionalSRGB:boolean);
 const DDS_MAGIC=$20534444;
       DDSD_CAPS=$00000001;
       DDSD_PIXELFORMAT=$00001000;
@@ -20627,7 +21208,8 @@ begin
                 aTransferQueue,
                 aTransferCommandBuffer,
                 aTransferFence,
-                aStream);
+                aStream,
+                aAdditionalSRGB);
  end else if (FirstBytes[0]=$ab) and
              (FirstBytes[1]=$4b) and
              (FirstBytes[2]=$54) and
@@ -20647,7 +21229,8 @@ begin
                  aTransferQueue,
                  aTransferCommandBuffer,
                  aTransferFence,
-                 aStream);
+                 aStream,
+                 aAdditionalSRGB);
  end else if (FirstBytes[0]=$89) and (FirstBytes[1]=$50) and (FirstBytes[2]=$4e) and (FirstBytes[3]=$47) and (FirstBytes[4]=$0d) and (FirstBytes[5]=$0a) and (FirstBytes[6]=$1a) and (FirstBytes[7]=$0a) then begin
   CreateFromPNG(aDevice,
                 aGraphicsQueue,
@@ -20658,7 +21241,8 @@ begin
                 aTransferFence,
                 aStream,
                 aMipMaps,
-                aSRGB);
+                aSRGB,
+                aAdditionalSRGB);
  end else if ((PDDSHeader(TpvPointer(@FirstBytes))^.dwMagic=DDS_MAGIC) and (PDDSHeader(TpvPointer(@FirstBytes))^.dwSize=124) and not (((PDDSHeader(TpvPointer(@FirstBytes))^.dwFlags and DDSD_PIXELFORMAT)=0) or ((PDDSHeader(TpvPointer(@FirstBytes))^.dwFlags and DDSD_CAPS)=0))) then begin
   CreateFromDDS(aDevice,
                 aGraphicsQueue,
@@ -20667,7 +21251,8 @@ begin
                 aTransferQueue,
                 aTransferCommandBuffer,
                 aTransferFence,
-                aStream);
+                aStream,
+                aAdditionalSRGB);
  end else if (FirstBytes[0]=TpvUInt8(AnsiChar('B'))) and (FirstBytes[1]=TpvUInt8(AnsiChar('M'))) then begin
   CreateFromBMP(aDevice,
                 aGraphicsQueue,
@@ -20678,7 +21263,8 @@ begin
                 aTransferFence,
                 aStream,
                 aMipMaps,
-                aSRGB);
+                aSRGB,
+                aAdditionalSRGB);
  end else if (FirstBytes[0]=TpvUInt8(AnsiChar('#'))) and (FirstBytes[1]=TpvUInt8(AnsiChar('?'))) then begin
   CreateFromHDR(aDevice,
                 aGraphicsQueue,
@@ -20689,7 +21275,8 @@ begin
                 aTransferFence,
                 aStream,
                 aMipMaps,
-                aSRGB);
+                aSRGB,
+                aAdditionalSRGB);
  end else if ((FirstBytes[0] xor $ff) or (FirstBytes[1] xor $d8))=0 then begin
   CreateFromJPEG(aDevice,
                  aGraphicsQueue,
@@ -20700,7 +21287,8 @@ begin
                  aTransferFence,
                  aStream,
                  aMipMaps,
-                 aSRGB);
+                 aSRGB,
+                 aAdditionalSRGB);
  end else begin
   CreateFromTGA(aDevice,
                 aGraphicsQueue,
@@ -20711,7 +21299,8 @@ begin
                 aTransferFence,
                 aStream,
                 aMipMaps,
-                aSRGB);
+                aSRGB,
+                aAdditionalSRGB);
  end;
 end;
 
@@ -20730,7 +21319,8 @@ constructor TpvVulkanTexture.CreateDefault(const aDevice:TpvVulkanDevice;
                                            const aCountFaces:TpvInt32;
                                            const aMipmaps:boolean;
                                            const aBorder:boolean;
-                                           const aSRGB:boolean);
+                                           const aSRGB:boolean;
+                                           const aAdditionalSRGB:boolean);
 const TexelSize=4;
       BlockShift=5;
       BlockSize=1 shl BlockShift;
@@ -20910,7 +21500,8 @@ begin
                    false,
                    false,
                    1,
-                   false);
+                   false,
+                   aAdditionalSRGB);
 
  finally
   SetLength(Data,0);
@@ -20921,6 +21512,7 @@ end;
 destructor TpvVulkanTexture.Destroy;
 begin
  FreeAndNil(fSampler);
+ FreeAndNil(fSRGBImageView);
  FreeAndNil(fImageView);
  if assigned(fMemoryBlock) then begin
   fMemoryBlock.fAssociatedObject:=nil;

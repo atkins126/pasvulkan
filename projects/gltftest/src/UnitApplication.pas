@@ -28,7 +28,8 @@ uses SysUtils,
      PasVulkan.Math,
      PasVulkan.Framework,
      PasVulkan.Application,
-     PasVulkan.VirtualReality;
+     PasVulkan.VirtualReality,
+     UnitGlobals;
 
 const ApplicationTag='gltftest';      
 
@@ -41,6 +42,8 @@ type TApplication=class(TpvApplication)
        fMaxMSAA:TpvInt32;
        fMaxShadowMSAA:TpvInt32;
        fShadowMapSize:TpvInt32;
+       fTransparencyMode:TTransparencyMode;
+       fAntialiasingMode:TAntialiasingMode;
       public
        constructor Create; override;
        destructor Destroy; override;
@@ -68,6 +71,8 @@ type TApplication=class(TpvApplication)
        property MaxMSAA:TpvInt32 read fMaxMSAA;
        property MaxShadowMSAA:TpvInt32 read fMaxShadowMSAA;
        property ShadowMapSize:TpvInt32 read fShadowMapSize;
+       property TransparencyMode:TTransparencyMode read fTransparencyMode;
+       property AntialiasingMode:TAntialiasingMode read fAntialiasingMode;
      end;
 
 var Application:TApplication=nil;
@@ -90,9 +95,11 @@ begin
  fForceUseValidationLayers:=false;
  fForceNoVSync:=false;
  VulkanNVIDIAAfterMath:=false;
- fMaxMSAA:=1;
- fMaxShadowMSAA:=8;
+ fMaxMSAA:=0;
+ fMaxShadowMSAA:=0;
  fShadowMapSize:=512;
+ fTransparencyMode:=TTransparencyMode.Auto;
+ fAntialiasingMode:=TAntialiasingMode.Auto;
  VirtualRealityMode:=TpvVirtualReality.TMode.Disabled;
 {$if not (defined(Android) or defined(iOS))}
  Index:=1;
@@ -140,6 +147,44 @@ begin
    if Index<=ParamCount then begin
     fShadowMapSize:=StrToIntDef(ParamStr(Index),0);
     inc(Index);
+   end;
+  end else if (Parameter='--transparency-mode') or
+              (Parameter='/transparency-mode') then begin
+   if Index<=ParamCount then begin
+    Parameter:=LowerCase(trim(ParamStr(Index)));
+    inc(Index);
+    if Parameter='direct' then begin
+     fTransparencyMode:=TTransparencyMode.Direct;
+    end else if Parameter='spinlockoit' then begin
+     fTransparencyMode:=TTransparencyMode.SPINLOCKOIT;
+    end else if Parameter='interlockoit' then begin
+     fTransparencyMode:=TTransparencyMode.INTERLOCKOIT;
+    end else if Parameter='wboit' then begin
+     fTransparencyMode:=TTransparencyMode.WBOIT;
+    end else if Parameter='mboit' then begin
+     fTransparencyMode:=TTransparencyMode.MBOIT;
+    end else begin
+     fTransparencyMode:=TTransparencyMode.Auto;
+    end;
+   end;
+  end else if (Parameter='--antialiasing-mode') or
+              (Parameter='/antialiasing-mode') then begin
+   if Index<=ParamCount then begin
+    Parameter:=LowerCase(trim(ParamStr(Index)));
+    inc(Index);
+    if Parameter='none' then begin
+     fAntialiasingMode:=TAntialiasingMode.None;
+    end else if Parameter='dsaa' then begin
+     fAntialiasingMode:=TAntialiasingMode.DSAA;
+    end else if Parameter='fxaa' then begin
+     fAntialiasingMode:=TAntialiasingMode.FXAA;
+    end else if Parameter='smaa' then begin
+     fAntialiasingMode:=TAntialiasingMode.SMAA;
+    end else if Parameter='msaa' then begin
+     fAntialiasingMode:=TAntialiasingMode.MSAA;
+    end else begin
+     fTransparencyMode:=TTransparencyMode.Auto;
+    end;
    end;
   end else begin
    GLTFFileName:=Parameter;
@@ -190,11 +235,44 @@ begin
   aVulkanDevice.EnabledExtensionNames.Duplicates:=TDuplicates.dupIgnore;
   aVulkanDevice.EnabledExtensionNames.AddStrings(fVirtualReality.RequiredVulkanDeviceExtensions);
  end;
+ if (aVulkanDevice.PhysicalDevice.DescriptorIndexingFeaturesEXT.descriptorBindingPartiallyBound=VK_FALSE) or
+    (aVulkanDevice.PhysicalDevice.DescriptorIndexingFeaturesEXT.runtimeDescriptorArray=VK_FALSE) or
+    (aVulkanDevice.PhysicalDevice.DescriptorIndexingFeaturesEXT.shaderSampledImageArrayNonUniformIndexing=VK_FALSE) then begin
+  raise EpvApplication.Create('Application','Support for VK_EXT_DESCRIPTOR_INDEXING (descriptorBindingPartiallyBound + runtimeDescriptorArray + shaderSampledImageArrayNonUniformIndexing) is needed',LOG_ERROR);
+ end;
+ if aVulkanDevice.PhysicalDevice.BufferDeviceAddressFeaturesKHR.bufferDeviceAddress=VK_FALSE then begin
+  raise EpvApplication.Create('Application','Support for VK_KHR_buffer_device_address (bufferDeviceAddress) is needed',LOG_ERROR);
+ end;
+ if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME)>=0 then begin
+  aVulkanDevice.EnabledExtensionNames.Add(VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME);
+ end;
+ if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_KHR_MAINTENANCE1_EXTENSION_NAME)>=0 then begin
+  aVulkanDevice.EnabledExtensionNames.Add(VK_KHR_MAINTENANCE1_EXTENSION_NAME);
+ end;
+ if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_KHR_MAINTENANCE2_EXTENSION_NAME)>=0 then begin
+  aVulkanDevice.EnabledExtensionNames.Add(VK_KHR_MAINTENANCE2_EXTENSION_NAME);
+ end;
+ if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_KHR_MAINTENANCE3_EXTENSION_NAME)>=0 then begin
+  aVulkanDevice.EnabledExtensionNames.Add(VK_KHR_MAINTENANCE3_EXTENSION_NAME);
+ end;
  if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_EXT_POST_DEPTH_COVERAGE_EXTENSION_NAME)>=0 then begin
   aVulkanDevice.EnabledExtensionNames.Add(VK_EXT_POST_DEPTH_COVERAGE_EXTENSION_NAME);
  end;
  if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME)>=0 then begin
   aVulkanDevice.EnabledExtensionNames.Add(VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME);
+ end;
+ if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_EXT_SHADER_DEMOTE_TO_HELPER_INVOCATION_EXTENSION_NAME)>=0 then begin
+  aVulkanDevice.EnabledExtensionNames.Add(VK_EXT_SHADER_DEMOTE_TO_HELPER_INVOCATION_EXTENSION_NAME);
+ end;
+ if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME)>=0 then begin
+  aVulkanDevice.EnabledExtensionNames.Add(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME);
+ end;
+ if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME)>=0 then begin
+  aVulkanDevice.EnabledExtensionNames.Add(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
+ end;
+ if ((aVulkanDevice.Instance.APIVersion and VK_API_VERSION_WITHOUT_PATCH_MASK)<VK_API_VERSION_1_2) and
+    (aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_KHR_SPIRV_1_4_EXTENSION_NAME)>=0) then begin
+  aVulkanDevice.EnabledExtensionNames.Add(VK_KHR_SPIRV_1_4_EXTENSION_NAME);
  end;
 end;
 
@@ -213,6 +291,7 @@ begin
  AndroidSeparateMouseAndTouch:=true;
  UseAudio:=true;
  SwapChainColorSpace:=TpvApplicationSwapChainColorSpace.SRGB;
+//Blocking:=false;
 //DesiredCountSwapChainImages:=2;
  if fForceNoVSync or (assigned(fVirtualReality) and not (fVirtualReality.Mode in [TpvVirtualReality.TMode.Disabled,TpvVirtualReality.TMode.Faked])) then begin
   DesiredCountSwapChainImages:=2;
