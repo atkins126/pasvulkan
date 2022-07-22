@@ -2,6 +2,12 @@
 
 #define NUM_SHADOW_CASCADES 4
 
+#ifdef USE_MATERIAL_BUFFER_REFERENCE
+  #undef NOBUFFERREFERENCE
+#elif defined(USE_MATERIAL_SSBO)
+  #define NOBUFFERREFERENCE
+#endif
+
 #extension GL_EXT_multiview : enable
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_ARB_shading_language_420pack : enable
@@ -154,7 +160,7 @@ layout(std430, set = 0, binding = 3) readonly buffer Materials {
 
 #else
 
-layout(buffer_reference, std430, buffer_reference_align = 16) buffer Material {
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Material {
   vec4 baseColorFactor;
   vec4 specularFactor;
   vec4 emissiveFactor;
@@ -203,30 +209,28 @@ layout(set = 1, binding = 4) uniform sampler2DArray uPassTextures[]; // 0 = SSAO
 
 #if defined(WBOIT)
 
-layout(std140, set = 1, binding = 5) uniform uboWBOIT {
-  vec4 wboitZNearZFar;
-} uWBOIT;
+  layout(std140, set = 1, binding = 5) uniform uboWBOIT {
+    vec4 wboitZNearZFar;
+  } uWBOIT;
 
 #elif defined(MBOIT)
 
-layout(std140, set = 1, binding = 5) uniform uboMBOIT {
-  vec4 mboitZNearZFar;
-} uMBOIT;
+  layout(std140, set = 1, binding = 5) uniform uboMBOIT {
+    vec4 mboitZNearZFar;
+  } uMBOIT;
 
-#if defined(MBOITPASS1)
-#elif defined(MBOITPASS2)
-#ifdef MSAA
-layout(input_attachment_index = 0, set = 1, binding = 6) uniform subpassInputMS uMBOITMoments0;
-layout(input_attachment_index = 1, set = 1, binding = 7) uniform subpassInputMS uMBOITMoments1;
-#else
-layout(input_attachment_index = 0, set = 1, binding = 6) uniform subpassInput uMBOITMoments0;
-layout(input_attachment_index = 1, set = 1, binding = 7) uniform subpassInput uMBOITMoments1;
-#endif
-#endif
+  #if defined(MBOITPASS1)
+  #elif defined(MBOITPASS2)
+    #ifdef MSAA
+      layout(input_attachment_index = 0, set = 1, binding = 6) uniform subpassInputMS uMBOITMoments0;
+      layout(input_attachment_index = 1, set = 1, binding = 7) uniform subpassInputMS uMBOITMoments1;
+    #else
+      layout(input_attachment_index = 0, set = 1, binding = 6) uniform subpassInput uMBOITMoments0;
+      layout(input_attachment_index = 1, set = 1, binding = 7) uniform subpassInput uMBOITMoments1;
+    #endif
+  #endif
 
-#endif
-
-#if defined(LOCKOIT)
+#elif defined(LOCKOIT)
 
   #ifdef MSAA
     layout(input_attachment_index = 0, set = 1, binding = 5) uniform subpassInputMS uOITImgDepth;
@@ -246,6 +250,26 @@ layout(input_attachment_index = 1, set = 1, binding = 7) uniform subpassInput uM
       ivec4 oitViewPort;
     } uOIT;
   #endif
+
+#elif defined(LOOPOIT)
+
+  layout(std140, set = 1, binding = 5) uniform uboOIT {
+    ivec4 oitViewPort;
+  } uOIT;
+  #ifdef MSAA
+    layout(input_attachment_index = 0, set = 1, binding = 6) uniform subpassInputMS uOITImgDepth;
+  #else
+    layout(input_attachment_index = 0, set = 1, binding = 6) uniform subpassInput uOITImgDepth;
+  #endif
+  #if defined(LOOPOIT_PASS1)
+    layout(set = 1, binding = 7, r32ui) uniform coherent uimageBuffer uOITImgZBuffer;
+  #else
+    layout(set = 1, binding = 7, r32ui) uniform readonly uimageBuffer uOITImgZBuffer;
+    layout(set = 1, binding = 8, rg32ui) uniform coherent uimageBuffer uOITImgABuffer;
+    #ifdef MSAA    
+      layout(set = 1, binding = 9, r32ui) uniform coherent uimageBuffer uOITImgSBuffer;
+    #endif
+  #endif 
 
 #endif
 
@@ -309,7 +333,7 @@ float iridescenceFactor = 0.0;
 float iridescenceIor = 1.3;
 float iridescenceThickness = 400.0;
 
-#if defined(BLEND) || defined(LOCKOIT) || defined(MBOIT) || defined(WBOIT)
+#if defined(BLEND) || defined(LOOPOIT) || defined(LOCKOIT) || defined(MBOIT) || defined(WBOIT)
   #define TRANSMISSION
 #endif
 
@@ -835,7 +859,7 @@ const uint smPBRMetallicRoughness = 0u,  //
     smPBRSpecularGlossiness = 1u,        //
     smUnlit = 2u;                        //
 
-#if defined(ALPHATEST) || defined(LOCKOIT) || defined(WBOIT) || defined(MBOIT) || !defined(DEPTHONLY) 
+#if defined(ALPHATEST) || defined(LOOPOIT) || defined(LOCKOIT) || defined(WBOIT) || defined(MBOIT) || !defined(DEPTHONLY) 
 
 uvec2 textureFlags;
 vec2 texCoords[2];
@@ -883,7 +907,7 @@ void main() {
     material = Material(materialPointer);
   }
 #endif
-#if defined(ALPHATEST) || defined(LOCKOIT) || defined(WBOIT) || defined(MBOIT) || !defined(DEPTHONLY) 
+#if defined(ALPHATEST) || defined(LOOPOIT) || defined(LOCKOIT) || defined(WBOIT) || defined(MBOIT) || !defined(DEPTHONLY) 
   textureFlags = material.alphaCutOffFlagsTex0Tex1.zw;
   texCoords[0] = inTexCoord0;
   texCoords[1] = inTexCoord1;
@@ -899,7 +923,7 @@ void main() {
   shadingModel = (flags >> 0u) & 0xfu;
 #endif
 #ifdef DEPTHONLY
-#if defined(ALPHATEST) || defined(LOCKOIT) || defined(WBOIT) || defined(MBOIT) 
+#if defined(ALPHATEST) || defined(LOOPOIT) || defined(LOCKOIT) || defined(WBOIT) || defined(MBOIT) 
   float alpha = textureFetch(0, vec4(1.0), true).w * material.baseColorFactor.w * inColor0.w;
 #endif
 #else
@@ -998,7 +1022,7 @@ void main() {
       float transparency = 0.0;
       float refractiveAngle = 0.0;
       float shadow = 1.0;
-  #if defined(ALPHATEST) || defined(LOCKOIT) || defined(WBOIT) || defined(MBOIT) || defined(BLEND)
+  #if defined(ALPHATEST) || defined(LOOPOIT) || defined(LOCKOIT) || defined(WBOIT) || defined(MBOIT) || defined(BLEND)
       ambientOcclusion = 1.0;
   #else
       ambientOcclusion = ((textureFlags.x & (1 << 3)) != 0) ? 1.0 : texelFetch(uPassTextures[0], ivec3(gl_FragCoord.xy, int(gl_ViewIndex)), 0).x;
@@ -1378,8 +1402,10 @@ void main() {
     float fragDepth;
   #endif
   if (alpha < uintBitsToFloat(material.alphaCutOffFlagsTex0Tex1.x)) {
-  #if defined(WBOIT) || defined(LOCKOIT)
+  #if defined(WBOIT) || defined(LOCKOIT) || defined(LOCKOIT_PASS2)
     finalColor = vec4(alpha = 0.0);    
+  #elif defined(LOCKOIT_PASS1)
+    alpha = 0.0;    
   #elif defined(MBOIT)
     #if defined(MBOIT) && defined(MBOITPASS1)    
       alpha = 0.0;    
@@ -1406,9 +1432,11 @@ void main() {
   #if defined(NODISCARD)  
     fragDepth = gl_FragCoord.z;
   #endif
-  #if defined(WBOIT) || defined(MBOIT) || defined(LOCKOIT)
-    #if defined(WBOIT) || defined(LOCKOIT)
+  #if defined(WBOIT) || defined(MBOIT) || defined(LOCKOIT) || defined(LOOPOIT)
+    #if defined(WBOIT) || defined(LOCKOIT) || defined(LOOPOIT_PASS2)
       finalColor.w = alpha = 1.0;    
+    #elif defined(LOOPOIT_PASS1)
+      alpha = 1.0;    
     #elif defined(MBOIT) && defined(MBOITPASS1)    
       alpha = 1.0;    
     #else
@@ -1419,7 +1447,7 @@ void main() {
   #if defined(NODISCARD)  
     gl_FragDepth = fragDepth;
   #endif
-  #if !(defined(WBOIT) || defined(MBOIT) || defined(LOCKOIT))
+  #if !(defined(WBOIT) || defined(MBOIT) || defined(LOCKOIT) || defined(LOOPOIT))
     #ifdef MSAA
       #if 0
         vec2 alphaTextureSize = vec2(texture2DSize(0));
@@ -1535,43 +1563,58 @@ void main() {
       uint oitOld = imageAtomicExchange(uOITImgSpinLock, oitCoord, 1u);
       if(oitOld == 0u){
 #endif
-        const uint oitAuxCounter = imageLoad(uOITImgAux, oitCoord).x;
-        imageStore(uOITImgAux, oitCoord, uvec4(oitAuxCounter + 1, 0, 0, 0));
-        if(oitAuxCounter < oitCountLayers){
-          imageStore(uOITImgABuffer, oitABufferBaseIndex + (int(oitAuxCounter) * oitViewSize), oitStoreValue);
-          finalColor = vec4(0.0);
-        }else{
-          int oitFurthest = 0;
-#ifdef REVERSEDZ
-          uint oitMaxDepth = 0xffffffffu;
-#else
-          uint oitMaxDepth = 0;
-#endif          
-          for(int oitIndex = 0; oitIndex < oitCountLayers; oitIndex++){
-            uint oitTestDepth = imageLoad(uOITImgABuffer, oitABufferBaseIndex + (oitIndex * oitViewSize)).z;
-            if(
-#ifdef REVERSEDZ
-                (oitTestDepth < oitMaxDepth)
-#else
-                (oitTestDepth > oitMaxDepth)
-#endif
-              ){
-              oitMaxDepth = oitTestDepth;
-              oitFurthest = oitIndex;
-            }
+       const uint oitAuxCounter = imageLoad(uOITImgAux, oitCoord).x;
+#if defined(MSAA)
+        bool mustInsert = true;
+        for(int oitIndex = 0; oitIndex < oitAuxCounter; oitIndex++){
+          uvec4 oitFragment = imageLoad(uOITImgABuffer, oitABufferBaseIndex + (oitIndex * oitViewSize));
+          if((oitFragment.w != 0u) && (oitFragment.z == oitStoreValue.z)){
+            mustInsert = false;
+            oitFragment.w |= oitStoreMask;
+            imageStore(uOITImgABuffer, oitABufferBaseIndex + (oitIndex * oitViewSize), oitFragment);
+            break;
           }
+        }
+        if(mustInsert)
+#endif
+        {
+          imageStore(uOITImgAux, oitCoord, uvec4(oitAuxCounter + 1, 0, 0, 0));
+          if(oitAuxCounter < oitCountLayers){
+            imageStore(uOITImgABuffer, oitABufferBaseIndex + (int(oitAuxCounter) * oitViewSize), oitStoreValue);
+            finalColor = vec4(0.0);
+          }else{
+            int oitFurthest = 0;
+  #ifdef REVERSEDZ
+            uint oitMaxDepth = 0xffffffffu;
+  #else
+            uint oitMaxDepth = 0;
+  #endif          
+            for(int oitIndex = 0; oitIndex < oitCountLayers; oitIndex++){
+              uint oitTestDepth = imageLoad(uOITImgABuffer, oitABufferBaseIndex + (oitIndex * oitViewSize)).z;
+              if(
+  #ifdef REVERSEDZ
+                  (oitTestDepth < oitMaxDepth)
+  #else
+                  (oitTestDepth > oitMaxDepth)
+  #endif
+                ){
+                oitMaxDepth = oitTestDepth;
+                oitFurthest = oitIndex;
+              }
+            }
 
-          if(
-#ifdef REVERSEDZ
-             (oitMaxDepth < oitStoreValue.z)
-#else
-             (oitMaxDepth > oitStoreValue.z)
-#endif          
-            ){
-            int oitIndex = oitABufferBaseIndex + (oitFurthest * oitViewSize);
-            uvec4 oitOldValue = imageLoad(uOITImgABuffer, oitIndex);
-            finalColor = vec4(vec2(unpackHalf2x16(oitOldValue.x)), vec2(unpackHalf2x16(oitOldValue.y)));
-            imageStore(uOITImgABuffer, oitIndex, oitStoreValue);
+            if(
+  #ifdef REVERSEDZ
+              (oitMaxDepth < oitStoreValue.z)
+  #else
+              (oitMaxDepth > oitStoreValue.z)
+  #endif          
+              ){
+              int oitIndex = oitABufferBaseIndex + (oitFurthest * oitViewSize);
+              uvec4 oitOldValue = imageLoad(uOITImgABuffer, oitIndex);
+              finalColor = vec4(vec2(unpackHalf2x16(oitOldValue.x)), vec2(unpackHalf2x16(oitOldValue.y)));
+              imageStore(uOITImgABuffer, oitIndex, oitStoreValue);
+            }
           }
         }
 #ifdef SPINLOCK
@@ -1590,6 +1633,118 @@ void main() {
 #endif
 
   outFragColor = vec4(finalColor.xyz * finalColor.w, finalColor.w);
+
+#elif defined(LOOPOIT)
+
+  int oitMultiViewIndex = int(gl_ViewIndex);
+  ivec3 oitCoord = ivec3(ivec2(gl_FragCoord.xy), oitMultiViewIndex);
+#ifdef MSAA
+  uint oitStoreMask = uint(gl_SampleMaskIn[0]);
+#else
+  uint oitStoreMask = 0x00000001u;
+#endif  
+
+  // Workaround for missing VK_EXT_post_depth_coverage support on AMD GPUs older than RDNA,
+  // namely, an extra OIT renderpass with an fragment-shader-based depth check on the depth 
+  // buffer values from the previous forward rendering pass, which should fix problems with 
+  // transparent and opaque objects in MSAA, even without VK_EXT_post_depth_coverage support,
+  // at least I hope it so:
+  uint oitCurrentDepth = floatBitsToUint(gl_FragCoord.z);
+ #ifdef MSAA 
+  uint oitDepth = floatBitsToUint(subpassLoad(uOITImgDepth, gl_SampleID).r); 
+ #else
+  uint oitDepth = floatBitsToUint(subpassLoad(uOITImgDepth).r); 
+ #endif 
+ if(
+#ifdef REVERSEDZ
+     (oitCurrentDepth >= oitDepth) &&  
+#else
+     (oitCurrentDepth <= oitDepth) &&  
+#endif
+#if defined(LOOPOIT_PASS1)
+     (alpha > 0.0)
+#elif defined(LOOPOIT_PASS2)
+     (min(alpha, finalColor.w) > 0.0)
+#else
+     true    
+#endif
+    ){
+
+    const int oitViewSize = int(uOIT.oitViewPort.z);
+    const int oitCountLayers = int(uOIT.oitViewPort.w & 0xffffu);
+    const int oitMultiViewSize = oitViewSize * oitCountLayers;
+    const int oitBufferBaseIndex = (((oitCoord.y * int(uOIT.oitViewPort.x)) + oitCoord.x) * oitCountLayers) + (oitMultiViewSize * oitMultiViewIndex);
+
+    #if defined(LOOPOIT_PASS1)
+
+      for(int oitLayerIndex = 0; oitLayerIndex < oitCountLayers; oitLayerIndex++){
+#ifdef REVERSEDZ
+        uint oitDepth = imageAtomicMax(uOITImgZBuffer, oitBufferBaseIndex + oitLayerIndex, oitCurrentDepth);
+        if((oitDepth == 0x00000000u) || (oitDepth == oitCurrentDepth)){
+          break;
+        }
+        oitCurrentDepth = min(oitCurrentDepth, oitDepth);
+#else
+        uint oitDepth = imageAtomicMin(uOITImgZBuffer, oitBufferBaseIndex + oitLayerIndex, oitCurrentDepth);
+        if((oitDepth == 0xFFFFFFFFu) || (oitDepth == oitCurrentDepth)){
+          break;
+        }
+        oitCurrentDepth = max(oitCurrentDepth, oitDepth);
+#endif
+      }
+
+#ifndef DEPTHONLY    
+      outFragColor = vec4(0.0);
+#endif
+
+    #elif defined(LOOPOIT_PASS2)
+
+      if(imageLoad(uOITImgZBuffer, oitBufferBaseIndex + (oitCountLayers - 1)).x
+#ifdef REVERSEDZ
+         >
+#else 
+         <
+#endif
+         oitCurrentDepth){
+#ifndef DEPTHONLY    
+        outFragColor = vec4(finalColor.xyz * finalColor.w, finalColor.w);
+#endif
+      }else{
+        int oitStart = 0;
+        int oitEnd = oitCountLayers - 1;
+        while(oitStart < oitEnd){
+          int oitMid = (oitStart + oitEnd) >> 1;
+          uint oitDepth = imageLoad(uOITImgZBuffer, oitBufferBaseIndex + oitMid).x;
+          if(oitDepth
+#ifdef REVERSEDZ
+             > 
+#else
+             <
+#endif
+            oitCurrentDepth){
+            oitStart = oitMid + 1; 
+          }else{
+            oitEnd = oitMid; 
+          }
+        }    
+
+#ifdef MSAA
+        imageAtomicOr(uOITImgSBuffer, oitBufferBaseIndex + oitStart, oitStoreMask);
+#endif
+
+        imageStore(uOITImgABuffer,
+                   oitBufferBaseIndex + oitStart, 
+                   uvec3(packHalf2x16(finalColor.xy), packHalf2x16(finalColor.zw), 0u).xyzz
+                  );
+
+     #ifndef DEPTHONLY    
+        outFragColor = vec4(0.0);
+#endif
+
+      }  
+
+    #endif
+  }
 
 #elif defined(BLEND)
 
