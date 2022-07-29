@@ -370,9 +370,11 @@ type EpvFrameGraph=class(Exception);
               fMemoryRequiredPropertyFlags:TVkMemoryPropertyFlags;
               fMemoryPreferredPropertyFlags:TVkMemoryPropertyFlags;
               fMemoryAvoidPropertyFlags:TVkMemoryPropertyFlags;
+              fMemoryPreferredNotPropertyFlags:TVkMemoryPropertyFlags;
               fMemoryRequiredHeapFlags:TVkMemoryHeapFlags;
               fMemoryPreferredHeapFlags:TVkMemoryHeapFlags;
               fMemoryAvoidHeapFlags:TVkMemoryHeapFlags;
+              fMemoryPreferredNotHeapFlags:TVkMemoryHeapFlags;
               fBufferFlags:TpvVulkanBufferFlags;
              public
               constructor Create(const aFrameGraph:TpvFrameGraph;
@@ -383,9 +385,11 @@ type EpvFrameGraph=class(Exception);
                                  const aMemoryRequiredPropertyFlags:TVkMemoryPropertyFlags=TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
                                  const aMemoryPreferredPropertyFlags:TVkMemoryPropertyFlags=TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
                                  const aMemoryAvoidPropertyFlags:TVkMemoryPropertyFlags=0;
+                                 const aMemoryPreferredNotPropertyFlags:TVkMemoryPropertyFlags=0;
                                  const aMemoryRequiredHeapFlags:TVkMemoryHeapFlags=0;
                                  const aMemoryPreferredHeapFlags:TVkMemoryHeapFlags=0;
                                  const aMemoryAvoidHeapFlags:TVkMemoryHeapFlags=0;
+                                 const aMemoryPreferredNotHeapFlags:TVkMemoryHeapFlags=0;
                                  const aBufferFlags:TpvVulkanBufferFlags=[]); reintroduce; overload;
               destructor Destroy; override;
              published
@@ -477,9 +481,11 @@ type EpvFrameGraph=class(Exception);
               fMemoryRequiredPropertyFlags:TVkMemoryPropertyFlags;
               fMemoryPreferredPropertyFlags:TVkMemoryPropertyFlags;
               fMemoryAvoidPropertyFlags:TVkMemoryPropertyFlags;
+              fMemoryPreferredNotPropertyFlags:TVkMemoryPropertyFlags;
               fMemoryRequiredHeapFlags:TVkMemoryHeapFlags;
               fMemoryPreferredHeapFlags:TVkMemoryHeapFlags;
               fMemoryAvoidHeapFlags:TVkMemoryHeapFlags;
+              fMemoryPreferredNotHeapFlags:TVkMemoryHeapFlags;
               fBufferFlags:TpvVulkanBufferFlags;
               fVulkanBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
               function GetVulkanBuffer(const aIndex:TpvSizeInt):TpvVulkanBuffer; inline;
@@ -1185,7 +1191,7 @@ type EpvFrameGraph=class(Exception);
        fDrawFrameIndex:TpvSizeInt;
        fDrawWaitFence:TpvVulkanFence;
       public
-       constructor Create(const aVulkanDevice:TpvVulkanDevice);
+       constructor Create(const aVulkanDevice:TpvVulkanDevice;const aCountInFlightFrames:TpvSizeInt=MaxInFlightFrames);
        destructor Destroy; override;
       public
        function ConvertRelativeToAbsoluteInFlightFrameIndex(const aCurrentInFlightFrameIndex,aRelativeInFlightFrameIndex:TpvSizeInt):TpvSizeInt;
@@ -1222,9 +1228,11 @@ type EpvFrameGraph=class(Exception);
                                       const aMemoryRequiredPropertyFlags:TVkMemoryPropertyFlags=TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
                                       const aMemoryPreferredPropertyFlags:TVkMemoryPropertyFlags=TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
                                       const aMemoryAvoidPropertyFlags:TVkMemoryPropertyFlags=0;
+                                      const aMemoryPreferredNotPropertyFlags:TVkMemoryPropertyFlags=0;
                                       const aMemoryRequiredHeapFlags:TVkMemoryHeapFlags=0;
                                       const aMemoryPreferredHeapFlags:TVkMemoryHeapFlags=0;
                                       const aMemoryAvoidHeapFlags:TVkMemoryHeapFlags=0;
+                                      const aMemoryPreferredNotHeapFlags:TVkMemoryHeapFlags=0;
                                       const aBufferFlags:TpvVulkanBufferFlags=[]):TResourceType; overload;
       public
        procedure Show; virtual;
@@ -1258,7 +1266,7 @@ type EpvFrameGraph=class(Exception);
        property SurfaceHeight:TpvSizeInt read fSurfaceHeight write fSurfaceHeight;
        property SurfaceColorFormat:TVkFormat read fSurfaceColorFormat write fSurfaceColorFormat;
        property SurfaceDepthFormat:TVkFormat read fSurfaceDepthFormat write fSurfaceDepthFormat;
-       property CountInFlightFrames:TpvSizeInt read fCountInFlightFrames write fCountInFlightFrames;
+       property CountInFlightFrames:TpvSizeInt read fCountInFlightFrames;
        property CountSurfaceImages:TpvSizeInt read fCountSurfaceImages write fCountSurfaceImages;
        property DefaultResourceInstanceType:TResourceInstanceType read fDefaultResourceInstanceType write fDefaultResourceInstanceType;
        property Queues:TQueues read fQueues;
@@ -1454,7 +1462,7 @@ begin
 
  fPhysicalPasses.OwnsObjects:=false;
 
- for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+ for InFlightFrameIndex:=0 to fQueue.fFrameGraph.fCountInFlightFrames-1 do begin
   fCommandBuffers[InFlightFrameIndex]:=nil;
   fSignallingSemaphores[InFlightFrameIndex].Initialize;
   fSignallingSemaphoreHandles[InFlightFrameIndex].Initialize;
@@ -1480,7 +1488,7 @@ begin
 
  FreeAndNil(fPhysicalPasses);
 
- for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+ for InFlightFrameIndex:=0 to fQueue.fFrameGraph.fCountInFlightFrames-1 do begin
   for Index:=0 to fSignallingSemaphores[InFlightFrameIndex].Count-1 do begin
    FreeAndNil(fSignallingSemaphores[InFlightFrameIndex].Items[Index]);
   end;
@@ -1512,7 +1520,7 @@ end;
 procedure TpvFrameGraph.TQueue.TCommandBuffer.BeforeDestroySwapChain;
 var InFlightFrameIndex,Index:TpvSizeInt;
 begin
- for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+ for InFlightFrameIndex:=0 to fQueue.fFrameGraph.fCountInFlightFrames-1 do begin
   FreeAndNil(fCommandBuffers[InFlightFrameIndex]);
   for Index:=0 to fSignallingSemaphores[InFlightFrameIndex].Count-1 do begin
    FreeAndNil(fSignallingSemaphores[InFlightFrameIndex].Items[Index]);
@@ -1743,23 +1751,27 @@ constructor TpvFrameGraph.TBufferResourceType.Create(const aFrameGraph:TpvFrameG
                                                      const aPersientent:boolean;
                                                      const aSize:TVkDeviceSize;
                                                      const aUsage:TVkBufferUsageFlags;
-                                                     const aMemoryRequiredPropertyFlags:TVkMemoryPropertyFlags=TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-                                                     const aMemoryPreferredPropertyFlags:TVkMemoryPropertyFlags=TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-                                                     const aMemoryAvoidPropertyFlags:TVkMemoryPropertyFlags=0;
-                                                     const aMemoryRequiredHeapFlags:TVkMemoryHeapFlags=0;
-                                                     const aMemoryPreferredHeapFlags:TVkMemoryHeapFlags=0;
-                                                     const aMemoryAvoidHeapFlags:TVkMemoryHeapFlags=0;
-                                                     const aBufferFlags:TpvVulkanBufferFlags=[]);
+                                                     const aMemoryRequiredPropertyFlags:TVkMemoryPropertyFlags;
+                                                     const aMemoryPreferredPropertyFlags:TVkMemoryPropertyFlags;
+                                                     const aMemoryAvoidPropertyFlags:TVkMemoryPropertyFlags;
+                                                     const aMemoryPreferredNotPropertyFlags:TVkMemoryPropertyFlags;
+                                                     const aMemoryRequiredHeapFlags:TVkMemoryHeapFlags;
+                                                     const aMemoryPreferredHeapFlags:TVkMemoryHeapFlags;
+                                                     const aMemoryAvoidHeapFlags:TVkMemoryHeapFlags;
+                                                     const aMemoryPreferredNotHeapFlags:TVkMemoryHeapFlags;
+                                                     const aBufferFlags:TpvVulkanBufferFlags);
 begin
  inherited Create(aFrameGraph,aName,aPersientent);
  fSize:=aSize;
  fUsage:=fUsage;
  fMemoryRequiredPropertyFlags:=aMemoryRequiredPropertyFlags;
  fMemoryPreferredPropertyFlags:=aMemoryPreferredPropertyFlags;
- fMemoryAvoidPropertyFlags:=fMemoryAvoidPropertyFlags;
+ fMemoryAvoidPropertyFlags:=aMemoryAvoidPropertyFlags;
+ fMemoryPreferredNotPropertyFlags:=aMemoryPreferredNotPropertyFlags;
  fMemoryRequiredHeapFlags:=aMemoryRequiredHeapFlags;
  fMemoryPreferredHeapFlags:=aMemoryPreferredHeapFlags;
  fMemoryAvoidHeapFlags:=aMemoryAvoidHeapFlags;
+ fMemoryPreferredNotHeapFlags:=aMemoryPreferredNotHeapFlags;
  fBufferFlags:=aBufferFlags;
 end;
 
@@ -1832,7 +1844,7 @@ destructor TpvFrameGraph.TResourcePhysicalImageData.Destroy;
 var InFlightFrameIndex,SwapChainImageIndex:TpvSizeInt;
 begin
  if assigned(fExternalData) or fIsSurface then begin
-  for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+  for InFlightFrameIndex:=0 to fFrameGraph.CountInFlightFrames-1 do begin
    if fVulkanImageViews[InFlightFrameIndex]<>fVulkanAdditionalFormatImageViews[InFlightFrameIndex] then begin
     FreeAndNil(fVulkanImageViews[InFlightFrameIndex]);
     FreeAndNil(fVulkanAdditionalFormatImageViews[InFlightFrameIndex]);
@@ -1850,7 +1862,7 @@ begin
    end;
   end;
  end else begin
-  for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+  for InFlightFrameIndex:=0 to fFrameGraph.CountInFlightFrames-1 do begin
    if (GetActiveResourceInstanceType=TResourceInstanceType.SingleInstance) and
       (InFlightFrameIndex>0) then begin
     fVulkanImages[InFlightFrameIndex]:=nil;
@@ -2079,6 +2091,8 @@ begin
                                                                                                          0,
                                                                                                          0,
                                                                                                          0,
+                                                                                                         0,
+                                                                                                         0,
                                                                                                          MemoryAllocationType,
                                                                                                          @fVulkanImages[InFlightFrameIndex].Handle);
     if not assigned(fVulkanMemoryBlocks[InFlightFrameIndex]) then begin
@@ -2209,7 +2223,7 @@ procedure TpvFrameGraph.TResourcePhysicalImageData.BeforeDestroySwapChain;
 var InFlightFrameIndex,SwapChainImageIndex:TpvSizeInt;
 begin
  if assigned(fExternalData) or fIsSurface then begin
-  for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+  for InFlightFrameIndex:=0 to fFrameGraph.CountInFlightFrames-1 do begin
    if fVulkanImageViews[InFlightFrameIndex]<>fVulkanAdditionalFormatImageViews[InFlightFrameIndex] then begin
     FreeAndNil(fVulkanImageViews[InFlightFrameIndex]);
     FreeAndNil(fVulkanAdditionalFormatImageViews[InFlightFrameIndex]);
@@ -2227,7 +2241,7 @@ begin
    end;
   end;
  end else begin
-  for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+  for InFlightFrameIndex:=0 to fFrameGraph.CountInFlightFrames-1 do begin
    if (GetActiveResourceInstanceType=TResourceInstanceType.SingleInstance) and
       (InFlightFrameIndex>0) then begin
     fVulkanImages[InFlightFrameIndex]:=nil;
@@ -2257,7 +2271,7 @@ constructor TpvFrameGraph.TResourcePhysicalBufferData.Create(const aFrameGraph:T
 var InFlightFrameIndex:TpvSizeInt;
 begin
  inherited Create(aFrameGraph);
- for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+ for InFlightFrameIndex:=0 to fFrameGraph.CountInFlightFrames-1 do begin
   fVulkanBuffers[InFlightFrameIndex]:=nil;
  end;
 end;
@@ -2266,11 +2280,11 @@ destructor TpvFrameGraph.TResourcePhysicalBufferData.Destroy;
 var InFlightFrameIndex:TpvSizeInt;
 begin
  if assigned(fExternalData) then begin
-  for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+  for InFlightFrameIndex:=0 to fFrameGraph.CountInFlightFrames-1 do begin
    fVulkanBuffers[InFlightFrameIndex]:=nil;
   end;
  end else begin
-  for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+  for InFlightFrameIndex:=0 to fFrameGraph.CountInFlightFrames-1 do begin
    if (GetActiveResourceInstanceType=TResourceInstanceType.SingleInstance) and
       (InFlightFrameIndex>0) then begin
     fVulkanBuffers[InFlightFrameIndex]:=nil;
@@ -2302,11 +2316,11 @@ var InFlightFrameIndex:TpvSizeInt;
 begin
  inherited AfterCreateSwapChain;
  if assigned(fExternalData) then begin
-  for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+  for InFlightFrameIndex:=0 to fFrameGraph.CountInFlightFrames-1 do begin
    fVulkanBuffers[InFlightFrameIndex]:=TExternalBufferData(fExternalData).fVulkanBuffers[InFlightFrameIndex mod TExternalBufferData(fExternalData).fVulkanBuffers.Count];
   end;
  end else begin
-  for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+  for InFlightFrameIndex:=0 to fFrameGraph.CountInFlightFrames-1 do begin
    if (GetActiveResourceInstanceType=TResourceInstanceType.SingleInstance) and
       (InFlightFrameIndex>0) then begin
     fVulkanBuffers[InFlightFrameIndex]:=fVulkanBuffers[0];
@@ -2319,9 +2333,11 @@ begin
                                                                 fMemoryRequiredPropertyFlags,
                                                                 fMemoryPreferredPropertyFlags,
                                                                 fMemoryAvoidPropertyFlags,
+                                                                fMemoryPreferredNotPropertyFlags,
                                                                 fMemoryRequiredHeapFlags,
                                                                 fMemoryPreferredHeapFlags,
                                                                 fMemoryAvoidHeapFlags,
+                                                                fMemoryPreferredNotHeapFlags,
                                                                 fBufferFlags);
    end;
   end;
@@ -2332,11 +2348,11 @@ procedure TpvFrameGraph.TResourcePhysicalBufferData.BeforeDestroySwapChain;
 var InFlightFrameIndex:TpvSizeInt;
 begin
  if assigned(fExternalData) then begin
-  for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+  for InFlightFrameIndex:=0 to fFrameGraph.CountInFlightFrames-1 do begin
    fVulkanBuffers[InFlightFrameIndex]:=nil;
   end;
  end else begin
-  for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+  for InFlightFrameIndex:=0 to fFrameGraph.CountInFlightFrames-1 do begin
    if (GetActiveResourceInstanceType=TResourceInstanceType.SingleInstance) and
       (InFlightFrameIndex>0) then begin
     fVulkanBuffers[InFlightFrameIndex]:=nil;
@@ -3180,7 +3196,7 @@ begin
  fMemoryBarrierDynamicArray.Initialize;
  fBufferMemoryBarrierDynamicArray.Initialize;
  fImageMemoryBarrierDynamicArray.Initialize;
- for Index:=0 to MaxInFlightFrames-1 do begin
+ for Index:=0 to fFrameGraph.CountInFlightFrames-1 do begin
   fWorkMemoryBarrierDynamicArray[Index].Initialize;
   fWorkBufferMemoryBarrierDynamicArray[Index].Initialize;
   fWorkImageMemoryBarrierDynamicArray[Index].Initialize;
@@ -3198,7 +3214,7 @@ begin
  fMemoryBarrierDynamicArray.Finalize;
  fBufferMemoryBarrierDynamicArray.Finalize;
  fImageMemoryBarrierDynamicArray.Finalize;
- for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+ for InFlightFrameIndex:=0 to fFrameGraph.CountInFlightFrames-1 do begin
   fWorkFromPhysicalPassesEventHandles[InFlightFrameIndex].Finalize;
   fWorkMemoryBarrierDynamicArray[InFlightFrameIndex].Finalize;
   fWorkBufferMemoryBarrierDynamicArray[InFlightFrameIndex].Finalize;
@@ -3224,7 +3240,7 @@ var InFlightFrameIndex,
     BufferMemoryBarrier:PVkBufferMemoryBarrier;
     ImageMemoryBarrier:PVkImageMemoryBarrier;
 begin
- for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+ for InFlightFrameIndex:=0 to fFrameGraph.CountInFlightFrames-1 do begin
   fWorkMemoryBarrierDynamicArray[InFlightFrameIndex].Assign(fMemoryBarrierDynamicArray);
   fWorkBufferMemoryBarrierDynamicArray[InFlightFrameIndex].Assign(fBufferMemoryBarrierDynamicArray);
   fWorkImageMemoryBarrierDynamicArray[InFlightFrameIndex].Assign(fImageMemoryBarrierDynamicArray);
@@ -3277,7 +3293,7 @@ end;
 procedure TpvFrameGraph.TPhysicalPass.TPipelineBarrierGroup.BeforeDestroySwapChain;
 var InFlightFrameIndex:TpvSizeInt;
 begin
- for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+ for InFlightFrameIndex:=0 to fFrameGraph.CountInFlightFrames-1 do begin
   fWorkMemoryBarrierDynamicArray[InFlightFrameIndex].Clear;
   fWorkBufferMemoryBarrierDynamicArray[InFlightFrameIndex].Clear;
   fWorkImageMemoryBarrierDynamicArray[InFlightFrameIndex].Clear;
@@ -3373,7 +3389,7 @@ begin
  fAfterPipelineBarrierGroups:=TPipelineBarrierGroups.Create;
  fAfterPipelineBarrierGroups.OwnsObjects:=true;
 
- for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+ for InFlightFrameIndex:=0 to fFrameGraph.CountInFlightFrames-1 do begin
   fEvents[InFlightFrameIndex]:=nil;
   fResetEvents[InFlightFrameIndex].Initialize;
  end;
@@ -3387,7 +3403,7 @@ end;
 destructor TpvFrameGraph.TPhysicalPass.Destroy;
 var InFlightFrameIndex,Index:TpvSizeInt;
 begin
- for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+ for InFlightFrameIndex:=0 to fFrameGraph.CountInFlightFrames-1 do begin
   fResetEvents[InFlightFrameIndex].Finalize;
   FreeAndNil(fEvents[InFlightFrameIndex]);
  end;
@@ -3462,7 +3478,7 @@ procedure TpvFrameGraph.TPhysicalPass.BeforeDestroySwapChain;
 var InFlightFrameIndex,Index:TpvSizeInt;
     PipelineBarrierGroup:TPipelineBarrierGroup;
 begin
- for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+ for InFlightFrameIndex:=0 to fFrameGraph.CountInFlightFrames-1 do begin
   FreeAndNil(fEvents[InFlightFrameIndex]);
  end;
  for PipelineBarrierGroup in fEventPipelineBarrierGroups do begin
@@ -3723,7 +3739,7 @@ begin
  fAttachmentReferences.Initialize;
  fFinalLayouts:=TResourcelLayoutHashMap.Create(VK_IMAGE_LAYOUT_UNDEFINED);
  fVulkanRenderPass:=nil;
- for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+ for InFlightFrameIndex:=0 to fFrameGraph.CountInFlightFrames-1 do begin
   for SurfaceIndex:=0 to MaxSwapChainImages-1 do begin
    fVulkanSurfaceFrameBuffers[InFlightFrameIndex,SurfaceIndex]:=nil;
   end;
@@ -3736,7 +3752,7 @@ var InFlightFrameIndex,SurfaceIndex:TpvSizeInt;
 begin
  FreeAndNil(fFinalLayouts);
  fSubpassDependencies.Finalize;
- for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+ for InFlightFrameIndex:=0 to fFrameGraph.CountInFlightFrames-1 do begin
   if fHasVulkanSurfaceFrameBuffers then begin
    for SurfaceIndex:=0 to MaxSwapChainImages-1 do begin
     FreeAndNil(fVulkanSurfaceFrameBuffers[InFlightFrameIndex,SurfaceIndex]);
@@ -3982,7 +3998,7 @@ begin
   Subpass.BeforeDestroySwapChain;
  end;
 
- for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+ for InFlightFrameIndex:=0 to fFrameGraph.CountInFlightFrames-1 do begin
   if fHasVulkanSurfaceFrameBuffers then begin
    for SurfaceIndex:=0 to MaxSwapChainImages-1 do begin
     FreeAndNil(fVulkanSurfaceFrameBuffers[InFlightFrameIndex,SurfaceIndex]);
@@ -4059,7 +4075,7 @@ end;
 
 { TpvFrameGraph }
 
-constructor TpvFrameGraph.Create(const aVulkanDevice:TpvVulkanDevice);
+constructor TpvFrameGraph.Create(const aVulkanDevice:TpvVulkanDevice;const aCountInFlightFrames:TpvSizeInt);
 var InFlightFrameIndex:TpvSizeInt;
 begin
 
@@ -4082,7 +4098,7 @@ begin
 
  fSurfaceDepthFormat:=VK_FORMAT_D32_SFLOAT;
 
- fCountInFlightFrames:=MaxInFlightFrames;
+ fCountInFlightFrames:=Min(Max(aCountInFlightFrames,1),MaxInFlightFrames);
 
  fCountSurfaceImages:=MaxSwapChainImages;
 
@@ -4142,7 +4158,7 @@ begin
 
  fPresentQueue:=AddQueue(fVulkanDevice.PresentQueue);
 
- for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+ for InFlightFrameIndex:=0 to fCountInFlightFrames-1 do begin
   fDrawToWaitOnSemaphores[InFlightFrameIndex].Initialize;
   fDrawToWaitOnSemaphoreHandles[InFlightFrameIndex].Initialize;
   fDrawToSignalSemaphoreHandles[InFlightFrameIndex].Initialize;
@@ -4205,7 +4221,7 @@ begin
 
  fQueueFamilyIndices.Finalize;
 
- for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+ for InFlightFrameIndex:=0 to fCountInFlightFrames-1 do begin
   for Index:=0 to fDrawToWaitOnSemaphores[InFlightFrameIndex].Count-1 do begin
    FreeAndNil(fDrawToWaitOnSemaphores[InFlightFrameIndex].Items[Index]);
   end;
@@ -4335,9 +4351,11 @@ function TpvFrameGraph.AddBufferResourceType(const aName:TpvRawByteString;
                                              const aMemoryRequiredPropertyFlags:TVkMemoryPropertyFlags=TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
                                              const aMemoryPreferredPropertyFlags:TVkMemoryPropertyFlags=TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
                                              const aMemoryAvoidPropertyFlags:TVkMemoryPropertyFlags=0;
+                                             const aMemoryPreferredNotPropertyFlags:TVkMemoryPropertyFlags=0;
                                              const aMemoryRequiredHeapFlags:TVkMemoryHeapFlags=0;
                                              const aMemoryPreferredHeapFlags:TVkMemoryHeapFlags=0;
                                              const aMemoryAvoidHeapFlags:TVkMemoryHeapFlags=0;
+                                             const aMemoryPreferredNotHeapFlags:TVkMemoryHeapFlags=0;
                                              const aBufferFlags:TpvVulkanBufferFlags=[]):TResourceType;
 begin
  result:=TBufferResourceType.Create(self,
@@ -4348,9 +4366,11 @@ begin
                                     aMemoryRequiredPropertyFlags,
                                     aMemoryPreferredPropertyFlags,
                                     aMemoryAvoidPropertyFlags,
+                                    aMemoryPreferredNotPropertyFlags,
                                     aMemoryRequiredHeapFlags,
                                     aMemoryPreferredHeapFlags,
                                     aMemoryAvoidHeapFlags,
+                                    aMemoryPreferredNotHeapFlags,
                                     aBufferFlags);
 end;
 
@@ -5262,9 +5282,11 @@ type TEventBeforeAfter=(Event,Before,After);
      ResourcePhysicalBufferData.fMemoryRequiredPropertyFlags:=BufferResourceType.fMemoryRequiredPropertyFlags;
      ResourcePhysicalBufferData.fMemoryPreferredPropertyFlags:=BufferResourceType.fMemoryPreferredPropertyFlags;
      ResourcePhysicalBufferData.fMemoryAvoidPropertyFlags:=BufferResourceType.fMemoryAvoidPropertyFlags;
+     ResourcePhysicalBufferData.fMemoryPreferredNotPropertyFlags:=BufferResourceType.fMemoryPreferredNotPropertyFlags;
      ResourcePhysicalBufferData.fMemoryRequiredHeapFlags:=BufferResourceType.fMemoryRequiredHeapFlags;
      ResourcePhysicalBufferData.fMemoryPreferredHeapFlags:=BufferResourceType.fMemoryPreferredHeapFlags;
      ResourcePhysicalBufferData.fMemoryAvoidHeapFlags:=BufferResourceType.fMemoryAvoidHeapFlags;
+     ResourcePhysicalBufferData.fMemoryPreferredNotHeapFlags:=BufferResourceType.fMemoryPreferredNotHeapFlags;
      ResourcePhysicalBufferData.fBufferFlags:=BufferResourceType.fBufferFlags;
     end else begin
      raise EpvFrameGraph.Create('Invalid resource type');
@@ -6723,12 +6745,12 @@ begin
  end;
  for CommandBuffer in fAllQueueCommandBuffers do begin
   CommandBuffer.fWaitingSemaphoreHandles.Clear;
-  for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+  for InFlightFrameIndex:=0 to fCountInFlightFrames-1 do begin
    CommandBuffer.fSignallingSemaphores[InFlightFrameIndex].Clear;
    CommandBuffer.fSignallingSemaphoreHandles[InFlightFrameIndex].Clear;
   end;
  end;
- for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+ for InFlightFrameIndex:=0 to fCountInFlightFrames-1 do begin
   for Index:=0 to fDrawToWaitOnSemaphores[InFlightFrameIndex].Count-1 do begin
    FreeAndNil(fDrawToWaitOnSemaphores[InFlightFrameIndex].Items[Index]);
   end;
@@ -6738,7 +6760,7 @@ begin
   fDrawToSignalSemaphoreDstStageMasks[InFlightFrameIndex].Clear;
  end;
  for CommandBuffer in fAllQueueCommandBuffers do begin
-  for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+  for InFlightFrameIndex:=0 to fCountInFlightFrames-1 do begin
    for WaitingSemaphoreIndex:=0 to CommandBuffer.fWaitingSemaphores.Count-1 do begin
     WaitingSemaphore:=@CommandBuffer.fWaitingSemaphores.Items[WaitingSemaphoreIndex];
     Semaphore:=TpvVulkanSemaphore.Create(fVulkanDevice);
@@ -6763,7 +6785,7 @@ begin
   CommandBuffer.fWaitingSemaphoreDstStageMasks.Finish;
  end;
  for CommandBuffer in fAllQueueCommandBuffers do begin
-  for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+  for InFlightFrameIndex:=0 to fCountInFlightFrames-1 do begin
    SubmitInfo:=@CommandBuffer.fSubmitInfos[InFlightFrameIndex];
    FillChar(SubmitInfo^,SizeOf(TVkSubmitInfo),#0);
    SubmitInfo^.sType:=VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -6789,13 +6811,13 @@ begin
    end;
   end;
  end;
- for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+ for InFlightFrameIndex:=0 to fCountInFlightFrames-1 do begin
   fDrawToWaitOnSemaphores[InFlightFrameIndex].Finish;
   fDrawToWaitOnSemaphoreHandles[InFlightFrameIndex].Finish;
   fDrawToSignalSemaphoreHandles[InFlightFrameIndex].Finish;
   fDrawToSignalSemaphoreDstStageMasks[InFlightFrameIndex].Finish;
  end;
- for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+ for InFlightFrameIndex:=0 to fCountInFlightFrames-1 do begin
   fDrawToWaitSubmitInfos[InFlightFrameIndex].signalSemaphoreCount:=fDrawToWaitOnSemaphoreHandles[InFlightFrameIndex].Count;
   if fDrawToWaitSubmitInfos[InFlightFrameIndex].signalSemaphoreCount>0 then begin
    fDrawToWaitSubmitInfos[InFlightFrameIndex].pSignalSemaphores:=@fDrawToWaitOnSemaphoreHandles[InFlightFrameIndex].Items[0];
@@ -6803,7 +6825,7 @@ begin
    fDrawToWaitSubmitInfos[InFlightFrameIndex].pSignalSemaphores:=nil;
   end;
  end;
- for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+ for InFlightFrameIndex:=0 to fCountInFlightFrames-1 do begin
   fDrawToSignalSubmitInfos[InFlightFrameIndex].waitSemaphoreCount:=fDrawToSignalSemaphoreHandles[InFlightFrameIndex].Count;
   if fDrawToSignalSubmitInfos[InFlightFrameIndex].waitSemaphoreCount>0 then begin
    fDrawToSignalSubmitInfos[InFlightFrameIndex].pWaitSemaphores:=@fDrawToSignalSemaphoreHandles[InFlightFrameIndex].Items[0];
@@ -6814,12 +6836,12 @@ begin
   end;
  end;
  for PhysicalPass in fPhysicalPasses do begin
-  for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+  for InFlightFrameIndex:=0 to fCountInFlightFrames-1 do begin
    PhysicalPass.fResetEvents[InFlightFrameIndex].Clear;
   end;
  end;
  if assigned(fRootPhysicalPass) then begin
-  for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+  for InFlightFrameIndex:=0 to fCountInFlightFrames-1 do begin
    for PhysicalPass in fPhysicalPasses do begin
     if assigned(PhysicalPass.fEvents[InFlightFrameIndex]) then begin
      ResetEvent.Handle:=PhysicalPass.fEvents[InFlightFrameIndex].Handle;
@@ -6830,7 +6852,7 @@ begin
   end;
  end;
  for PhysicalPass in fPhysicalPasses do begin
-  for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+  for InFlightFrameIndex:=0 to fCountInFlightFrames-1 do begin
    PhysicalPass.fResetEvents[InFlightFrameIndex].Finish;
   end;
  end;
@@ -6852,7 +6874,7 @@ begin
  for ResourceAliasGroup in fResourceAliasGroups do begin
   ResourceAliasGroup.BeforeDestroySwapChain;
  end;
- for InFlightFrameIndex:=0 to MaxInFlightFrames-1 do begin
+ for InFlightFrameIndex:=0 to fCountInFlightFrames-1 do begin
   for Index:=0 to fDrawToWaitOnSemaphores[InFlightFrameIndex].Count-1 do begin
    FreeAndNil(fDrawToWaitOnSemaphores[InFlightFrameIndex].Items[Index]);
   end;

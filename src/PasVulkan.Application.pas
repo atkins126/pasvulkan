@@ -98,6 +98,7 @@ const MaxSwapChainImages=3;
       MaxInFlightFrames=3;
 
       FrameTimesHistorySize=1 shl 10;
+      FrameTimesHistoryMask=FrameTimesHistorySize-1;
 
       LOG_NONE=0;
       LOG_INFO=1;
@@ -932,6 +933,8 @@ type EpvApplication=class(Exception)
        SRGB=1
       );
 
+     { TpvApplication }
+
      TpvApplication=class
       private
        type TAcquireVulkanBackBufferState=
@@ -958,6 +961,8 @@ type EpvApplication=class(Exception)
 
        fTitle:TpvUTF8String;
        fVersion:TpvUInt32;
+
+       fWindowTitle:TpvUTF8String;
 
        fPathName:TpvUTF8String;
 
@@ -1174,8 +1179,9 @@ type EpvApplication=class(Exception)
 
        fFrameTimesHistoryDeltaTimes:array[0..FrameTimesHistorySize-1] of TpvDouble;
        fFrameTimesHistoryTimePoints:array[0..FrameTimesHistorySize-1] of TpvHighResolutionTime;
-       fFrameTimesHistoryReadIndex:TPasMPInt32;
-       fFrameTimesHistoryWriteIndex:TPasMPInt32;
+       fFrameTimesHistoryIndex:TpvSizeInt;
+       fFrameTimesHistoryCount:TpvSizeInt;
+       fFrameTimesHistorySum:TpvDouble;
 
        fFramesPerSecond:TpvDouble;
 
@@ -1272,6 +1278,10 @@ type EpvApplication=class(Exception)
        fVulkanNVIDIADiagnosticCheckPointsExtensionFound:boolean;
 
        fVulkanNVIDIADeviceDiagnosticsConfigCreateInfoNV:TVkDeviceDiagnosticsConfigCreateInfoNV;
+
+       procedure SetTitle(const aTitle:TpvUTF8String);
+
+       procedure SetWindowTitle(const aWindowTitle:TpvUTF8String);
 
        procedure SetDesiredCountInFlightFrames(const aDesiredCountInFlightFrames:TpvInt32);
 
@@ -1441,8 +1451,10 @@ type EpvApplication=class(Exception)
 
        property ResourceManager:TpvResourceManager read fResourceManager;
 
-       property Title:TpvUTF8String read fTitle write fTitle;
+       property Title:TpvUTF8String read fTitle write SetTitle;
        property Version:TpvUInt32 read fVersion write fVersion;
+
+       property WindowTitle:TpvUTF8String read fWindowTitle write SetWindowTitle;
 
        property PathName:TpvUTF8String read fPathName write fPathName;
 
@@ -5312,6 +5324,8 @@ begin
  fTitle:='PasVulkan Application';
  fVersion:=$0100;
 
+ fWindowTitle:=fTitle;
+
  fPathName:='PasVulkanApplication';
 
  fCacheStoragePath:='';
@@ -5628,6 +5642,24 @@ begin
   end;
  end;
 {$ifend}
+end;
+
+procedure TpvApplication.SetTitle(const aTitle:TpvUTF8String);
+begin
+ if fTitle<>aTitle then begin
+  fTitle:=aTitle;
+  SetWindowTitle(fTitle);
+ end;
+end;
+
+procedure TpvApplication.SetWindowTitle(const aWindowTitle:TpvUTF8String);
+begin
+ if fWindowTitle<>aWindowTitle then begin
+  fWindowTitle:=aWindowTitle;
+{$if defined(PasVulkanUseSDL2)}
+  SDL_SetWindowTitle(fSurfaceWindow,PAnsiChar(TpvApplicationRawByteString(fWindowTitle)));
+{$ifend}
+ end;
 end;
 
 procedure TpvApplication.SetDesiredCountInFlightFrames(const aDesiredCountInFlightFrames:TpvInt32);
@@ -5999,7 +6031,7 @@ begin
   SDL_VERSION(SDL_SysWMinfo.version);
   if {$if defined(PasVulkanUseSDL2WithVulkanSupport)}fSDLVersionWithVulkanSupport or{$ifend}
      (SDL_GetWindowWMInfo(fSurfaceWindow,@SDL_SysWMinfo)<>0) then begin
-   fVulkanInstance:=TpvVulkanInstance.Create(TpvVulkanCharString(Title),
+   fVulkanInstance:=TpvVulkanInstance.Create(TpvVulkanCharString(fTitle),
                                              Version,
                                              'PasVulkanApplication',
                                              $0100,
@@ -7488,41 +7520,38 @@ end;
 {$ifend}
 
 procedure TpvApplication.UpdateFrameTimesHistory;
-var Index,Count:TpvInt32;
-    SumOfFrameTimes:TpvDouble;
+var Index:TpvSizeInt;
 begin
 
  if fFloatDeltaTime>0.0 then begin
 
-  fFrameTimesHistoryDeltaTimes[fFrameTimesHistoryWriteIndex]:=fFloatDeltaTime;
-  fFrameTimesHistoryTimePoints[fFrameTimesHistoryWriteIndex]:=fNowTime;
-  inc(fFrameTimesHistoryWriteIndex);
-  if fFrameTimesHistoryWriteIndex>=FrameTimesHistorySize then begin
-   fFrameTimesHistoryWriteIndex:=0;
-  end;
-
-  while (fFrameTimesHistoryReadIndex<>fFrameTimesHistoryWriteIndex) and
-        ((fNowTime-fFrameTimesHistoryTimePoints[fFrameTimesHistoryReadIndex])>=fHighResolutionTimer.SecondInterval) do begin
-   inc(fFrameTimesHistoryReadIndex);
-   if fFrameTimesHistoryReadIndex>=FrameTimesHistorySize then begin
-    fFrameTimesHistoryReadIndex:=0;
+  while fFrameTimesHistoryCount>0 do begin
+   Index:=((fFrameTimesHistoryIndex+FrameTimesHistorySize)-fFrameTimesHistoryCount) and FrameTimesHistoryMask;
+   if abs(fNowTime-fFrameTimesHistoryTimePoints[Index])>=fHighResolutionTimer.SecondInterval then begin
+    fFrameTimesHistorySum:=fFrameTimesHistorySum-fFrameTimesHistoryDeltaTimes[Index];
+    fFrameTimesHistoryDeltaTimes[Index]:=0.0;
+    fFrameTimesHistoryTimePoints[Index]:=0;
+    dec(fFrameTimesHistoryCount);
+   end else begin
+    break;
    end;
   end;
+
+  if fFrameTimesHistoryCount<FrameTimesHistorySize then begin
+   inc(fFrameTimesHistoryCount);
+  end else begin
+   fFrameTimesHistorySum:=fFrameTimesHistorySum-fFrameTimesHistoryDeltaTimes[fFrameTimesHistoryIndex];
+  end;
+  fFrameTimesHistorySum:=fFrameTimesHistorySum+fFloatDeltaTime;
+  fFrameTimesHistoryDeltaTimes[fFrameTimesHistoryIndex]:=fFloatDeltaTime;
+  fFrameTimesHistoryTimePoints[fFrameTimesHistoryIndex]:=fNowTime;
+
+  fFrameTimesHistoryIndex:=(fFrameTimesHistoryIndex+1) and FrameTimesHistoryMask;
+
  end;
 
- SumOfFrameTimes:=0.0;
- Count:=0;
- Index:=fFrameTimesHistoryReadIndex;
- while Index<>fFrameTimesHistoryWriteIndex do begin
-  SumOfFrameTimes:=SumOfFrameTimes+fFrameTimesHistoryDeltaTimes[Index];
-  inc(Count);
-  inc(Index);
-  if Index>FrameTimesHistorySize then begin
-   Index:=0;
-  end;
- end;
- if (Count>0) and (SumOfFrameTimes>0.0) then begin
-  fFramesPerSecond:=Count/SumOfFrameTimes;
+ if (fFrameTimesHistoryCount>0) and (fFrameTimesHistorySum>0.0) then begin
+  fFramesPerSecond:=fFrameTimesHistoryCount/fFrameTimesHistorySum;
  end else if fFloatDeltaTime>0.0 then begin
   fFramesPerSecond:=1.0/fFloatDeltaTime;
  end else begin
@@ -8531,7 +8560,7 @@ begin
 {$if defined(PasVulkanUseSDL2WithVulkanSupport)}
   repeat
 {$ifend}
-   fSurfaceWindow:=SDL_CreateWindow(PAnsiChar(TpvApplicationRawByteString(fTitle)),
+   fSurfaceWindow:=SDL_CreateWindow(PAnsiChar(TpvApplicationRawByteString(fWindowTitle)),
 {$ifdef Android}
                                     SDL_WINDOWPOS_CENTERED_MASK,
                                     SDL_WINDOWPOS_CENTERED_MASK,
@@ -8584,8 +8613,9 @@ begin
 
   FillChar(fFrameTimesHistoryDeltaTimes,SizeOf(fFrameTimesHistoryDeltaTimes),#0);
   FillChar(fFrameTimesHistoryTimePoints,SizeOf(fFrameTimesHistoryTimePoints),#$ff);
-  fFrameTimesHistoryReadIndex:=0;
-  fFrameTimesHistoryWriteIndex:=0;
+  fFrameTimesHistoryIndex:=0;
+  fFrameTimesHistoryCount:=0;
+  fFrameTimesHistorySum:=0.0;
 
   fFramesPerSecond:=0.0;
 
