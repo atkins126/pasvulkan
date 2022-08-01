@@ -44,6 +44,7 @@ type TApplication=class(TpvApplication)
        fShadowMapSize:TpvInt32;
        fTransparencyMode:TTransparencyMode;
        fAntialiasingMode:TAntialiasingMode;
+       fShadowMode:TShadowMode;
       public
        constructor Create; override;
        destructor Destroy; override;
@@ -73,6 +74,7 @@ type TApplication=class(TpvApplication)
        property ShadowMapSize:TpvInt32 read fShadowMapSize;
        property TransparencyMode:TTransparencyMode read fTransparencyMode;
        property AntialiasingMode:TAntialiasingMode read fAntialiasingMode;
+       property ShadowMode:TShadowMode read fShadowMode;
      end;
 
 var Application:TApplication=nil;
@@ -96,10 +98,11 @@ begin
  fForceNoVSync:=false;
  VulkanNVIDIAAfterMath:=false;
  fMaxMSAA:=0;
- fMaxShadowMSAA:=0;
- fShadowMapSize:=512;
+ fMaxShadowMSAA:=1;
+ fShadowMapSize:=2048;
  fTransparencyMode:=TTransparencyMode.Auto;
  fAntialiasingMode:=TAntialiasingMode.Auto;
+ fShadowMode:=TShadowMode.Auto;
  VirtualRealityMode:=TpvVirtualReality.TMode.Disabled;
 {$if not (defined(Android) or defined(iOS))}
  Index:=1;
@@ -188,6 +191,25 @@ begin
      fTransparencyMode:=TTransparencyMode.Auto;
     end;
    end;
+  end else if (Parameter='--shadow-mode') or
+              (Parameter='/shadow-mode') then begin
+   if Index<=ParamCount then begin
+    Parameter:=LowerCase(trim(ParamStr(Index)));
+    inc(Index);
+    if Parameter='none' then begin
+     fShadowMode:=TShadowMode.None;
+    end else if Parameter='pcf' then begin
+     fShadowMode:=TShadowMode.PCF;
+    end else if Parameter='dpcf' then begin
+     fShadowMode:=TShadowMode.DPCF;
+    end else if Parameter='pcss' then begin
+     fShadowMode:=TShadowMode.PCSS;
+    end else if Parameter='msm' then begin
+     fShadowMode:=TShadowMode.MSM;
+    end else begin
+     fShadowMode:=TShadowMode.Auto;
+    end;
+   end;
   end else begin
    GLTFFileName:=Parameter;
   end;
@@ -272,6 +294,9 @@ begin
  if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME)>=0 then begin
   aVulkanDevice.EnabledExtensionNames.Add(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
  end;
+ if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_EXT_HOST_QUERY_RESET_EXTENSION_NAME)>=0 then begin
+  aVulkanDevice.EnabledExtensionNames.Add(VK_EXT_HOST_QUERY_RESET_EXTENSION_NAME);
+ end;
  if ((aVulkanDevice.Instance.APIVersion and VK_API_VERSION_WITHOUT_PATCH_MASK)<VK_API_VERSION_1_2) and
     (aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_KHR_SPIRV_1_4_EXTENSION_NAME)>=0) then begin
   aVulkanDevice.EnabledExtensionNames.Add(VK_KHR_SPIRV_1_4_EXTENSION_NAME);
@@ -295,7 +320,7 @@ begin
  SwapChainColorSpace:=TpvApplicationSwapChainColorSpace.SRGB;
 //Blocking:=false;
 //DesiredCountSwapChainImages:=2;
-//DesiredCountInFlightFrames:=2;
+ DesiredCountInFlightFrames:=2;
  if fForceNoVSync or (assigned(fVirtualReality) and not (fVirtualReality.Mode in [TpvVirtualReality.TMode.Disabled,TpvVirtualReality.TMode.Faked])) then begin
   DesiredCountSwapChainImages:=2;
   PresentMode:=TpvApplicationPresentMode.Mailbox;
