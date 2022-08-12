@@ -110,6 +110,12 @@ const EPSILON={$ifdef UseDouble}1e-14{$else}1e-5{$endif}; // actually {$ifdef Us
 
       TwoPI=PI*2.0;
 
+      OneOverPI=1.0/PI;
+
+      OneOverHalfPI=1.0/HalfPI;
+
+      OneOverTwoPI=1.0/TwoPI;
+
       SQRT_0_DOT_5=0.70710678118;
 
       SupraEngineFPUPrecisionMode:TFPUPrecisionMode={$ifdef cpu386}pmExtended{$else}{$ifdef cpux64}pmExtended{$else}pmDouble{$endif}{$endif};
@@ -1592,6 +1598,8 @@ procedure OrthoNormalize(var Tangent,Bitangent,Normal:TpvVector3);
 procedure RobustOrthoNormalize(var Tangent,Bitangent,Normal:TpvVector3;const Tolerance:TpvScalar=1e-3);
 
 function MaxOverlaps(const Min1,Max1,Min2,Max2:TpvScalar;var LowerLim,UpperLim:TpvScalar):boolean;
+
+function GetHaltonSequence(const aIndex,aPrimeBase:TpvUInt32):TpvDouble;
 
 function PackFP32FloatToM6E5Float(const pValue:TpvFloat):TpvUInt32;
 function PackFP32FloatToM5E5Float(const pValue:TpvFloat):TpvUInt32;
@@ -16659,6 +16667,22 @@ begin
    end;
   end;
   result:=true;
+ end;
+end;
+
+function GetHaltonSequence(const aIndex,aPrimeBase:TpvUInt32):TpvDouble;
+var f,OneOverPrimeBase:TpvDouble;
+    Current,CurrentDiv:TpvInt32;
+begin
+ result:=0.0;
+ OneOverPrimeBase:=1.0/aPrimeBase;
+ f:=OneOverPrimeBase;
+ Current:=aIndex;
+ while Current>0 do begin
+  CurrentDiv:=Current div aPrimeBase;
+  result:=result+(f*(Current-(CurrentDiv*aPrimeBase)));
+  Current:=CurrentDiv;
+  f:=f*OneOverPrimeBase;
  end;
 end;
 

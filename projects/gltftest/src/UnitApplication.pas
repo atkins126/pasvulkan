@@ -28,8 +28,9 @@ uses SysUtils,
      PasVulkan.Math,
      PasVulkan.Framework,
      PasVulkan.Application,
+     PasVulkan.Resources,
      PasVulkan.VirtualReality,
-     UnitGlobals;
+     PasVulkan.Scene3D.Renderer.Globals;
 
 const ApplicationTag='gltftest';      
 
@@ -42,9 +43,11 @@ type TApplication=class(TpvApplication)
        fMaxMSAA:TpvInt32;
        fMaxShadowMSAA:TpvInt32;
        fShadowMapSize:TpvInt32;
-       fTransparencyMode:TTransparencyMode;
-       fAntialiasingMode:TAntialiasingMode;
-       fShadowMode:TShadowMode;
+       fTransparencyMode:TpvScene3DRendererTransparencyMode;
+       fAntialiasingMode:TpvScene3DRendererAntialiasingMode;
+       fShadowMode:TpvScene3DRendererShadowMode;
+       fMakeScreenshotJPEG:boolean;
+       fMakeScreenshotPNG:boolean;
       public
        constructor Create; override;
        destructor Destroy; override;
@@ -72,42 +75,48 @@ type TApplication=class(TpvApplication)
        property MaxMSAA:TpvInt32 read fMaxMSAA;
        property MaxShadowMSAA:TpvInt32 read fMaxShadowMSAA;
        property ShadowMapSize:TpvInt32 read fShadowMapSize;
-       property TransparencyMode:TTransparencyMode read fTransparencyMode;
-       property AntialiasingMode:TAntialiasingMode read fAntialiasingMode;
-       property ShadowMode:TShadowMode read fShadowMode;
+       property TransparencyMode:TpvScene3DRendererTransparencyMode read fTransparencyMode;
+       property AntialiasingMode:TpvScene3DRendererAntialiasingMode read fAntialiasingMode;
+       property ShadowMode:TpvScene3DRendererShadowMode read fShadowMode;
      end;
 
 var Application:TApplication=nil;
 
-    GLTFFileName:UTF8String='test.glb';
+    GLTFFileName:UTF8String='';
 
 implementation
 
-uses UnitScreenMain;
+uses PasVulkan.Scene3D.Renderer,
+     UnitScreenMain;
 
 constructor TApplication.Create;
 var VirtualRealityMode:TpvVirtualReality.TMode;
 {$if not (defined(Android) or defined(iOS))}
     Index:TpvInt32;
-    Parameter:String;
+    OriginalParameter,Parameter:String;
 {$ifend}
 begin
  inherited Create;
  Application:=self;
+ PasVulkan.Resources.AllowExternalResources:=true;
+ fMakeScreenshotJPEG:=false;
+ fMakeScreenshotPNG:=false;
  fForceUseValidationLayers:=false;
  fForceNoVSync:=false;
  VulkanNVIDIAAfterMath:=false;
  fMaxMSAA:=0;
  fMaxShadowMSAA:=1;
  fShadowMapSize:=2048;
- fTransparencyMode:=TTransparencyMode.Auto;
- fAntialiasingMode:=TAntialiasingMode.Auto;
- fShadowMode:=TShadowMode.Auto;
+ fTransparencyMode:=TpvScene3DRendererTransparencyMode.Auto;
+ fAntialiasingMode:=TpvScene3DRendererAntialiasingMode.Auto;
+ fShadowMode:=TpvScene3DRendererShadowMode.Auto;
  VirtualRealityMode:=TpvVirtualReality.TMode.Disabled;
+ AcceptDragDropFiles:=true;
 {$if not (defined(Android) or defined(iOS))}
  Index:=1;
  while Index<=ParamCount do begin
-  Parameter:=LowerCase(ParamStr(Index));
+  OriginalParameter:=ParamStr(Index);
+  Parameter:=OriginalParameter;
   inc(Index);
   if (Parameter='--openvr') or
      (Parameter='/openvr') then begin
@@ -157,19 +166,19 @@ begin
     Parameter:=LowerCase(trim(ParamStr(Index)));
     inc(Index);
     if Parameter='direct' then begin
-     fTransparencyMode:=TTransparencyMode.Direct;
+     fTransparencyMode:=TpvScene3DRendererTransparencyMode.Direct;
     end else if Parameter='spinlockoit' then begin
-     fTransparencyMode:=TTransparencyMode.SPINLOCKOIT;
+     fTransparencyMode:=TpvScene3DRendererTransparencyMode.SPINLOCKOIT;
     end else if Parameter='interlockoit' then begin
-     fTransparencyMode:=TTransparencyMode.INTERLOCKOIT;
+     fTransparencyMode:=TpvScene3DRendererTransparencyMode.INTERLOCKOIT;
     end else if Parameter='loopoit' then begin
-     fTransparencyMode:=TTransparencyMode.LOOPOIT;
+     fTransparencyMode:=TpvScene3DRendererTransparencyMode.LOOPOIT;
     end else if Parameter='wboit' then begin
-     fTransparencyMode:=TTransparencyMode.WBOIT;
+     fTransparencyMode:=TpvScene3DRendererTransparencyMode.WBOIT;
     end else if Parameter='mboit' then begin
-     fTransparencyMode:=TTransparencyMode.MBOIT;
+     fTransparencyMode:=TpvScene3DRendererTransparencyMode.MBOIT;
     end else begin
-     fTransparencyMode:=TTransparencyMode.Auto;
+     fTransparencyMode:=TpvScene3DRendererTransparencyMode.Auto;
     end;
    end;
   end else if (Parameter='--antialiasing-mode') or
@@ -178,17 +187,19 @@ begin
     Parameter:=LowerCase(trim(ParamStr(Index)));
     inc(Index);
     if Parameter='none' then begin
-     fAntialiasingMode:=TAntialiasingMode.None;
+     fAntialiasingMode:=TpvScene3DRendererAntialiasingMode.None;
     end else if Parameter='dsaa' then begin
-     fAntialiasingMode:=TAntialiasingMode.DSAA;
+     fAntialiasingMode:=TpvScene3DRendererAntialiasingMode.DSAA;
     end else if Parameter='fxaa' then begin
-     fAntialiasingMode:=TAntialiasingMode.FXAA;
+     fAntialiasingMode:=TpvScene3DRendererAntialiasingMode.FXAA;
     end else if Parameter='smaa' then begin
-     fAntialiasingMode:=TAntialiasingMode.SMAA;
+     fAntialiasingMode:=TpvScene3DRendererAntialiasingMode.SMAA;
     end else if Parameter='msaa' then begin
-     fAntialiasingMode:=TAntialiasingMode.MSAA;
+     fAntialiasingMode:=TpvScene3DRendererAntialiasingMode.MSAA;
+    end else if Parameter='taa' then begin
+     fAntialiasingMode:=TpvScene3DRendererAntialiasingMode.TAA;
     end else begin
-     fTransparencyMode:=TTransparencyMode.Auto;
+     fTransparencyMode:=TpvScene3DRendererTransparencyMode.Auto;
     end;
    end;
   end else if (Parameter='--shadow-mode') or
@@ -197,21 +208,21 @@ begin
     Parameter:=LowerCase(trim(ParamStr(Index)));
     inc(Index);
     if Parameter='none' then begin
-     fShadowMode:=TShadowMode.None;
+     fShadowMode:=TpvScene3DRendererShadowMode.None;
     end else if Parameter='pcf' then begin
-     fShadowMode:=TShadowMode.PCF;
+     fShadowMode:=TpvScene3DRendererShadowMode.PCF;
     end else if Parameter='dpcf' then begin
-     fShadowMode:=TShadowMode.DPCF;
+     fShadowMode:=TpvScene3DRendererShadowMode.DPCF;
     end else if Parameter='pcss' then begin
-     fShadowMode:=TShadowMode.PCSS;
+     fShadowMode:=TpvScene3DRendererShadowMode.PCSS;
     end else if Parameter='msm' then begin
-     fShadowMode:=TShadowMode.MSM;
+     fShadowMode:=TpvScene3DRendererShadowMode.MSM;
     end else begin
-     fShadowMode:=TShadowMode.Auto;
+     fShadowMode:=TpvScene3DRendererShadowMode.Auto;
     end;
    end;
   end else begin
-   GLTFFileName:=Parameter;
+   GLTFFileName:=OriginalParameter;
   end;
  end;
 {$ifend}
@@ -246,6 +257,7 @@ var PhysicalDevice:TVkPhysicalDevice;
 begin
  inherited ChooseVulkanPhysicalDevice(aVulkanPhysicalDevice);
  if assigned(fVirtualReality) and not (fVirtualReality.Mode in [TpvVirtualReality.TMode.Disabled,TpvVirtualReality.TMode.Faked]) then begin
+  PhysicalDevice:=VK_NULL_HANDLE;
   fVirtualReality.ChooseVulkanPhysicalDevice(VulkanInstance,PhysicalDevice);
   pvApplication.VulkanPhysicalDeviceHandle:=PhysicalDevice;
  end;
@@ -259,48 +271,7 @@ begin
   aVulkanDevice.EnabledExtensionNames.Duplicates:=TDuplicates.dupIgnore;
   aVulkanDevice.EnabledExtensionNames.AddStrings(fVirtualReality.RequiredVulkanDeviceExtensions);
  end;
- if (aVulkanDevice.PhysicalDevice.DescriptorIndexingFeaturesEXT.descriptorBindingPartiallyBound=VK_FALSE) or
-    (aVulkanDevice.PhysicalDevice.DescriptorIndexingFeaturesEXT.runtimeDescriptorArray=VK_FALSE) or
-    (aVulkanDevice.PhysicalDevice.DescriptorIndexingFeaturesEXT.shaderSampledImageArrayNonUniformIndexing=VK_FALSE) then begin
-  raise EpvApplication.Create('Application','Support for VK_EXT_DESCRIPTOR_INDEXING (descriptorBindingPartiallyBound + runtimeDescriptorArray + shaderSampledImageArrayNonUniformIndexing) is needed',LOG_ERROR);
- end;
-{if aVulkanDevice.PhysicalDevice.BufferDeviceAddressFeaturesKHR.bufferDeviceAddress=VK_FALSE then begin
-  raise EpvApplication.Create('Application','Support for VK_KHR_buffer_device_address (bufferDeviceAddress) is needed',LOG_ERROR);
- end;}
- if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME)>=0 then begin
-  aVulkanDevice.EnabledExtensionNames.Add(VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME);
- end;
- if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_KHR_MAINTENANCE1_EXTENSION_NAME)>=0 then begin
-  aVulkanDevice.EnabledExtensionNames.Add(VK_KHR_MAINTENANCE1_EXTENSION_NAME);
- end;
- if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_KHR_MAINTENANCE2_EXTENSION_NAME)>=0 then begin
-  aVulkanDevice.EnabledExtensionNames.Add(VK_KHR_MAINTENANCE2_EXTENSION_NAME);
- end;
- if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_KHR_MAINTENANCE3_EXTENSION_NAME)>=0 then begin
-  aVulkanDevice.EnabledExtensionNames.Add(VK_KHR_MAINTENANCE3_EXTENSION_NAME);
- end;
- if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_EXT_POST_DEPTH_COVERAGE_EXTENSION_NAME)>=0 then begin
-  aVulkanDevice.EnabledExtensionNames.Add(VK_EXT_POST_DEPTH_COVERAGE_EXTENSION_NAME);
- end;
- if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME)>=0 then begin
-  aVulkanDevice.EnabledExtensionNames.Add(VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME);
- end;
- if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_EXT_SHADER_DEMOTE_TO_HELPER_INVOCATION_EXTENSION_NAME)>=0 then begin
-  aVulkanDevice.EnabledExtensionNames.Add(VK_EXT_SHADER_DEMOTE_TO_HELPER_INVOCATION_EXTENSION_NAME);
- end;
- if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME)>=0 then begin
-  aVulkanDevice.EnabledExtensionNames.Add(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME);
- end;
- if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME)>=0 then begin
-  aVulkanDevice.EnabledExtensionNames.Add(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
- end;
- if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_EXT_HOST_QUERY_RESET_EXTENSION_NAME)>=0 then begin
-  aVulkanDevice.EnabledExtensionNames.Add(VK_EXT_HOST_QUERY_RESET_EXTENSION_NAME);
- end;
- if ((aVulkanDevice.Instance.APIVersion and VK_API_VERSION_WITHOUT_PATCH_MASK)<VK_API_VERSION_1_2) and
-    (aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_KHR_SPIRV_1_4_EXTENSION_NAME)>=0) then begin
-  aVulkanDevice.EnabledExtensionNames.Add(VK_KHR_SPIRV_1_4_EXTENSION_NAME);
- end;
+ TpvScene3DRenderer.SetupVulkanDevice(aVulkanDevice);
 end;
 
 procedure TApplication.Setup;
@@ -409,7 +380,11 @@ begin
      VirtualReality.ResetOrientation;
     end;
    end;
+   KEYCODE_F10:begin
+    fMakeScreenshotJPEG:=true;
+   end;
    KEYCODE_F11:begin
+    fMakeScreenshotPNG:=true;
    end;
   end;
  end;
@@ -440,12 +415,38 @@ begin
 end;
 
 procedure TApplication.Draw(const aSwapChainImageIndex:TpvInt32;var aWaitSemaphore:TpvVulkanSemaphore;const aWaitFence:TpvVulkanFence=nil);
+var Stream:TMemoryStream;
 begin
  if assigned(fVirtualReality) then begin
   inherited Draw(aSwapChainImageIndex,aWaitSemaphore,nil);
-  fVirtualReality.Draw(aSwapChainImageIndex,aWaitSemaphore,aWaitFence);
+  fVirtualReality.Draw(aSwapChainImageIndex,DrawInFlightFrameIndex,aWaitSemaphore,aWaitFence);
  end else begin
   inherited Draw(aSwapChainImageIndex,aWaitSemaphore,aWaitFence);
+ end;
+ if fMakeScreenshotJPEG then begin
+  fMakeScreenshotJPEG:=false;
+  Stream:=TMemoryStream.Create;
+  try
+   VulkanSwapChain.SaveScreenshotAsJPEGToStream(Stream);
+   try
+    Stream.SaveToFile('screenshot.jpeg');
+   except
+   end;
+  finally
+   Stream.Free;
+  end;
+ end else if fMakeScreenshotPNG then begin
+  fMakeScreenshotPNG:=false;
+  Stream:=TMemoryStream.Create;
+  try
+   VulkanSwapChain.SaveScreenshotAsPNGToStream(Stream);
+   try
+    Stream.SaveToFile('screenshot.png');
+   except
+   end;
+  finally
+   Stream.Free;
+  end;
  end;
 end;
 
@@ -453,7 +454,7 @@ procedure TApplication.FinishFrame(const aSwapChainImageIndex:TpvInt32;var aWait
 begin
  if assigned(fVirtualReality) then begin
   inherited FinishFrame(aSwapChainImageIndex,aWaitSemaphore,nil);
-  fVirtualReality.FinishFrame(aSwapChainImageIndex,aWaitSemaphore,aWaitFence);
+  fVirtualReality.FinishFrame(aSwapChainImageIndex,DrawInFlightFrameIndex,aWaitSemaphore,aWaitFence);
  end else begin
   inherited FinishFrame(aSwapChainImageIndex,aWaitSemaphore,aWaitFence);
  end;
@@ -463,7 +464,7 @@ procedure TApplication.PostPresent(const aSwapChainImageIndex:TpvInt32);
 begin
  inherited PostPresent(aSwapChainImageIndex);
  if assigned(fVirtualReality) then begin
-  fVirtualReality.PostPresent(aSwapChainImageIndex);
+  fVirtualReality.PostPresent(aSwapChainImageIndex,DrawInFlightFrameIndex);
  end;
 end;
 

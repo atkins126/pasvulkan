@@ -237,10 +237,10 @@ type EpvFrameGraph=class(Exception);
                     public
                      constructor Create(const aQueue:TQueue); reintroduce;
                      destructor Destroy; override;
-                     procedure Show;
-                     procedure Hide;
-                     procedure AfterCreateSwapChain;
-                     procedure BeforeDestroySwapChain;
+                     procedure AcquirePersistentResources;
+                     procedure ReleasePersistentResources;
+                     procedure AcquireVolatileResources;
+                     procedure ReleaseVolatileResources;
                    end;
                    TCommandBuffers=TpvObjectGenericList<TCommandBuffer>;
              private
@@ -256,10 +256,10 @@ type EpvFrameGraph=class(Exception);
               constructor Create(const aFrameGraph:TpvFrameGraph;
                                  const aPhysicalQueue:TpvVulkanQueue); reintroduce;
               destructor Destroy; override;
-              procedure Show;
-              procedure Hide;
-              procedure AfterCreateSwapChain;
-              procedure BeforeDestroySwapChain;
+              procedure AcquirePersistentResources;
+              procedure ReleasePersistentResources;
+              procedure AcquireVolatileResources;
+              procedure ReleaseVolatileResources;
              published
               property FrameGraph:TpvFrameGraph read fFrameGraph;
               property PhysicalQueue:TpvVulkanQueue read fPhysicalQueue;
@@ -423,10 +423,10 @@ type EpvFrameGraph=class(Exception);
              public
               constructor Create(const aFrameGraph:TpvFrameGraph); reintroduce; virtual;
               destructor Destroy; override;
-              procedure Show; virtual;
-              procedure Hide; virtual;
-              procedure AfterCreateSwapChain; virtual;
-              procedure BeforeDestroySwapChain; virtual;
+              procedure AcquirePersistentResources; virtual;
+              procedure ReleasePersistentResources; virtual;
+              procedure AcquireVolatileResources; virtual;
+              procedure ReleaseVolatileResources; virtual;
              published
               property ActiveResourceInstanceType:TResourceInstanceType read GetActiveResourceInstanceType;
             end;
@@ -464,10 +464,10 @@ type EpvFrameGraph=class(Exception);
              public
               constructor Create(const aFrameGraph:TpvFrameGraph); override;
               destructor Destroy; override;
-              procedure Show; override;
-              procedure Hide; override;
-              procedure AfterCreateSwapChain; override;
-              procedure BeforeDestroySwapChain; override;
+              procedure AcquirePersistentResources; override;
+              procedure ReleasePersistentResources; override;
+              procedure AcquireVolatileResources; override;
+              procedure ReleaseVolatileResources; override;
              public
               property VulkanImages[const aIndex:TpvSizeInt]:TpvVulkanImage read GetVulkanImage;
               property VulkanImageViews[const aIndex:TpvSizeInt]:TpvVulkanImageView read GetVulkanImageView;
@@ -493,10 +493,10 @@ type EpvFrameGraph=class(Exception);
              public
               constructor Create(const aFrameGraph:TpvFrameGraph); override;
               destructor Destroy; override;
-              procedure Show; override;
-              procedure Hide; override;
-              procedure AfterCreateSwapChain; override;
-              procedure BeforeDestroySwapChain; override;
+              procedure AcquirePersistentResources; override;
+              procedure ReleasePersistentResources; override;
+              procedure AcquireVolatileResources; override;
+              procedure ReleaseVolatileResources; override;
              public
               property VulkanBuffers[const aIndex:TpvSizeInt]:TpvVulkanBuffer read GetVulkanBuffer;
             end;
@@ -512,10 +512,10 @@ type EpvFrameGraph=class(Exception);
              public
               constructor Create(const aFrameGraph:TpvFrameGraph); reintroduce;
               destructor Destroy; override;
-              procedure Show; virtual;
-              procedure Hide; virtual;
-              procedure AfterCreateSwapChain; virtual;
-              procedure BeforeDestroySwapChain; virtual;
+              procedure AcquirePersistentResources; virtual;
+              procedure ReleasePersistentResources; virtual;
+              procedure AcquireVolatileResources; virtual;
+              procedure ReleaseVolatileResources; virtual;
             end;
             TResourceAliasGroupList=TpvObjectGenericList<TResourceAliasGroup>;
             TResource=class
@@ -716,10 +716,10 @@ type EpvFrameGraph=class(Exception);
                                         const aDstStageMask:TVkPipelineStageFlags;
                                         const aDependencyFlags:TVkDependencyFlags);
                      destructor Destroy; override;
-                     procedure Show;
-                     procedure Hide;
-                     procedure AfterCreateSwapChain;
-                     procedure BeforeDestroySwapChain;
+                     procedure AcquirePersistentResources;
+                     procedure ReleasePersistentResources;
+                     procedure AcquireVolatileResources;
+                     procedure ReleaseVolatileResources;
                      procedure Execute(const aCommandBuffer:TpvVulkanCommandBuffer);
                     published
                      property SrcStageMask:TVkPipelineStageFlags read fSrcStageMask write fSrcStageMask;
@@ -758,10 +758,10 @@ type EpvFrameGraph=class(Exception);
              public
               constructor Create(const aFrameGraph:TpvFrameGraph;const aQueue:TQueue); reintroduce; virtual;
               destructor Destroy; override;
-              procedure Show; virtual;
-              procedure Hide; virtual;
-              procedure AfterCreateSwapChain; virtual;
-              procedure BeforeDestroySwapChain; virtual;
+              procedure AcquirePersistentResources; virtual;
+              procedure ReleasePersistentResources; virtual;
+              procedure AcquireVolatileResources; virtual;
+              procedure ReleaseVolatileResources; virtual;
               procedure Update(const aUpdateInFlightFrameIndex,aUpdateFrameIndex:TpvSizeInt); virtual;
               procedure Execute(const aCommandBuffer:TpvVulkanCommandBuffer); virtual;
             end;
@@ -771,10 +771,10 @@ type EpvFrameGraph=class(Exception);
              public
               constructor Create(const aFrameGraph:TpvFrameGraph;const aComputePass:TComputePass); reintroduce;
               destructor Destroy; override;
-              procedure Show; override;
-              procedure Hide; override;
-              procedure AfterCreateSwapChain; override;
-              procedure BeforeDestroySwapChain; override;
+              procedure AcquirePersistentResources; override;
+              procedure ReleasePersistentResources; override;
+              procedure AcquireVolatileResources; override;
+              procedure ReleaseVolatileResources; override;
               procedure Update(const aUpdateInFlightFrameIndex,aUpdateFrameIndex:TpvSizeInt); override;
               procedure Execute(const aCommandBuffer:TpvVulkanCommandBuffer); override;
             end;
@@ -784,10 +784,10 @@ type EpvFrameGraph=class(Exception);
              public
               constructor Create(const aFrameGraph:TpvFrameGraph;const aTransferPass:TTransferPass); reintroduce;
               destructor Destroy; override;
-              procedure Show; override;
-              procedure Hide; override;
-              procedure AfterCreateSwapChain; override;
-              procedure BeforeDestroySwapChain; override;
+              procedure AcquirePersistentResources; override;
+              procedure ReleasePersistentResources; override;
+              procedure AcquireVolatileResources; override;
+              procedure ReleaseVolatileResources; override;
               procedure Update(const aUpdateInFlightFrameIndex,aUpdateFrameIndex:TpvSizeInt); override;
               procedure Execute(const aCommandBuffer:TpvVulkanCommandBuffer); override;
             end;
@@ -797,10 +797,10 @@ type EpvFrameGraph=class(Exception);
              public
               constructor Create(const aFrameGraph:TpvFrameGraph;const aCustomPass:TCustomPass); reintroduce;
               destructor Destroy; override;
-              procedure Show; override;
-              procedure Hide; override;
-              procedure AfterCreateSwapChain; override;
-              procedure BeforeDestroySwapChain; override;
+              procedure AcquirePersistentResources; override;
+              procedure ReleasePersistentResources; override;
+              procedure AcquireVolatileResources; override;
+              procedure ReleaseVolatileResources; override;
               procedure Update(const aUpdateInFlightFrameIndex,aUpdateFrameIndex:TpvSizeInt); override;
               procedure Execute(const aCommandBuffer:TpvVulkanCommandBuffer); override;
             end;
@@ -857,10 +857,10 @@ type EpvFrameGraph=class(Exception);
                      constructor Create(const aPhysicalRenderPass:TPhysicalRenderPass;
                                         const aRenderPass:TRenderPass); reintroduce;
                      destructor Destroy; override;
-                     procedure Show; virtual;
-                     procedure Hide; virtual;
-                     procedure AfterCreateSwapChain; virtual;
-                     procedure BeforeDestroySwapChain; virtual;
+                     procedure AcquirePersistentResources; virtual;
+                     procedure ReleasePersistentResources; virtual;
+                     procedure AcquireVolatileResources; virtual;
+                     procedure ReleaseVolatileResources; virtual;
                     published
                      property Index:TpvSizeInt read fIndex;
                      property MultiviewMask:TVkUInt32 read fMultiviewMask;
@@ -881,10 +881,10 @@ type EpvFrameGraph=class(Exception);
              public
               constructor Create(const aFrameGraph:TpvFrameGraph;const aQueue:TQueue); override;
               destructor Destroy; override;
-              procedure Show; override;
-              procedure Hide; override;
-              procedure AfterCreateSwapChain; override;
-              procedure BeforeDestroySwapChain; override;
+              procedure AcquirePersistentResources; override;
+              procedure ReleasePersistentResources; override;
+              procedure AcquireVolatileResources; override;
+              procedure ReleaseVolatileResources; override;
               procedure Update(const aUpdateInFlightFrameIndex,aUpdateFrameIndex:TpvSizeInt); override;
               procedure Execute(const aCommandBuffer:TpvVulkanCommandBuffer); override;
              public
@@ -1087,10 +1087,10 @@ type EpvFrameGraph=class(Exception);
                                        const aResourceInstanceType:TResourceInstanceType=TResourceInstanceType.Default;
                                        const aExternalBufferData:TExternalBufferData=nil):TUsedBufferResource; overload;
              public
-              procedure Show; virtual;
-              procedure Hide; virtual;
-              procedure AfterCreateSwapChain; virtual;
-              procedure BeforeDestroySwapChain; virtual;
+              procedure AcquirePersistentResources; virtual;
+              procedure ReleasePersistentResources; virtual;
+              procedure AcquireVolatileResources; virtual;
+              procedure ReleaseVolatileResources; virtual;
               procedure Update(const aUpdateInFlightFrameIndex,aUpdateFrameIndex:TpvSizeInt); virtual;
               procedure Execute(const aCommandBuffer:TpvVulkanCommandBuffer;const aInFlightFrameIndex,aFrameIndex:TpvSizeInt); virtual;
              public
@@ -1242,10 +1242,10 @@ type EpvFrameGraph=class(Exception);
                                       const aMemoryPreferredNotHeapFlags:TVkMemoryHeapFlags=0;
                                       const aBufferFlags:TpvVulkanBufferFlags=[]):TResourceType; overload;
       public
-       procedure Show; virtual;
-       procedure Hide; virtual;
-       procedure AfterCreateSwapChain; virtual;
-       procedure BeforeDestroySwapChain; virtual;
+       procedure AcquirePersistentResources; virtual;
+       procedure ReleasePersistentResources; virtual;
+       procedure AcquireVolatileResources; virtual;
+       procedure ReleaseVolatileResources; virtual;
        procedure Setup; virtual;
        procedure Compile; virtual;
       private
@@ -1509,15 +1509,15 @@ begin
  inherited Destroy;
 end;
 
-procedure TpvFrameGraph.TQueue.TCommandBuffer.Show;
+procedure TpvFrameGraph.TQueue.TCommandBuffer.AcquirePersistentResources;
 begin
 end;
 
-procedure TpvFrameGraph.TQueue.TCommandBuffer.Hide;
+procedure TpvFrameGraph.TQueue.TCommandBuffer.ReleasePersistentResources;
 begin
 end;
 
-procedure TpvFrameGraph.TQueue.TCommandBuffer.AfterCreateSwapChain;
+procedure TpvFrameGraph.TQueue.TCommandBuffer.AcquireVolatileResources;
 var InFlightFrameIndex:TpvSizeInt;
 begin
  for InFlightFrameIndex:=0 to fQueue.fFrameGraph.fCountInFlightFrames-1 do begin
@@ -1526,7 +1526,7 @@ begin
  end;
 end;
 
-procedure TpvFrameGraph.TQueue.TCommandBuffer.BeforeDestroySwapChain;
+procedure TpvFrameGraph.TQueue.TCommandBuffer.ReleaseVolatileResources;
 var InFlightFrameIndex,Index:TpvSizeInt;
 begin
  for InFlightFrameIndex:=0 to fQueue.fFrameGraph.fCountInFlightFrames-1 do begin
@@ -1578,38 +1578,38 @@ begin
 
 end;
 
-procedure TpvFrameGraph.TQueue.Show;
+procedure TpvFrameGraph.TQueue.AcquirePersistentResources;
 var CommandBuffer:TCommandBuffer;
 begin
  for CommandBuffer in fCommandBuffers do begin
-  CommandBuffer.Show;
+  CommandBuffer.AcquirePersistentResources;
  end;
 end;
 
-procedure TpvFrameGraph.TQueue.Hide;
+procedure TpvFrameGraph.TQueue.ReleasePersistentResources;
 var CommandBuffer:TCommandBuffer;
 begin
  for CommandBuffer in fCommandBuffers do begin
-  CommandBuffer.Hide;
+  CommandBuffer.ReleasePersistentResources;
  end;
 end;
 
-procedure TpvFrameGraph.TQueue.AfterCreateSwapChain;
+procedure TpvFrameGraph.TQueue.AcquireVolatileResources;
 var CommandBuffer:TCommandBuffer;
 begin
  fCommandBufferCommandPool:=TpvVulkanCommandPool.Create(fFrameGraph.fVulkanDevice,
                                                         fPhysicalQueue.QueueFamilyIndex,
                                                         TVkCommandPoolCreateFlags(VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT));
  for CommandBuffer in fCommandBuffers do begin
-  CommandBuffer.AfterCreateSwapChain;
+  CommandBuffer.AcquireVolatileResources;
  end;
 end;
 
-procedure TpvFrameGraph.TQueue.BeforeDestroySwapChain;
+procedure TpvFrameGraph.TQueue.ReleaseVolatileResources;
 var CommandBuffer:TCommandBuffer;
 begin
  for CommandBuffer in fCommandBuffers do begin
-  CommandBuffer.BeforeDestroySwapChain;
+  CommandBuffer.ReleaseVolatileResources;
  end;
  FreeAndNil(fCommandBufferCommandPool);
 end;
@@ -1812,19 +1812,19 @@ begin
  end;
 end;
 
-procedure TpvFrameGraph.TResourcePhysicalData.Show;
+procedure TpvFrameGraph.TResourcePhysicalData.AcquirePersistentResources;
 begin
 end;
 
-procedure TpvFrameGraph.TResourcePhysicalData.Hide;
+procedure TpvFrameGraph.TResourcePhysicalData.ReleasePersistentResources;
 begin
 end;
 
-procedure TpvFrameGraph.TResourcePhysicalData.AfterCreateSwapChain;
+procedure TpvFrameGraph.TResourcePhysicalData.AcquireVolatileResources;
 begin
 end;
 
-procedure TpvFrameGraph.TResourcePhysicalData.BeforeDestroySwapChain;
+procedure TpvFrameGraph.TResourcePhysicalData.ReleaseVolatileResources;
 begin
 end;
 
@@ -1915,17 +1915,17 @@ begin
  result:=fVulkanMemoryBlocks[aIndex];
 end;
 
-procedure TpvFrameGraph.TResourcePhysicalImageData.Show;
+procedure TpvFrameGraph.TResourcePhysicalImageData.AcquirePersistentResources;
 begin
- inherited Show;
+ inherited AcquirePersistentResources;
 end;
 
-procedure TpvFrameGraph.TResourcePhysicalImageData.Hide;
+procedure TpvFrameGraph.TResourcePhysicalImageData.ReleasePersistentResources;
 begin
- inherited Hide;
+ inherited ReleasePersistentResources;
 end;
 
-procedure TpvFrameGraph.TResourcePhysicalImageData.AfterCreateSwapChain;
+procedure TpvFrameGraph.TResourcePhysicalImageData.AcquireVolatileResources;
 var InFlightFrameIndex,SwapChainImageIndex:TpvSizeInt;
     ImageResourceType:TImageResourceType;
     MemoryRequirements:TVkMemoryRequirements;
@@ -1936,7 +1936,7 @@ var InFlightFrameIndex,SwapChainImageIndex:TpvSizeInt;
     MemoryAllocationType:TpvVulkanDeviceMemoryAllocationType;
 begin
 
- inherited AfterCreateSwapChain;
+ inherited AcquireVolatileResources;
 
  Assert(fResourceType is TImageResourceType);
 
@@ -2228,7 +2228,7 @@ begin
 
 end;
 
-procedure TpvFrameGraph.TResourcePhysicalImageData.BeforeDestroySwapChain;
+procedure TpvFrameGraph.TResourcePhysicalImageData.ReleaseVolatileResources;
 var InFlightFrameIndex,SwapChainImageIndex:TpvSizeInt;
 begin
  if assigned(fExternalData) or fIsSurface then begin
@@ -2271,7 +2271,7 @@ begin
    end;
   end;
  end;
- inherited BeforeDestroySwapChain;
+ inherited ReleaseVolatileResources;
 end;
 
 { TpvFrameGraph.TResourcePhysicalBufferData }
@@ -2310,20 +2310,20 @@ begin
  result:=fVulkanBuffers[aIndex];
 end;
 
-procedure TpvFrameGraph.TResourcePhysicalBufferData.Show;
+procedure TpvFrameGraph.TResourcePhysicalBufferData.AcquirePersistentResources;
 begin
- inherited Show;
+ inherited AcquirePersistentResources;
 end;
 
-procedure TpvFrameGraph.TResourcePhysicalBufferData.Hide;
+procedure TpvFrameGraph.TResourcePhysicalBufferData.ReleasePersistentResources;
 begin
- inherited Hide;
+ inherited ReleasePersistentResources;
 end;
 
-procedure TpvFrameGraph.TResourcePhysicalBufferData.AfterCreateSwapChain;
+procedure TpvFrameGraph.TResourcePhysicalBufferData.AcquireVolatileResources;
 var InFlightFrameIndex:TpvSizeInt;
 begin
- inherited AfterCreateSwapChain;
+ inherited AcquireVolatileResources;
  if assigned(fExternalData) then begin
   for InFlightFrameIndex:=0 to fFrameGraph.CountInFlightFrames-1 do begin
    fVulkanBuffers[InFlightFrameIndex]:=TExternalBufferData(fExternalData).fVulkanBuffers[InFlightFrameIndex mod TExternalBufferData(fExternalData).fVulkanBuffers.Count];
@@ -2353,7 +2353,7 @@ begin
  end;
 end;
 
-procedure TpvFrameGraph.TResourcePhysicalBufferData.BeforeDestroySwapChain;
+procedure TpvFrameGraph.TResourcePhysicalBufferData.ReleaseVolatileResources;
 var InFlightFrameIndex:TpvSizeInt;
 begin
  if assigned(fExternalData) then begin
@@ -2370,7 +2370,7 @@ begin
    end;
   end;
  end;
- inherited BeforeDestroySwapChain;
+ inherited ReleaseVolatileResources;
 end;
 
 { TpvFrameGraph.TResourceAliasGroup }
@@ -2393,31 +2393,31 @@ begin
  inherited Destroy;
 end;
 
-procedure TpvFrameGraph.TResourceAliasGroup.Show;
+procedure TpvFrameGraph.TResourceAliasGroup.AcquirePersistentResources;
 begin
  if assigned(fResourcePhysicalData) then begin
-  fResourcePhysicalData.Show;
+  fResourcePhysicalData.AcquirePersistentResources;
  end;
 end;
 
-procedure TpvFrameGraph.TResourceAliasGroup.Hide;
+procedure TpvFrameGraph.TResourceAliasGroup.ReleasePersistentResources;
 begin
  if assigned(fResourcePhysicalData) then begin
-  fResourcePhysicalData.Hide;
+  fResourcePhysicalData.ReleasePersistentResources;
  end;
 end;
 
-procedure TpvFrameGraph.TResourceAliasGroup.AfterCreateSwapChain;
+procedure TpvFrameGraph.TResourceAliasGroup.AcquireVolatileResources;
 begin
  if assigned(fResourcePhysicalData) then begin
-  fResourcePhysicalData.AfterCreateSwapChain;
+  fResourcePhysicalData.AcquireVolatileResources;
  end;
 end;
 
-procedure TpvFrameGraph.TResourceAliasGroup.BeforeDestroySwapChain;
+procedure TpvFrameGraph.TResourceAliasGroup.ReleaseVolatileResources;
 begin
  if assigned(fResourcePhysicalData) then begin
-  fResourcePhysicalData.BeforeDestroySwapChain;
+  fResourcePhysicalData.ReleaseVolatileResources;
  end;
 end;
 
@@ -3133,19 +3133,19 @@ begin
                          aExternalBufferData);
 end;
 
-procedure TpvFrameGraph.TPass.Show;
+procedure TpvFrameGraph.TPass.AcquirePersistentResources;
 begin
 end;
 
-procedure TpvFrameGraph.TPass.Hide;
+procedure TpvFrameGraph.TPass.ReleasePersistentResources;
 begin
 end;
 
-procedure TpvFrameGraph.TPass.AfterCreateSwapChain;
+procedure TpvFrameGraph.TPass.AcquireVolatileResources;
 begin
 end;
 
-procedure TpvFrameGraph.TPass.BeforeDestroySwapChain;
+procedure TpvFrameGraph.TPass.ReleaseVolatileResources;
 begin
 end;
 
@@ -3237,15 +3237,15 @@ begin
  inherited Destroy;
 end;
 
-procedure TpvFrameGraph.TPhysicalPass.TPipelineBarrierGroup.Show;
+procedure TpvFrameGraph.TPhysicalPass.TPipelineBarrierGroup.AcquirePersistentResources;
 begin
 end;
 
-procedure TpvFrameGraph.TPhysicalPass.TPipelineBarrierGroup.Hide;
+procedure TpvFrameGraph.TPhysicalPass.TPipelineBarrierGroup.ReleasePersistentResources;
 begin
 end;
 
-procedure TpvFrameGraph.TPhysicalPass.TPipelineBarrierGroup.AfterCreateSwapChain;
+procedure TpvFrameGraph.TPhysicalPass.TPipelineBarrierGroup.AcquireVolatileResources;
 var InFlightFrameIndex,
     BarrierMapItemIndex:TpvSizeInt;
     PhysicalPass:TPhysicalPass;
@@ -3304,7 +3304,7 @@ begin
  end;
 end;
 
-procedure TpvFrameGraph.TPhysicalPass.TPipelineBarrierGroup.BeforeDestroySwapChain;
+procedure TpvFrameGraph.TPhysicalPass.TPipelineBarrierGroup.ReleaseVolatileResources;
 var InFlightFrameIndex:TpvSizeInt;
 begin
  for InFlightFrameIndex:=0 to fFrameGraph.CountInFlightFrames-1 do begin
@@ -3446,49 +3446,49 @@ begin
  end;
 end;
 
-procedure TpvFrameGraph.TPhysicalPass.Show;
+procedure TpvFrameGraph.TPhysicalPass.AcquirePersistentResources;
 var PipelineBarrierGroup:TPipelineBarrierGroup;
 begin
  for PipelineBarrierGroup in fEventPipelineBarrierGroups do begin
-  PipelineBarrierGroup.Show;
+  PipelineBarrierGroup.AcquirePersistentResources;
  end;
  for PipelineBarrierGroup in fBeforePipelineBarrierGroups do begin
-  PipelineBarrierGroup.Show;
+  PipelineBarrierGroup.AcquirePersistentResources;
  end;
  for PipelineBarrierGroup in fAfterPipelineBarrierGroups do begin
-  PipelineBarrierGroup.Show;
+  PipelineBarrierGroup.AcquirePersistentResources;
  end;
 end;
 
-procedure TpvFrameGraph.TPhysicalPass.Hide;
+procedure TpvFrameGraph.TPhysicalPass.ReleasePersistentResources;
 var PipelineBarrierGroup:TPipelineBarrierGroup;
 begin
  for PipelineBarrierGroup in fEventPipelineBarrierGroups do begin
-  PipelineBarrierGroup.Hide;
+  PipelineBarrierGroup.ReleasePersistentResources;
  end;
  for PipelineBarrierGroup in fBeforePipelineBarrierGroups do begin
-  PipelineBarrierGroup.Hide;
+  PipelineBarrierGroup.ReleasePersistentResources;
  end;
  for PipelineBarrierGroup in fAfterPipelineBarrierGroups do begin
-  PipelineBarrierGroup.Hide;
+  PipelineBarrierGroup.ReleasePersistentResources;
  end;
 end;
 
-procedure TpvFrameGraph.TPhysicalPass.AfterCreateSwapChain;
+procedure TpvFrameGraph.TPhysicalPass.AcquireVolatileResources;
 var PipelineBarrierGroup:TPipelineBarrierGroup;
 begin
  for PipelineBarrierGroup in fEventPipelineBarrierGroups do begin
-  PipelineBarrierGroup.AfterCreateSwapChain;
+  PipelineBarrierGroup.AcquireVolatileResources;
  end;
  for PipelineBarrierGroup in fBeforePipelineBarrierGroups do begin
-  PipelineBarrierGroup.AfterCreateSwapChain;
+  PipelineBarrierGroup.AcquireVolatileResources;
  end;
  for PipelineBarrierGroup in fAfterPipelineBarrierGroups do begin
-  PipelineBarrierGroup.AfterCreateSwapChain;
+  PipelineBarrierGroup.AcquireVolatileResources;
  end;
 end;
 
-procedure TpvFrameGraph.TPhysicalPass.BeforeDestroySwapChain;
+procedure TpvFrameGraph.TPhysicalPass.ReleaseVolatileResources;
 var InFlightFrameIndex,Index:TpvSizeInt;
     PipelineBarrierGroup:TPipelineBarrierGroup;
 begin
@@ -3496,13 +3496,13 @@ begin
   FreeAndNil(fEvents[InFlightFrameIndex]);
  end;
  for PipelineBarrierGroup in fEventPipelineBarrierGroups do begin
-  PipelineBarrierGroup.BeforeDestroySwapChain;
+  PipelineBarrierGroup.ReleaseVolatileResources;
  end;
  for PipelineBarrierGroup in fBeforePipelineBarrierGroups do begin
-  PipelineBarrierGroup.BeforeDestroySwapChain;
+  PipelineBarrierGroup.ReleaseVolatileResources;
  end;
  for PipelineBarrierGroup in fAfterPipelineBarrierGroups do begin
-  PipelineBarrierGroup.BeforeDestroySwapChain;
+  PipelineBarrierGroup.ReleaseVolatileResources;
  end;
 end;
 
@@ -3529,28 +3529,28 @@ begin
  inherited Destroy;
 end;
 
-procedure TpvFrameGraph.TPhysicalComputePass.Show;
+procedure TpvFrameGraph.TPhysicalComputePass.AcquirePersistentResources;
 begin
- inherited Show;
- fComputePass.Show;
+ inherited AcquirePersistentResources;
+ fComputePass.AcquirePersistentResources;
 end;
 
-procedure TpvFrameGraph.TPhysicalComputePass.Hide;
+procedure TpvFrameGraph.TPhysicalComputePass.ReleasePersistentResources;
 begin
- fComputePass.Hide;
- inherited Hide;
+ fComputePass.ReleasePersistentResources;
+ inherited ReleasePersistentResources;
 end;
 
-procedure TpvFrameGraph.TPhysicalComputePass.AfterCreateSwapChain;
+procedure TpvFrameGraph.TPhysicalComputePass.AcquireVolatileResources;
 begin
- inherited AfterCreateSwapChain;
- fComputePass.AfterCreateSwapChain;
+ inherited AcquireVolatileResources;
+ fComputePass.AcquireVolatileResources;
 end;
 
-procedure TpvFrameGraph.TPhysicalComputePass.BeforeDestroySwapChain;
+procedure TpvFrameGraph.TPhysicalComputePass.ReleaseVolatileResources;
 begin
- fComputePass.BeforeDestroySwapChain;
- inherited BeforeDestroySwapChain;
+ fComputePass.ReleaseVolatileResources;
+ inherited ReleaseVolatileResources;
 end;
 
 procedure TpvFrameGraph.TPhysicalComputePass.Update(const aUpdateInFlightFrameIndex,aUpdateFrameIndex:TpvSizeInt);
@@ -3596,28 +3596,28 @@ begin
  inherited Destroy;
 end;
 
-procedure TpvFrameGraph.TPhysicalTransferPass.Show;
+procedure TpvFrameGraph.TPhysicalTransferPass.AcquirePersistentResources;
 begin
- inherited Show;
- fTransferPass.Show;
+ inherited AcquirePersistentResources;
+ fTransferPass.AcquirePersistentResources;
 end;
 
-procedure TpvFrameGraph.TPhysicalTransferPass.Hide;
+procedure TpvFrameGraph.TPhysicalTransferPass.ReleasePersistentResources;
 begin
- fTransferPass.Hide;
- inherited Hide;
+ fTransferPass.ReleasePersistentResources;
+ inherited ReleasePersistentResources;
 end;
 
-procedure TpvFrameGraph.TPhysicalTransferPass.AfterCreateSwapChain;
+procedure TpvFrameGraph.TPhysicalTransferPass.AcquireVolatileResources;
 begin
- inherited AfterCreateSwapChain;
- fTransferPass.AfterCreateSwapChain;
+ inherited AcquireVolatileResources;
+ fTransferPass.AcquireVolatileResources;
 end;
 
-procedure TpvFrameGraph.TPhysicalTransferPass.BeforeDestroySwapChain;
+procedure TpvFrameGraph.TPhysicalTransferPass.ReleaseVolatileResources;
 begin
- fTransferPass.BeforeDestroySwapChain;
- inherited BeforeDestroySwapChain;
+ fTransferPass.ReleaseVolatileResources;
+ inherited ReleaseVolatileResources;
 end;
 
 procedure TpvFrameGraph.TPhysicalTransferPass.Update(const aUpdateInFlightFrameIndex,aUpdateFrameIndex:TpvSizeInt);
@@ -3663,28 +3663,28 @@ begin
  inherited Destroy;
 end;
 
-procedure TpvFrameGraph.TPhysicalCustomPass.Show;
+procedure TpvFrameGraph.TPhysicalCustomPass.AcquirePersistentResources;
 begin
- inherited Show;
- fCustomPass.Show;
+ inherited AcquirePersistentResources;
+ fCustomPass.AcquirePersistentResources;
 end;
 
-procedure TpvFrameGraph.TPhysicalCustomPass.Hide;
+procedure TpvFrameGraph.TPhysicalCustomPass.ReleasePersistentResources;
 begin
- fCustomPass.Hide;
- inherited Hide;
+ fCustomPass.ReleasePersistentResources;
+ inherited ReleasePersistentResources;
 end;
 
-procedure TpvFrameGraph.TPhysicalCustomPass.AfterCreateSwapChain;
+procedure TpvFrameGraph.TPhysicalCustomPass.AcquireVolatileResources;
 begin
- inherited AfterCreateSwapChain;
- fCustomPass.AfterCreateSwapChain;
+ inherited AcquireVolatileResources;
+ fCustomPass.AcquireVolatileResources;
 end;
 
-procedure TpvFrameGraph.TPhysicalCustomPass.BeforeDestroySwapChain;
+procedure TpvFrameGraph.TPhysicalCustomPass.ReleaseVolatileResources;
 begin
- fCustomPass.BeforeDestroySwapChain;
- inherited BeforeDestroySwapChain;
+ fCustomPass.ReleaseVolatileResources;
+ inherited ReleaseVolatileResources;
 end;
 
 procedure TpvFrameGraph.TPhysicalCustomPass.Update(const aUpdateInFlightFrameIndex,aUpdateFrameIndex:TpvSizeInt);
@@ -3741,24 +3741,24 @@ begin
  inherited Destroy;
 end;
 
-procedure TpvFrameGraph.TPhysicalRenderPass.TSubpass.Show;
+procedure TpvFrameGraph.TPhysicalRenderPass.TSubpass.AcquirePersistentResources;
 begin
- fRenderPass.Show;
+ fRenderPass.AcquirePersistentResources;
 end;
 
-procedure TpvFrameGraph.TPhysicalRenderPass.TSubpass.Hide;
+procedure TpvFrameGraph.TPhysicalRenderPass.TSubpass.ReleasePersistentResources;
 begin
- fRenderPass.Hide;
+ fRenderPass.ReleasePersistentResources;
 end;
 
-procedure TpvFrameGraph.TPhysicalRenderPass.TSubpass.AfterCreateSwapChain;
+procedure TpvFrameGraph.TPhysicalRenderPass.TSubpass.AcquireVolatileResources;
 begin
- fRenderPass.AfterCreateSwapChain;
+ fRenderPass.AcquireVolatileResources;
 end;
 
-procedure TpvFrameGraph.TPhysicalRenderPass.TSubpass.BeforeDestroySwapChain;
+procedure TpvFrameGraph.TPhysicalRenderPass.TSubpass.ReleaseVolatileResources;
 begin
- fRenderPass.BeforeDestroySwapChain;
+ fRenderPass.ReleaseVolatileResources;
 end;
 
 { TpvFrameGraph.TVulkanRenderPass }
@@ -3805,25 +3805,25 @@ begin
  inherited Destroy;
 end;
 
-procedure TpvFrameGraph.TPhysicalRenderPass.Show;
+procedure TpvFrameGraph.TPhysicalRenderPass.AcquirePersistentResources;
 var Subpass:TSubpass;
 begin
- inherited Show;
+ inherited AcquirePersistentResources;
  for Subpass in fSubpasses do begin
-  Subpass.Show;
+  Subpass.AcquirePersistentResources;
  end;
 end;
 
-procedure TpvFrameGraph.TPhysicalRenderPass.Hide;
+procedure TpvFrameGraph.TPhysicalRenderPass.ReleasePersistentResources;
 var Subpass:TSubpass;
 begin
  for Subpass in fSubpasses do begin
-  Subpass.Hide;
+  Subpass.ReleasePersistentResources;
  end;
- inherited Hide;
+ inherited ReleasePersistentResources;
 end;
 
-procedure TpvFrameGraph.TPhysicalRenderPass.AfterCreateSwapChain;
+procedure TpvFrameGraph.TPhysicalRenderPass.AcquireVolatileResources;
 var AttachmentIndex,
     AttachmentReferenceIndex,
     SubpassIndex,
@@ -3843,7 +3843,7 @@ var AttachmentIndex,
     ResourcePhysicalImageData:TResourcePhysicalImageData;
     AttachmentDescriptionFlags:TVkAttachmentDescriptionFlags;
 begin
- inherited AfterCreateSwapChain;
+ inherited AcquireVolatileResources;
 
  Width:=1;
  Height:=1;
@@ -4022,18 +4022,18 @@ begin
  end;
 
  for Subpass in fSubpasses do begin
-  Subpass.AfterCreateSwapChain;
+  Subpass.AcquireVolatileResources;
  end;
 
 end;
 
-procedure TpvFrameGraph.TPhysicalRenderPass.BeforeDestroySwapChain;
+procedure TpvFrameGraph.TPhysicalRenderPass.ReleaseVolatileResources;
 var InFlightFrameIndex,SurfaceIndex:TpvSizeInt;
     Subpass:TSubpass;
 begin
 
  for Subpass in fSubpasses do begin
-  Subpass.BeforeDestroySwapChain;
+  Subpass.ReleaseVolatileResources;
  end;
 
  for InFlightFrameIndex:=0 to fFrameGraph.CountInFlightFrames-1 do begin
@@ -4049,7 +4049,7 @@ begin
 
  fHasVulkanSurfaceFrameBuffers:=false;
 
- inherited BeforeDestroySwapChain;
+ inherited ReleaseVolatileResources;
 
 end;
 
@@ -4480,6 +4480,10 @@ type TEventBeforeAfter=(Event,Before,After);
       result:=TVkPipelineStageFlags(VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT) or
               TVkPipelineStageFlags(VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT);
      end;
+     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:begin
+      result:=TVkPipelineStageFlags(VK_PIPELINE_STAGE_TRANSFER_BIT);
+     end;
      else {VK_IMAGE_LAYOUT_UNDEFINED:}begin
       result:=0;
      end;
@@ -4568,6 +4572,12 @@ type TEventBeforeAfter=(Event,Before,After);
       result:=TVkAccessFlags(VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT) or
               TVkAccessFlags(VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
      end;
+     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:begin
+      result:=TVkAccessFlags(VK_ACCESS_TRANSFER_READ_BIT);
+     end;
+     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:begin
+      result:=TVkAccessFlags(VK_ACCESS_TRANSFER_WRITE_BIT);
+     end;
      else {VK_IMAGE_LAYOUT_UNDEFINED:}begin
       result:=0;
      end;
@@ -4605,6 +4615,12 @@ type TEventBeforeAfter=(Event,Before,After);
      VK_IMAGE_LAYOUT_STENCIL_ATTACHMENT_OPTIMAL:begin
       result:=TVkAccessFlags(VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT) or
               TVkAccessFlags(VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+     end;
+     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:begin
+      result:=TVkAccessFlags(VK_ACCESS_TRANSFER_READ_BIT);
+     end;
+     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:begin
+      result:=TVkAccessFlags(VK_ACCESS_TRANSFER_WRITE_BIT);
      end;
      else {VK_IMAGE_LAYOUT_UNDEFINED:}begin
       result:=0;
@@ -5494,11 +5510,11 @@ type TEventBeforeAfter=(Event,Before,After);
     PipelineBarrierGroup.fBarrierMapItemDynamicArray.Add(BarrierMapItem);
     if TResourceTransition.TFlag.PreviousFrameInput in (aFromResourceTransition.fFlags+aToResourceTransition.fFlags) then begin
      BarrierMapItem.ImageIndexOffset:=-1;
-     PipelineBarrierGroup.fBarrierMapItemDynamicArray.Add(BarrierMapItem);
+     //PipelineBarrierGroup.fBarrierMapItemDynamicArray.Add(BarrierMapItem);
     end;
     if TResourceTransition.TFlag.NextFrameOutput in (aFromResourceTransition.fFlags+aToResourceTransition.fFlags) then begin
      BarrierMapItem.ImageIndexOffset:=1;
-     PipelineBarrierGroup.fBarrierMapItemDynamicArray.Add(BarrierMapItem);
+     //PipelineBarrierGroup.fBarrierMapItemDynamicArray.Add(BarrierMapItem);
     end;
    end else if aResourcePhysicalData is TResourcePhysicalBufferData then begin
     FillChar(BufferMemoryBarrier,SizeOf(TVkBufferMemoryBarrier),#0);
@@ -5526,11 +5542,11 @@ type TEventBeforeAfter=(Event,Before,After);
     PipelineBarrierGroup.fBarrierMapItemDynamicArray.Add(BarrierMapItem);
     if TResourceTransition.TFlag.PreviousFrameInput in (aFromResourceTransition.fFlags+aToResourceTransition.fFlags) then begin
      BarrierMapItem.ImageIndexOffset:=-1;
-     PipelineBarrierGroup.fBarrierMapItemDynamicArray.Add(BarrierMapItem);
+     //PipelineBarrierGroup.fBarrierMapItemDynamicArray.Add(BarrierMapItem);
     end;
     if TResourceTransition.TFlag.NextFrameOutput in (aFromResourceTransition.fFlags+aToResourceTransition.fFlags) then begin
      BarrierMapItem.ImageIndexOffset:=1;
-     PipelineBarrierGroup.fBarrierMapItemDynamicArray.Add(BarrierMapItem);
+     //PipelineBarrierGroup.fBarrierMapItemDynamicArray.Add(BarrierMapItem);
     end;
    end else begin
     Assert(false);
@@ -6076,7 +6092,16 @@ type TEventBeforeAfter=(Event,Before,After);
 
        // Input => Output
 
-       raise EpvFrameGraph.Create('Internal error 2021-11-04-11-34-0000');
+       if (TResourceTransition.TFlag.PreviousFrameInput in FromResourceTransition.Flags) and not
+          (TResourceTransition.TFlag.PreviousFrameInput in ToResourceTransition.Flags) then begin
+
+        // Ignore
+
+       end else begin
+
+        raise EpvFrameGraph.Create('Internal error 2021-11-04-11-34-0000');
+
+       end;
 
       end else if (FromResourceTransition.fKind in TResourceTransition.AllOutputs) and
                   (ToResourceTransition.fKind in TResourceTransition.AllOutputs) then begin
@@ -6358,8 +6383,16 @@ type TEventBeforeAfter=(Event,Before,After);
          Attachment^.StoreOp:=VK_ATTACHMENT_STORE_OP_DONT_CARE;
          Attachment^.StencilLoadOp:=VK_ATTACHMENT_LOAD_OP_DONT_CARE;
          Attachment^.StencilStoreOp:=VK_ATTACHMENT_STORE_OP_DONT_CARE;
-         Attachment^.InitialLayout:=ResourceTransition.fLayout;
-         Attachment^.FinalLayout:=ResourceTransition.fLayout;
+         if ImageResourceType.fInitialLayout<>VK_IMAGE_LAYOUT_UNDEFINED then begin
+          Attachment^.InitialLayout:=ImageResourceType.fInitialLayout;
+         end else begin
+          Attachment^.InitialLayout:=ResourceTransition.fLayout;
+         end;
+         if ImageResourceType.fFinalLayout<>VK_IMAGE_LAYOUT_UNDEFINED then begin
+          Attachment^.FinalLayout:=ImageResourceType.fFinalLayout;
+         end else begin
+          Attachment^.FinalLayout:=ResourceTransition.fLayout;
+         end;
          Attachment^.ImageUsageFlags:=0;
          Attachment^.ClearValueInitialized:=false;
          Attachment^.HasInitialLayout:=false;
@@ -6453,7 +6486,13 @@ type TEventBeforeAfter=(Event,Before,After);
              Attachment^.InitialLayout:=VK_IMAGE_LAYOUT_UNDEFINED;
             end else if Attachment^.InitialLayout=VK_IMAGE_LAYOUT_UNDEFINED then begin
              Attachment^.HasInitialLayout:=true;
-             Attachment^.InitialLayout:=ResourceTransition.fLayout;
+             if assigned(Attachment^.Resource.ResourceType) and
+                (Attachment^.Resource.ResourceType is TImageResourceType) and
+                (TImageResourceType(Attachment^.Resource.ResourceType).fInitialLayout<>VK_IMAGE_LAYOUT_UNDEFINED) then begin
+              Attachment^.InitialLayout:=TImageResourceType(Attachment^.Resource.ResourceType).fInitialLayout;
+             end else begin
+              Attachment^.InitialLayout:=ResourceTransition.fLayout;
+             end;
             end;
            end;
           end;
@@ -6464,7 +6503,13 @@ type TEventBeforeAfter=(Event,Before,After);
               (fRootPass=RenderPass))} then begin
            Attachment^.FinalLayout:=VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
           end else begin
-           Attachment^.FinalLayout:=ResourceTransition.fLayout;
+           if assigned(Attachment^.Resource.ResourceType) and
+              (Attachment^.Resource.ResourceType is TImageResourceType) and
+              (TImageResourceType(Attachment^.Resource.ResourceType).fFinalLayout<>VK_IMAGE_LAYOUT_UNDEFINED) then begin
+            Attachment^.FinalLayout:=TImageResourceType(Attachment^.Resource.ResourceType).fFinalLayout;
+           end else begin
+            Attachment^.FinalLayout:=ResourceTransition.fLayout;
+           end;
           end;
           if not Attachment^.ClearValueInitialized then begin
            Attachment^.ClearValueInitialized:=true;
@@ -6750,39 +6795,39 @@ begin
 
 end;
 
-procedure TpvFrameGraph.Show;
+procedure TpvFrameGraph.AcquirePersistentResources;
 var ResourceAliasGroup:TResourceAliasGroup;
     PhysicalPass:TPhysicalPass;
     Queue:TQueue;
 begin
  for ResourceAliasGroup in fResourceAliasGroups do begin
-  ResourceAliasGroup.Show;
+  ResourceAliasGroup.AcquirePersistentResources;
  end;
  for PhysicalPass in fPhysicalPasses do begin
-  PhysicalPass.Show;
+  PhysicalPass.AcquirePersistentResources;
  end;
  for Queue in fQueues do begin
-  Queue.Show;
+  Queue.AcquirePersistentResources;
  end;
 end;
 
-procedure TpvFrameGraph.Hide;
+procedure TpvFrameGraph.ReleasePersistentResources;
 var ResourceAliasGroup:TResourceAliasGroup;
     PhysicalPass:TPhysicalPass;
     Queue:TQueue;
 begin
  for Queue in fQueues do begin
-  Queue.Hide;
+  Queue.ReleasePersistentResources;
  end;
  for PhysicalPass in fPhysicalPasses do begin
-  PhysicalPass.Hide;
+  PhysicalPass.ReleasePersistentResources;
  end;
  for ResourceAliasGroup in fResourceAliasGroups do begin
-  ResourceAliasGroup.Hide;
+  ResourceAliasGroup.ReleasePersistentResources;
  end;
 end;
 
-procedure TpvFrameGraph.AfterCreateSwapChain;
+procedure TpvFrameGraph.AcquireVolatileResources;
 var InFlightFrameIndex,
     Index,
     WaitingSemaphoreIndex,
@@ -6797,13 +6842,13 @@ var InFlightFrameIndex,
     Queue:TQueue;
 begin
  for ResourceAliasGroup in fResourceAliasGroups do begin
-  ResourceAliasGroup.AfterCreateSwapChain;
+  ResourceAliasGroup.AcquireVolatileResources;
  end;
  for PhysicalPass in fPhysicalPasses do begin
-  PhysicalPass.AfterCreateSwapChain;
+  PhysicalPass.AcquireVolatileResources;
  end;
  for Queue in fQueues do begin
-  Queue.AfterCreateSwapChain;
+  Queue.AcquireVolatileResources;
  end;
  for CommandBuffer in fAllQueueCommandBuffers do begin
   CommandBuffer.fWaitingSemaphoreHandles.Clear;
@@ -6920,7 +6965,7 @@ begin
  end;
 end;
 
-procedure TpvFrameGraph.BeforeDestroySwapChain;
+procedure TpvFrameGraph.ReleaseVolatileResources;
 var InFlightFrameIndex,
     Index:TpvSizeInt;
     ResourceAliasGroup:TResourceAliasGroup;
@@ -6928,13 +6973,13 @@ var InFlightFrameIndex,
     Queue:TQueue;
 begin
  for Queue in fQueues do begin
-  Queue.BeforeDestroySwapChain;
+  Queue.ReleaseVolatileResources;
  end;
  for PhysicalPass in fPhysicalPasses do begin
-  PhysicalPass.BeforeDestroySwapChain;
+  PhysicalPass.ReleaseVolatileResources;
  end;
  for ResourceAliasGroup in fResourceAliasGroups do begin
-  ResourceAliasGroup.BeforeDestroySwapChain;
+  ResourceAliasGroup.ReleaseVolatileResources;
  end;
  for InFlightFrameIndex:=0 to fCountInFlightFrames-1 do begin
   for Index:=0 to fDrawToWaitOnSemaphores[InFlightFrameIndex].Count-1 do begin

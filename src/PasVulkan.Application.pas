@@ -110,6 +110,7 @@ const MaxSwapChainImages=3;
       EVENT_KEY=1;
       EVENT_POINTER=2;
       EVENT_SCROLLED=3;
+      EVENT_DRAGDROPFILE=4;
 
       KEYCODE_QUIT=-2;
       KEYCODE_ANYKEY=-1;
@@ -601,12 +602,14 @@ type EpvApplication=class(Exception)
        function KeyEvent(const aKeyEvent:TpvApplicationInputKeyEvent):boolean; virtual;
        function PointerEvent(const aPointerEvent:TpvApplicationInputPointerEvent):boolean; virtual;
        function Scrolled(const aRelativeAmount:TpvVector2):boolean; virtual;
+       function DragDropFileEvent(aFileName:TpvUTF8String):boolean; virtual;
      end;
 
      PpvApplicationInputProcessorQueueEvent=^TpvApplicationInputProcessorQueueEvent;
      TpvApplicationInputProcessorQueueEvent=record
       Next:PpvApplicationInputProcessorQueueEvent;
       Time:TpvInt64;
+      StringData:TpvUTF8String;
       case Event:TpvInt32 of
        EVENT_KEY:(
         KeyEvent:TpvApplicationInputKeyEvent;
@@ -640,6 +643,7 @@ type EpvApplication=class(Exception)
        function KeyEvent(const aKeyEvent:TpvApplicationInputKeyEvent):boolean; override;
        function PointerEvent(const aPointerEvent:TpvApplicationInputPointerEvent):boolean; override;
        function Scrolled(const aRelativeAmount:TpvVector2):boolean; override;
+       function DragDropFileEvent(aFileName:TpvUTF8String):boolean; override;
      end;
 
      TpvApplicationInputMultiplexer=class(TpvApplicationInputProcessor)
@@ -658,6 +662,7 @@ type EpvApplication=class(Exception)
        function KeyEvent(const aKeyEvent:TpvApplicationInputKeyEvent):boolean; override;
        function PointerEvent(const aPointerEvent:TpvApplicationInputPointerEvent):boolean; override;
        function Scrolled(const aRelativeAmount:TpvVector2):boolean; override;
+       function DragDropFileEvent(aFileName:TpvUTF8String):boolean; override;
      end;
 
      TpvApplicationInputTextInputCallback=procedure(aSuccessful:boolean;const aText:TpvApplicationRawByteString) of object;
@@ -712,7 +717,10 @@ type EpvApplication=class(Exception)
 {$else}
       Dummy:TpvUInt32;
 {$ifend}
+      StringData:TpvUTF8String;
      end;
+
+     PpvApplicationEvent=^TpvApplicationEvent;
 
      TpvApplicationInput=class
       private
@@ -840,6 +848,8 @@ type EpvApplication=class(Exception)
        function PointerEvent(const aPointerEvent:TpvApplicationInputPointerEvent):boolean; virtual;
 
        function Scrolled(const aRelativeAmount:TpvVector2):boolean; virtual;
+
+       function DragDropFileEvent(aFileName:TpvUTF8String):boolean; virtual;
 
        function CanBeParallelProcessed:boolean; virtual;
 
@@ -1008,6 +1018,7 @@ type EpvApplication=class(Exception)
        fCurrentVisibleMouseCursor:TpvInt32;
        fCurrentCatchMouse:TpvInt32;
        fCurrentHideSystemBars:TpvInt32;
+       fCurrentAcceptDragDropFiles:TpvInt32;
        fCurrentBlocking:TpvInt32;
        fCurrentWaitOnPreviousFrames:TpvInt32;
 
@@ -1021,6 +1032,7 @@ type EpvApplication=class(Exception)
        fVisibleMouseCursor:boolean;
        fCatchMouse:boolean;
        fHideSystemBars:boolean;
+       fAcceptDragDropFiles:boolean;
        fAndroidMouseTouchEvents:boolean;
        fAndroidTouchMouseEvents:boolean;
        fAndroidBlockOnPause:boolean;
@@ -1375,6 +1387,8 @@ type EpvApplication=class(Exception)
 
        procedure Run;
 
+       procedure SetFocus;
+
        procedure SetupVulkanInstance(const aVulkanInstance:TpvVulkanInstance); virtual;
 
        procedure ChooseVulkanPhysicalDevice(var aVulkanPhysicalDevice:TpvVulkanPhysicalDevice); virtual;
@@ -1410,6 +1424,8 @@ type EpvApplication=class(Exception)
        function PointerEvent(const aPointerEvent:TpvApplicationInputPointerEvent):boolean; virtual;
 
        function Scrolled(const aRelativeAmount:TpvVector2):boolean; virtual;
+
+       function DragDropFileEvent(aFileName:TpvUTF8String):boolean; virtual;
 
        function CanBeParallelProcessed:boolean; virtual;
 
@@ -1478,6 +1494,8 @@ type EpvApplication=class(Exception)
        property CatchMouse:boolean read fCatchMouse write fCatchMouse;
 
        property HideSystemBars:boolean read fHideSystemBars write fHideSystemBars;
+
+       property AcceptDragDropFiles:boolean read fAcceptDragDropFiles write fAcceptDragDropFiles;
 
        property DisplayOrientations:TpvApplicationDisplayOrientations read fDisplayOrientations write fDisplayOrientations;
 
@@ -2332,6 +2350,11 @@ begin
  result:=false;
 end;
 
+function TpvApplicationInputProcessor.DragDropFileEvent(aFileName:TpvUTF8String):boolean;
+begin
+ result:=false;
+end;
+
 constructor TpvApplicationInputProcessorQueue.Create;
 begin
  inherited Create;
@@ -2435,6 +2458,13 @@ begin
     EVENT_SCROLLED:begin
      fProcessor.Scrolled(CurrentEvent^.RelativeAmount);
     end;
+    EVENT_DRAGDROPFILE:begin
+     try
+      fProcessor.DragDropFileEvent(CurrentEvent^.StringData);
+     finally
+      CurrentEvent^.StringData:='';
+     end;
+    end;
    end;
   end;
   FreeEvent(CurrentEvent);
@@ -2491,6 +2521,23 @@ begin
   if assigned(Event) then begin
    Event^.Event:=EVENT_SCROLLED;
    Event^.RelativeAmount:=aRelativeAmount;
+   PushEvent(Event);
+  end;
+ finally
+  fCriticalSection.Release;
+ end;
+end;
+
+function TpvApplicationInputProcessorQueue.DragDropFileEvent(aFileName:TpvUTF8String):boolean;
+var Event:PpvApplicationInputProcessorQueueEvent;
+begin
+ result:=false;
+ fCriticalSection.Acquire;
+ try
+  Event:=NewEvent;
+  if assigned(Event) then begin
+   Event^.Event:=EVENT_DRAGDROPFILE;
+   Event^.StringData:=aFileName;
    PushEvent(Event);
   end;
  finally
@@ -2585,6 +2632,22 @@ begin
   p:=fProcessors.Items[i];
   if assigned(p) then begin
    if p.Scrolled(aRelativeAmount) then begin
+    result:=true;
+    exit;
+   end;
+  end;
+ end;
+end;
+
+function TpvApplicationInputMultiplexer.DragDropFileEvent(aFileName:TpvUTF8String):boolean;
+var i:TpvInt32;
+    p:TpvApplicationInputProcessor;
+begin
+ result:=false;
+ for i:=0 to fProcessors.Count-1 do begin
+  p:=fProcessors.Items[i];
+  if assigned(p) then begin
+   if p.DragDropFileEvent(aFileName) then begin
     result:=true;
     exit;
    end;
@@ -4113,7 +4176,8 @@ procedure TpvApplicationInput.ProcessEvents;
 {$if defined(PasVulkanUseSDL2)}
 var Index,PointerID,KeyCode,Position:TpvInt32;
     KeyModifiers:TpvApplicationInputKeyModifiers;
-    Event:PSDL_Event;
+    Event:PpvApplicationEvent;
+    SDLEvent:PSDL_Event;
     OK:boolean;
 begin
  fCriticalSection.Acquire;
@@ -4122,8 +4186,9 @@ begin
   if fEventCount>0 then begin
    for Index:=0 to fEventCount-1 do begin
     Event:=@fEvents[Index];
+    SDLEvent:=@Event^.SDLEvent;
     fCurrentEventTime:=fEventTimes[fEventCount];
-    case Event^.type_ of
+    case SDLEvent^.type_ of
      SDL_QUITEV:begin
       if (not pvApplication.KeyEvent(TpvApplicationInputKeyEvent.Create(TpvApplicationInputKeyEventType.Down,KEYCODE_QUIT,[]))) and assigned(fProcessor) then begin
        fProcessor.KeyEvent(TpvApplicationInputKeyEvent.Create(TpvApplicationInputKeyEventType.Down,KEYCODE_QUIT,[]));
@@ -4135,10 +4200,19 @@ begin
        fProcessor.KeyEvent(TpvApplicationInputKeyEvent.Create(TpvApplicationInputKeyEventType.Up,KEYCODE_QUIT,[]));
       end;
      end;
+     SDL_DROPFILE:begin
+      try
+       if (not pvApplication.DragDropFileEvent(Event^.StringData)) and assigned(fProcessor) then begin
+        fProcessor.DragDropFileEvent(Event^.StringData);
+       end;
+      finally
+       Event^.StringData:='';
+      end;
+     end;
      SDL_KEYDOWN,SDL_KEYUP,SDL_KEYTYPED:begin
-      KeyCode:=TranslateSDLKeyCode(Event^.key.keysym.sym,Event^.key.keysym.scancode);
-      KeyModifiers:=TranslateSDLKeyModifier(Event^.key.keysym.modifier);
-      case Event^.type_ of
+      KeyCode:=TranslateSDLKeyCode(SDLEvent^.key.keysym.sym,SDLEvent^.key.keysym.scancode);
+      KeyModifiers:=TranslateSDLKeyModifier(SDLEvent^.key.keysym.modifier);
+      case SDLEvent^.type_ of
        SDL_KEYDOWN:begin
         fKeyDown[KeyCode and $ffff]:=true;
         inc(fKeyDownCount);
@@ -4167,8 +4241,8 @@ begin
      SDL_TEXTINPUT:begin
       KeyModifiers:=[];
       Position:=0;
-      while Position<length(Event^.tedit.text) do begin
-       KeyCode:=PUCUUTF8PtrCodeUnitGetCharAndIncFallback(PAnsiChar(TpvPointer(@Event^.tedit.text[0])),length(Event^.tedit.text),Position);
+      while Position<length(SDLEvent^.tedit.text) do begin
+       KeyCode:=PUCUUTF8PtrCodeUnitGetCharAndIncFallback(PAnsiChar(TpvPointer(@SDLEvent^.tedit.text[0])),length(SDLEvent^.tedit.text),Position);
        case KeyCode of
         0:begin
          break;
@@ -4183,21 +4257,21 @@ begin
      end;
      SDL_MOUSEMOTION:begin
       KeyModifiers:=GetKeyModifiers;
-      fMouseX:=Event^.motion.x;
-      fMouseY:=Event^.motion.y;
-      fMouseDeltaX:=Event^.motion.xrel;
-      fMouseDeltaY:=Event^.motion.yrel;
+      fMouseX:=SDLEvent^.motion.x;
+      fMouseY:=SDLEvent^.motion.y;
+      fMouseDeltaX:=SDLEvent^.motion.xrel;
+      fMouseDeltaY:=SDLEvent^.motion.yrel;
       OK:=pvApplication.PointerEvent(TpvApplicationInputPointerEvent.Create(TpvApplicationInputPointerEventType.Motion,
-                                                                            TpvVector2.Create(Event^.motion.x,Event^.motion.y),
-                                                                            TpvVector2.Create(Event^.motion.xrel,Event^.motion.yrel),
+                                                                            TpvVector2.Create(SDLEvent^.motion.x,SDLEvent^.motion.y),
+                                                                            TpvVector2.Create(SDLEvent^.motion.xrel,SDLEvent^.motion.yrel),
                                                                             ord(fMouseDown<>[]) and 1,
                                                                             0,
                                                                             fMouseDown,
                                                                             KeyModifiers));
       if assigned(fProcessor) and not OK then begin
        fProcessor.PointerEvent(TpvApplicationInputPointerEvent.Create(TpvApplicationInputPointerEventType.Motion,
-                                                                      TpvVector2.Create(Event^.motion.x,Event^.motion.y),
-                                                                      TpvVector2.Create(Event^.motion.xrel,Event^.motion.yrel),
+                                                                      TpvVector2.Create(SDLEvent^.motion.x,SDLEvent^.motion.y),
+                                                                      TpvVector2.Create(SDLEvent^.motion.xrel,SDLEvent^.motion.yrel),
                                                                       ord(fMouseDown<>[]) and 1,
                                                                       0,
                                                                       fMouseDown,
@@ -4207,33 +4281,33 @@ begin
      SDL_MOUSEBUTTONDOWN:begin
       KeyModifiers:=GetKeyModifiers;
       fMaxPointerID:=max(fMaxPointerID,0);
- {    fMouseDeltaX:=Event^.button.x-fMouseX;
-      fMouseDeltaY:=Event^.button.y-fMouseY;}
-      fMouseX:=Event^.button.x;
-      fMouseY:=Event^.button.y;
-      case Event^.button.button of
+ {    fMouseDeltaX:=SDLEvent^.button.x-fMouseX;
+      fMouseDeltaY:=SDLEvent^.button.y-fMouseY;}
+      fMouseX:=SDLEvent^.button.x;
+      fMouseY:=SDLEvent^.button.y;
+      case SDLEvent^.button.button of
        SDL_BUTTON_LEFT:begin
         Include(fMouseDown,TpvApplicationInputPointerButton.Left);
         Include(fMouseJustDown,TpvApplicationInputPointerButton.Left);
         fJustTouched:=true;
-        if (not pvApplication.PointerEvent(TpvApplicationInputPointerEvent.Create(TpvApplicationInputPointerEventType.Down,TpvVector2.Create(Event^.motion.x,Event^.motion.y),1.0,0,TpvApplicationInputPointerButton.Left,fMouseDown,KeyModifiers))) and assigned(fProcessor) then begin
-         fProcessor.PointerEvent(TpvApplicationInputPointerEvent.Create(TpvApplicationInputPointerEventType.Down,TpvVector2.Create(Event^.motion.x,Event^.motion.y),1.0,0,TpvApplicationInputPointerButton.Left,fMouseDown,KeyModifiers));
+        if (not pvApplication.PointerEvent(TpvApplicationInputPointerEvent.Create(TpvApplicationInputPointerEventType.Down,TpvVector2.Create(SDLEvent^.motion.x,SDLEvent^.motion.y),1.0,0,TpvApplicationInputPointerButton.Left,fMouseDown,KeyModifiers))) and assigned(fProcessor) then begin
+         fProcessor.PointerEvent(TpvApplicationInputPointerEvent.Create(TpvApplicationInputPointerEventType.Down,TpvVector2.Create(SDLEvent^.motion.x,SDLEvent^.motion.y),1.0,0,TpvApplicationInputPointerButton.Left,fMouseDown,KeyModifiers));
         end;
        end;
        SDL_BUTTON_RIGHT:begin
         Include(fMouseDown,TpvApplicationInputPointerButton.Right);
         Include(fMouseJustDown,TpvApplicationInputPointerButton.Right);
         fJustTouched:=true;
-        if (not pvApplication.PointerEvent(TpvApplicationInputPointerEvent.Create(TpvApplicationInputPointerEventType.Down,TpvVector2.Create(Event^.motion.x,Event^.motion.y),1.0,0,TpvApplicationInputPointerButton.Right,fMouseDown,KeyModifiers))) and assigned(fProcessor) then begin
-         fProcessor.PointerEvent(TpvApplicationInputPointerEvent.Create(TpvApplicationInputPointerEventType.Down,TpvVector2.Create(Event^.motion.x,Event^.motion.y),1.0,0,TpvApplicationInputPointerButton.Right,fMouseDown,KeyModifiers));
+        if (not pvApplication.PointerEvent(TpvApplicationInputPointerEvent.Create(TpvApplicationInputPointerEventType.Down,TpvVector2.Create(SDLEvent^.motion.x,SDLEvent^.motion.y),1.0,0,TpvApplicationInputPointerButton.Right,fMouseDown,KeyModifiers))) and assigned(fProcessor) then begin
+         fProcessor.PointerEvent(TpvApplicationInputPointerEvent.Create(TpvApplicationInputPointerEventType.Down,TpvVector2.Create(SDLEvent^.motion.x,SDLEvent^.motion.y),1.0,0,TpvApplicationInputPointerButton.Right,fMouseDown,KeyModifiers));
         end;
        end;
        SDL_BUTTON_MIDDLE:begin
         Include(fMouseDown,TpvApplicationInputPointerButton.Middle);
         Include(fMouseJustDown,TpvApplicationInputPointerButton.Middle);
         fJustTouched:=true;
-        if (not pvApplication.PointerEvent(TpvApplicationInputPointerEvent.Create(TpvApplicationInputPointerEventType.Down,TpvVector2.Create(Event^.motion.x,Event^.motion.y),1.0,0,TpvApplicationInputPointerButton.Middle,fMouseDown,KeyModifiers))) and assigned(fProcessor) then begin
-         fProcessor.PointerEvent(TpvApplicationInputPointerEvent.Create(TpvApplicationInputPointerEventType.Down,TpvVector2.Create(Event^.motion.x,Event^.motion.y),1.0,0,TpvApplicationInputPointerButton.Middle,fMouseDown,KeyModifiers));
+        if (not pvApplication.PointerEvent(TpvApplicationInputPointerEvent.Create(TpvApplicationInputPointerEventType.Down,TpvVector2.Create(SDLEvent^.motion.x,SDLEvent^.motion.y),1.0,0,TpvApplicationInputPointerButton.Middle,fMouseDown,KeyModifiers))) and assigned(fProcessor) then begin
+         fProcessor.PointerEvent(TpvApplicationInputPointerEvent.Create(TpvApplicationInputPointerEventType.Down,TpvVector2.Create(SDLEvent^.motion.x,SDLEvent^.motion.y),1.0,0,TpvApplicationInputPointerButton.Middle,fMouseDown,KeyModifiers));
         end;
        end;
       end;
@@ -4241,48 +4315,48 @@ begin
      SDL_MOUSEBUTTONUP:begin
       KeyModifiers:=GetKeyModifiers;
       fMaxPointerID:=max(fMaxPointerID,0);
- {    fMouseDeltaX:=Event^.button.x-fMouseX;
-      fMouseDeltaY:=Event^.button.y-fMouseY;}
-      fMouseX:=Event^.button.x;
-      fMouseY:=Event^.button.y;
-      case Event^.button.button of
+ {    fMouseDeltaX:=SDLEvent^.button.x-fMouseX;
+      fMouseDeltaY:=SDLEvent^.button.y-fMouseY;}
+      fMouseX:=SDLEvent^.button.x;
+      fMouseY:=SDLEvent^.button.y;
+      case SDLEvent^.button.button of
        SDL_BUTTON_LEFT:begin
         Exclude(fMouseDown,TpvApplicationInputPointerButton.Left);
         Exclude(fMouseJustDown,TpvApplicationInputPointerButton.Left);
-        if (not pvApplication.PointerEvent(TpvApplicationInputPointerEvent.Create(TpvApplicationInputPointerEventType.Up,TpvVector2.Create(Event^.motion.x,Event^.motion.y),1.0,0,TpvApplicationInputPointerButton.Left,fMouseDown,KeyModifiers))) and assigned(fProcessor) then begin
-         fProcessor.PointerEvent(TpvApplicationInputPointerEvent.Create(TpvApplicationInputPointerEventType.Up,TpvVector2.Create(Event^.motion.x,Event^.motion.y),1.0,0,TpvApplicationInputPointerButton.Left,fMouseDown,KeyModifiers));
+        if (not pvApplication.PointerEvent(TpvApplicationInputPointerEvent.Create(TpvApplicationInputPointerEventType.Up,TpvVector2.Create(SDLEvent^.motion.x,SDLEvent^.motion.y),1.0,0,TpvApplicationInputPointerButton.Left,fMouseDown,KeyModifiers))) and assigned(fProcessor) then begin
+         fProcessor.PointerEvent(TpvApplicationInputPointerEvent.Create(TpvApplicationInputPointerEventType.Up,TpvVector2.Create(SDLEvent^.motion.x,SDLEvent^.motion.y),1.0,0,TpvApplicationInputPointerButton.Left,fMouseDown,KeyModifiers));
         end;
        end;
        SDL_BUTTON_RIGHT:begin
         Exclude(fMouseDown,TpvApplicationInputPointerButton.Right);
         Exclude(fMouseJustDown,TpvApplicationInputPointerButton.Right);
-        if (not pvApplication.PointerEvent(TpvApplicationInputPointerEvent.Create(TpvApplicationInputPointerEventType.Up,TpvVector2.Create(Event^.motion.x,Event^.motion.y),1.0,0,TpvApplicationInputPointerButton.Right,fMouseDown,KeyModifiers))) and assigned(fProcessor) then begin
-         fProcessor.PointerEvent(TpvApplicationInputPointerEvent.Create(TpvApplicationInputPointerEventType.Up,TpvVector2.Create(Event^.motion.x,Event^.motion.y),1.0,0,TpvApplicationInputPointerButton.Right,fMouseDown,KeyModifiers));
+        if (not pvApplication.PointerEvent(TpvApplicationInputPointerEvent.Create(TpvApplicationInputPointerEventType.Up,TpvVector2.Create(SDLEvent^.motion.x,SDLEvent^.motion.y),1.0,0,TpvApplicationInputPointerButton.Right,fMouseDown,KeyModifiers))) and assigned(fProcessor) then begin
+         fProcessor.PointerEvent(TpvApplicationInputPointerEvent.Create(TpvApplicationInputPointerEventType.Up,TpvVector2.Create(SDLEvent^.motion.x,SDLEvent^.motion.y),1.0,0,TpvApplicationInputPointerButton.Right,fMouseDown,KeyModifiers));
         end;
        end;
        SDL_BUTTON_MIDDLE:begin
         Exclude(fMouseDown,TpvApplicationInputPointerButton.Middle);
         Exclude(fMouseJustDown,TpvApplicationInputPointerButton.Middle);
-        if (not pvApplication.PointerEvent(TpvApplicationInputPointerEvent.Create(TpvApplicationInputPointerEventType.Up,TpvVector2.Create(Event^.motion.x,Event^.motion.y),1.0,0,TpvApplicationInputPointerButton.Middle,fMouseDown,KeyModifiers))) and assigned(fProcessor) then begin
-         fProcessor.PointerEvent(TpvApplicationInputPointerEvent.Create(TpvApplicationInputPointerEventType.Up,TpvVector2.Create(Event^.motion.x,Event^.motion.y),1.0,0,TpvApplicationInputPointerButton.Middle,fMouseDown,KeyModifiers));
+        if (not pvApplication.PointerEvent(TpvApplicationInputPointerEvent.Create(TpvApplicationInputPointerEventType.Up,TpvVector2.Create(SDLEvent^.motion.x,SDLEvent^.motion.y),1.0,0,TpvApplicationInputPointerButton.Middle,fMouseDown,KeyModifiers))) and assigned(fProcessor) then begin
+         fProcessor.PointerEvent(TpvApplicationInputPointerEvent.Create(TpvApplicationInputPointerEventType.Up,TpvVector2.Create(SDLEvent^.motion.x,SDLEvent^.motion.y),1.0,0,TpvApplicationInputPointerButton.Middle,fMouseDown,KeyModifiers));
         end;
        end;
       end;
      end;
      SDL_MOUSEWHEEL:begin
-      if (not pvApplication.Scrolled(TpvVector2.Create(Event^.wheel.x,Event^.wheel.y))) and assigned(fProcessor) then begin
-       fProcessor.Scrolled(TpvVector2.Create(Event^.wheel.x,Event^.wheel.y));
+      if (not pvApplication.Scrolled(TpvVector2.Create(SDLEvent^.wheel.x,SDLEvent^.wheel.y))) and assigned(fProcessor) then begin
+       fProcessor.Scrolled(TpvVector2.Create(SDLEvent^.wheel.x,SDLEvent^.wheel.y));
       end;
      end;
      SDL_FINGERMOTION:begin
       KeyModifiers:=GetKeyModifiers;
-      PointerID:=Event^.tfinger.fingerId and $ffff;
+      PointerID:=SDLEvent^.tfinger.fingerId and $ffff;
       fMaxPointerID:=max(fMaxPointerID,PointerID+1);
-      fPointerX[PointerID]:=Event^.tfinger.x*pvApplication.fWidth;
-      fPointerY[PointerID]:=Event^.tfinger.y*pvApplication.fHeight;
-      fPointerPressure[PointerID]:=Event^.tfinger.pressure;
-      fPointerDeltaX[PointerID]:=Event^.tfinger.dx*pvApplication.fWidth;
-      fPointerDeltaY[PointerID]:=Event^.tfinger.dy*pvApplication.fHeight;
+      fPointerX[PointerID]:=SDLEvent^.tfinger.x*pvApplication.fWidth;
+      fPointerY[PointerID]:=SDLEvent^.tfinger.y*pvApplication.fHeight;
+      fPointerPressure[PointerID]:=SDLEvent^.tfinger.pressure;
+      fPointerDeltaX[PointerID]:=SDLEvent^.tfinger.dx*pvApplication.fWidth;
+      fPointerDeltaY[PointerID]:=SDLEvent^.tfinger.dy*pvApplication.fHeight;
       if (not pvApplication.PointerEvent(TpvApplicationInputPointerEvent.Create(TpvApplicationInputPointerEventType.Motion,TpvVector2.Create(fPointerX[PointerID],fPointerY[PointerID]),TpvVector2.Create(fPointerDeltaX[PointerID],fPointerDeltaY[PointerID]),fPointerPressure[PointerID],PointerID+1,fPointerDown[PointerID],KeyModifiers))) and assigned(fProcessor) then begin
        fProcessor.PointerEvent(TpvApplicationInputPointerEvent.Create(TpvApplicationInputPointerEventType.Motion,TpvVector2.Create(fPointerX[PointerID],fPointerY[PointerID]),TpvVector2.Create(fPointerDeltaX[PointerID],fPointerDeltaY[PointerID]),fPointerPressure[PointerID],PointerID+1,fPointerDown[PointerID],KeyModifiers));
       end;
@@ -4290,13 +4364,13 @@ begin
      SDL_FINGERDOWN:begin
       KeyModifiers:=GetKeyModifiers;
       inc(fPointerDownCount);
-      PointerID:=Event^.tfinger.fingerId and $ffff;
+      PointerID:=SDLEvent^.tfinger.fingerId and $ffff;
       fMaxPointerID:=max(fMaxPointerID,PointerID+1);
-      fPointerX[PointerID]:=Event^.tfinger.x*pvApplication.fWidth;
-      fPointerY[PointerID]:=Event^.tfinger.y*pvApplication.fHeight;
-      fPointerPressure[PointerID]:=Event^.tfinger.pressure;
-      fPointerDeltaX[PointerID]:=Event^.tfinger.dx*pvApplication.fWidth;
-      fPointerDeltaY[PointerID]:=Event^.tfinger.dy*pvApplication.fHeight;
+      fPointerX[PointerID]:=SDLEvent^.tfinger.x*pvApplication.fWidth;
+      fPointerY[PointerID]:=SDLEvent^.tfinger.y*pvApplication.fHeight;
+      fPointerPressure[PointerID]:=SDLEvent^.tfinger.pressure;
+      fPointerDeltaX[PointerID]:=SDLEvent^.tfinger.dx*pvApplication.fWidth;
+      fPointerDeltaY[PointerID]:=SDLEvent^.tfinger.dy*pvApplication.fHeight;
       Include(fPointerDown[PointerID],TpvApplicationInputPointerButton.Left);
       Include(fPointerJustDown[PointerID],TpvApplicationInputPointerButton.Left);
       fJustTouched:=true;
@@ -4309,13 +4383,13 @@ begin
       if fPointerDownCount>0 then begin
        dec(fPointerDownCount);
       end;
-      PointerID:=Event^.tfinger.fingerId and $ffff;
+      PointerID:=SDLEvent^.tfinger.fingerId and $ffff;
       fMaxPointerID:=max(fMaxPointerID,PointerID+1);
-      fPointerX[PointerID]:=Event^.tfinger.x*pvApplication.fWidth;
-      fPointerY[PointerID]:=Event^.tfinger.y*pvApplication.fHeight;
-      fPointerPressure[PointerID]:=Event^.tfinger.pressure;
-      fPointerDeltaX[PointerID]:=Event^.tfinger.dx*pvApplication.fWidth;
-      fPointerDeltaY[PointerID]:=Event^.tfinger.dy*pvApplication.fHeight;
+      fPointerX[PointerID]:=SDLEvent^.tfinger.x*pvApplication.fWidth;
+      fPointerY[PointerID]:=SDLEvent^.tfinger.y*pvApplication.fHeight;
+      fPointerPressure[PointerID]:=SDLEvent^.tfinger.pressure;
+      fPointerDeltaX[PointerID]:=SDLEvent^.tfinger.dx*pvApplication.fWidth;
+      fPointerDeltaY[PointerID]:=SDLEvent^.tfinger.dy*pvApplication.fHeight;
       Exclude(fPointerDown[PointerID],TpvApplicationInputPointerButton.Left);
       Exclude(fPointerJustDown[PointerID],TpvApplicationInputPointerButton.Left);
       if (not pvApplication.PointerEvent(TpvApplicationInputPointerEvent.Create(TpvApplicationInputPointerEventType.Up,TpvVector2.Create(fPointerX[PointerID],fPointerY[PointerID]),fPointerPressure[PointerID],PointerID+1,TpvApplicationInputPointerButton.Left,fPointerDown[PointerID],KeyModifiers))) and assigned(fProcessor) then begin
@@ -4845,6 +4919,11 @@ begin
 end;
 
 function TpvApplicationScreen.Scrolled(const aRelativeAmount:TpvVector2):boolean;
+begin
+ result:=false;
+end;
+
+function TpvApplicationScreen.DragDropFileEvent(aFileName:TpvUTF8String):boolean;
 begin
  result:=false;
 end;
@@ -5387,6 +5466,7 @@ begin
  fCurrentVisibleMouseCursor:=-1;
  fCurrentCatchMouse:=-1;
  fCurrentHideSystemBars:=-1;
+ fCurrentAcceptDragDropFiles:=-1;
  fCurrentBlocking:=-1;
  fCurrentWaitOnPreviousFrames:=-1;
 
@@ -5400,6 +5480,7 @@ begin
  fVisibleMouseCursor:=false;
  fCatchMouse:=false;
  fHideSystemBars:=false;
+ fAcceptDragDropFiles:=false;
  fDisplayOrientations:=[TpvApplicationDisplayOrientation.LandscapeLeft,TpvApplicationDisplayOrientation.LandscapeRight];
  fAndroidMouseTouchEvents:=false;
  fAndroidTouchMouseEvents:=false;
@@ -5585,8 +5666,8 @@ begin
  TemporaryString:=WideString(What);
  OutputDebugStringW(PWideChar(TemporaryString));
  StdOut:=GetStdHandle(Std_Output_Handle);
- Win32Check(StdOut<>Invalid_Handle_Value);
- if StdOut<>0 then begin
+//Win32Check(StdOut<>Invalid_Handle_Value);
+ if (StdOut<>0) and (StdOut<>Invalid_Handle_Value) then begin
   WriteLn(What);
  end;
 {$ifend}
@@ -5824,6 +5905,10 @@ begin
 
   if fVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_EXT_SHADER_VIEWPORT_INDEX_LAYER_EXTENSION_NAME)>=0 then begin
    fVulkanDevice.EnabledExtensionNames.Add(VK_EXT_SHADER_VIEWPORT_INDEX_LAYER_EXTENSION_NAME);
+  end;
+
+  if fVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_EXT_HOST_QUERY_RESET_EXTENSION_NAME)>=0 then begin
+   fVulkanDevice.EnabledExtensionNames.Add(VK_EXT_HOST_QUERY_RESET_EXTENSION_NAME);
   end;
 
   if fVulkanDebugging and
@@ -7738,6 +7823,17 @@ begin
 {$ifend}
  end;
 
+ if fCurrentAcceptDragDropFiles<>ord(fAcceptDragDropFiles) then begin
+  fCurrentAcceptDragDropFiles:=ord(fAcceptDragDropFiles);
+{$if defined(PasVulkanUseSDL2)}
+  if fAcceptDragDropFiles then begin
+   SDL_EventState(SDL_DROPFILE,SDL_ENABLE);
+  end else begin
+   SDL_EventState(SDL_DROPFILE,SDL_DISABLE);
+  end;
+{$ifend}
+ end;
+
  if fHasNewNextScreen then begin
   fHasNewNextScreen:=false;
   if assigned(fNextScreenClass) then begin
@@ -7867,6 +7963,18 @@ begin
        Resume;
       end;
       fHasLastTime:=false;
+     end;
+     SDL_DROPFILE:begin
+      if assigned(fEvent.SDLEvent.drop.FileName) then begin
+       try
+        if pvApplication.fAcceptDragDropFiles then begin
+         fEvent.StringData:=fEvent.SDLEvent.drop.FileName;
+         fInput.AddEvent(fEvent);
+        end;
+       finally
+        SDL_free(fEvent.SDLEvent.drop.FileName);
+       end;
+      end;
      end;
      SDL_WINDOWEVENT:begin
       case fEvent.SDLEvent.window.event of
@@ -8781,6 +8889,15 @@ begin
 
 end;
 
+procedure TpvApplication.SetFocus;
+begin
+{$if defined(PasVulkanUseSDL2)}
+ if assigned(fSurfaceWindow) then begin
+  SDL_RaiseWindow(fSurfaceWindow);
+ end;
+{$ifend}
+end;
+
 procedure TpvApplication.SetupVulkanInstance(const aVulkanInstance:TpvVulkanInstance);
 begin
 end;
@@ -8930,6 +9047,15 @@ function TpvApplication.Scrolled(const aRelativeAmount:TpvVector2):boolean;
 begin
  if assigned(fScreen) then begin
   result:=fScreen.Scrolled(aRelativeAmount);
+ end else begin
+  result:=false;
+ end;
+end;
+
+function TpvApplication.DragDropFileEvent(aFileName:TpvUTF8String):boolean;
+begin
+ if assigned(fScreen) then begin
+  result:=fScreen.DragDropFileEvent(aFileName);
  end else begin
   result:=false;
  end;

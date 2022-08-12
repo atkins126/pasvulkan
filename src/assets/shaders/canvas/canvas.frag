@@ -15,7 +15,7 @@
 #define FILLTYPE_ATLAS_TEXTURE 2
 
 #ifndef FILLTYPE
-  #define FILLTYPE FILLTYPE_COLOR
+  #define FILLTYPE FILLTYPE_NO_TEXTURE
 #endif
 
 #define SIGNEDDISTANCEDFIELD
@@ -24,7 +24,9 @@ layout(early_fragment_tests) in;
 
 layout(location = 0) in vec2 inPosition; // 2D position
 layout(location = 1) in vec4 inColor;    // RGBA Color (in linear space, NOT in sRGB non-linear color space!)
+#if (FILLTYPE == FILLTYPE_TEXTURE) || (FILLTYPE == FILLTYPE_ATLAS_TEXTURE) || defined(GUI_ELEMENTS) 
 layout(location = 2) in vec3 inTexCoord; // 2D texture coordinate with array texture layer index inside the z component
+#endif
 layout(location = 3) flat in ivec4 inState; // x = Rendering mode, y = object type, z = not used yet, w = not used yet
 #if USECLIPDISTANCE
 layout(location = 4) in vec4 inMetaInfo; // Various stuff
