@@ -1091,6 +1091,8 @@ type EpvApplication=class(Exception)
        fVideoFlags:TSDLUInt32;
 {$ifend}
 
+       fExclusiveFullScreenMode:TpvVulkanExclusiveFullScreenMode;
+
        fFullscreenFocusNeeded:boolean;
 
        fGraphicsReady:boolean;
@@ -1482,6 +1484,8 @@ type EpvApplication=class(Exception)
        property SkipNextDrawFrame:boolean read fSkipNextDrawFrame write fSkipNextDrawFrame;
 
        property Fullscreen:boolean read fFullscreen write fFullscreen;
+
+       property ExclusiveFullScreenMode:TpvVulkanExclusiveFullScreenMode read fExclusiveFullScreenMode write fExclusiveFullScreenMode;
 
        property FullscreenFocusNeeded:boolean read fFullscreenFocusNeeded write fFullscreenFocusNeeded;
 
@@ -5475,6 +5479,7 @@ begin
  fWidth:=1280;
  fHeight:=720;
  fFullscreen:=false;
+ fExclusiveFullScreenMode:=TpvVulkanExclusiveFullScreenMode.Default;
  fPresentMode:=TpvApplicationPresentMode.Immediate;
  fResizable:=true;
  fVisibleMouseCursor:=false;
@@ -5911,6 +5916,10 @@ begin
    fVulkanDevice.EnabledExtensionNames.Add(VK_EXT_HOST_QUERY_RESET_EXTENSION_NAME);
   end;
 
+  if fVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_EXT_FULL_SCREEN_EXCLUSIVE_EXTENSION_NAME)>=0 then begin
+   fVulkanDevice.EnabledExtensionNames.Add(VK_EXT_FULL_SCREEN_EXCLUSIVE_EXTENSION_NAME);
+  end;
+
   if fVulkanDebugging and
      fVulkanDebuggingEnabled and
      fVulkanValidation and
@@ -6247,6 +6256,9 @@ begin
    if fVulkanInstance.AvailableExtensionNames.IndexOf(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME)>=0 then begin
     fVulkanInstance.EnabledExtensionNames.Add(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
    end;
+   if fVulkanInstance.AvailableExtensionNames.IndexOf(VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME)>=0 then begin
+    fVulkanInstance.EnabledExtensionNames.Add(VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME);
+   end;
    SetupVulkanInstance(fVulkanInstance);
    fVulkanInstance.Initialize;
    if fVulkanDebuggingEnabled then begin
@@ -6441,6 +6453,12 @@ end;
 
 procedure TpvApplication.CreateVulkanSwapChain;
 var Index:TpvInt32;
+{$if defined(Windows)}
+{$if defined(PASVULKANUSESDL2)}
+    WMInfo:TSDL_SysWMinfo;
+{$ifend}
+    WindowHandle:HWND;
+{$ifend}
 begin
 {$if (defined(fpc) and defined(android)) and not defined(Release)}
  __android_log_write(ANDROID_LOG_VERBOSE,'PasVulkanApplication','Entering TpvApplication.CreateVulkanSwapChain');
@@ -6454,6 +6472,16 @@ begin
   fVulkanSwapChainQueueFamilyIndices.Add(fVulkanDevice.PresentQueueFamilyIndex);
   fVulkanSwapChainQueueFamilyIndices.Finish;
  end;
+
+{$if defined(Windows)}
+{$if defined(PASVULKANUSESDL2)}
+   SDL_VERSION(WMInfo.version);
+   SDL_GetWindowWMInfo(fSurfaceWindow,@WMInfo);
+   WindowHandle:=WMInfo.window;
+{$else}
+   WindowHandle:=0;
+{$ifend}
+{$ifend}
 
  fVulkanSwapChain:=TpvVulkanSwapChain.Create(fVulkanDevice,
                                              fVulkanSurface,
@@ -6472,7 +6500,10 @@ begin
                                              PresentModeToVulkanPresentMode[fPresentMode],
                                              true,
                                              TVkSurfaceTransformFlagsKHR($ffffffff),
-                                             fSwapChainColorSpace=TpvApplicationSwapChainColorSpace.SRGB);
+                                             fSwapChainColorSpace=TpvApplicationSwapChainColorSpace.SRGB,
+                                             fFullscreen,
+                                             fExclusiveFullScreenMode,
+                                             {$if defined(Windows)}@WindowHandle{$else}nil{$ifend});
 
  fCountSwapChainImages:=fVulkanSwapChain.CountImages;
 
@@ -7139,7 +7170,8 @@ begin
     except
      on VulkanResultException:EpvVulkanResultException do begin
       case VulkanResultException.ResultCode of
-       VK_ERROR_SURFACE_LOST_KHR:begin
+       VK_ERROR_SURFACE_LOST_KHR,
+       VK_ERROR_FULL_SCREEN_EXCLUSIVE_MODE_LOST_EXT:begin
         fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.RecreateSurface;
         VulkanDebugLn(TpvUTF8String(VulkanResultException.ClassName+': '+VulkanResultException.Message));
        end;
@@ -7387,7 +7419,8 @@ begin
  except
   on VulkanResultException:EpvVulkanResultException do begin
    case VulkanResultException.ResultCode of
-    VK_ERROR_SURFACE_LOST_KHR:begin
+    VK_ERROR_SURFACE_LOST_KHR,
+    VK_ERROR_FULL_SCREEN_EXCLUSIVE_MODE_LOST_EXT:begin
      if not (fAcquireVulkanBackBufferState in [TAcquireVulkanBackBufferState.RecreateSurface,
                                                TAcquireVulkanBackBufferState.RecreateDevice]) then begin
       fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.RecreateSurface;

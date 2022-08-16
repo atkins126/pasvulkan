@@ -95,6 +95,10 @@ type EpvScene3D=class(Exception);
       public
        const MaxRenderPassIndices=32;
              MaxVisibleLights=65536;
+             LightClusterSizeX=16;
+             LightClusterSizeY=8;
+             LightClusterSizeZ=32;
+             LightClusterSize=LightClusterSizeX*LightClusterSizeY*LightClusterSizeZ;
              // Light cluster index 3D grid size = ceil(CanvasWidth/64) x ceil(CanvasHeight/64) x 16
              LightClusterTileWidthBits=6;
              LightClusterTileHeightBits=6;
@@ -834,22 +838,35 @@ type EpvScene3D=class(Exception);
             end;
             PLightItem=^TLightItem;
             TLightItems=TpvDynamicArray<TLightItem>;
+            TLightMetaInfo=packed record
+             MinBounds:TpvVector4;
+             MaxBounds:TpvVector4;
+            end;
+            PLightMetaInfo=^TLightMetaInfo;
+            TLightMetaInfos=array[0..MaxVisibleLights-1] of TLightMetaInfo;
+            PTLightMetaInfos=^TLightMetaInfos;
             { TLightBuffer }
             TLightBuffer=class
              private
               fSceneInstance:TpvScene3D;
+              fInFlightFrameIndex:TpvSizeInt;
               fUploaded:TPasMPBool32;
               fLightItems:TLightItems;
               fLightAABBTreeGeneration:TpvUInt64;
               fLightTree:TpvBVHDynamicAABBTree.TGPUSkipListNodeArray;
+              fLightMetaInfos:TLightMetaInfos;
               fLightItemsVulkanBuffer:TpvVulkanBuffer;
               fLightTreeVulkanBuffer:TpvVulkanBuffer;
+              fLightMetaInfoVulkanBuffer:TpvVulkanBuffer;
              public
-              constructor Create(const aSceneInstance:TpvScene3D); reintroduce;
+              constructor Create(const aSceneInstance:TpvScene3D;const aInFlightFrameIndex:TpvSizeInt); reintroduce;
               destructor Destroy; override;
               procedure Upload;
               procedure Unload;
-              procedure Update(const aInFlightFrameIndex:TpvSizeInt);
+              procedure Update;
+             public
+              property LightItems:TLightItems read fLightItems;
+              property LightMetaInfoVulkanBuffer:TpvVulkanBuffer read fLightMetaInfoVulkanBuffer;
             end;
             TLightBuffers=array[0..MaxInFlightFrames-1] of TLightBuffer;
             { TLight }
@@ -957,6 +974,7 @@ type EpvScene3D=class(Exception);
                      destructor Destroy; override;
                     published
                      property Group:TGroup read fGroup write fGroup;
+                     property Name:TpvUTF8String read fName write fName;
                    end;
                    { TAnimation }
                    TAnimation=class(TGroupObject)
@@ -1700,6 +1718,15 @@ type EpvScene3D=class(Exception);
                      procedure Unload; override;
                      procedure UpdateInvisible;
                      procedure Update(const aInFlightFrameIndex:TpvSizeInt);
+                     function GetCamera(const aNodeIndex:TPasGLTFSizeInt;
+                                        out aCameraMatrix:TpvMatrix4x4;
+                                        out aViewMatrix:TpvMatrix4x4;
+                                        out aProjectionMatrix:TpvMatrix4x4;
+                                        const aReversedZ:boolean=false;
+                                        const aInfiniteFarPlane:boolean=false;
+                                        const aZNear:PpvFloat=nil;
+                                        const aZFar:PpvFloat=nil;
+                                        const aAspectRatio:TpvFloat=0.0):boolean;
                     published
                      property Group:TGroup read fGroup write fGroup;
                      property Active:boolean read fActive write fActive;
@@ -1721,6 +1748,8 @@ type EpvScene3D=class(Exception);
                    end;
                    TInstances=TpvObjectGenericList<TInstance>;
                    TMaterialsToDuplicate=TpvObjectGenericList<TpvScene3D.TMaterial>;
+                   TNodeNameIndexHashMap=TpvStringHashMap<TpvSizeInt>;
+                   TCameraNodeIndices=TpvGenericList<TpvSizeInt>;
              private
               fCulling:boolean;
               fObjects:TBaseObjects;
@@ -1769,6 +1798,8 @@ type EpvScene3D=class(Exception);
               fUsedVisibleDrawNodes:TUsedVisibleDrawNodes;
               fDrawChoreographyBatchItems:TDrawChoreographyBatchItems;
               fDrawChoreographyBatchUniqueItems:TDrawChoreographyBatchItems;
+              fNodeNameIndexHashMap:TpvScene3D.TGroup.TNodeNameIndexHashMap;
+              fCameraNodeIndices:TpvScene3D.TGroup.TCameraNodeIndices;
               procedure ConstructBuffers;
               procedure CollectUsedVisibleDrawNodes;
               procedure CollectMaterials;
@@ -1794,6 +1825,8 @@ type EpvScene3D=class(Exception);
                              const aPipelineLayout:TpvVulkanPipelineLayout;
                              const aOnSetRenderPassResources:TOnSetRenderPassResources;
                              const aMaterialAlphaModes:TpvScene3D.TMaterial.TAlphaModes=[TpvScene3D.TMaterial.TAlphaMode.Opaque,TpvScene3D.TMaterial.TAlphaMode.Blend,TpvScene3D.TMaterial.TAlphaMode.Mask]);
+              function GetNodeIndexByName(const aNodeName:TpvUTF8String):TpvSizeInt;
+              function GetNodeByName(const aNodeName:TpvUTF8String):TpvScene3D.TGroup.TNode;
              public
               constructor Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil); override;
               destructor Destroy; override;
@@ -1809,6 +1842,9 @@ type EpvScene3D=class(Exception);
               function CreateInstance:TpvScene3D.TGroup.TInstance;
              public
               property BoundingBox:TpvAABB read fBoundingBox;
+              property NodeIndexByName[const aNodeName:TpvUTF8String]:TpvSizeInt read GetNodeIndexByName;
+              property NodeByName[const aNodeName:TpvUTF8String]:TpvScene3D.TGroup.TNode read GetNodeByName;
+              property CameraNodeIndices:TpvScene3D.TGroup.TCameraNodeIndices read fCameraNodeIndices;
              published
               property Culling:boolean read fCulling write fCulling;
               property Objects:TBaseObjects read fObjects;
@@ -1862,6 +1898,7 @@ type EpvScene3D=class(Exception);
        fGlobalVulkanDescriptorSets:array[0..MaxInFlightFrames-1] of TpvVulkanDescriptorSet;
        fVulkanLightItemsStagingBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
        fVulkanLightTreeStagingBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
+       fVulkanLightMetaInfoStagingBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
        fMaterialBufferData:TMaterialBufferData;
        fVulkanMaterialDataStagingBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
        fVulkanMaterialDataBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
@@ -1936,7 +1973,8 @@ type EpvScene3D=class(Exception);
                                                const aRoot:TpvSizeInt);
        procedure CollectLightAABBTreeLights(const aTreeNodes:TpvBVHDynamicAABBTree.TTreeNodes;
                                             const aRoot:TpvSizeInt;
-                                            var aLightItemArray:TpvScene3D.TLightItems);
+                                            var aLightItemArray:TpvScene3D.TLightItems;
+                                            var aLightMetaInfoArray:TpvScene3D.TLightMetaInfos);
        function GetLightUserDataIndex(const aUserData:TpvPtrInt):TpvUInt32;
        procedure SetGlobalResources(const aCommandBuffer:TpvVulkanCommandBuffer;
                                     const aPipelineLayout:TpvVulkanPipelineLayout;
@@ -1998,6 +2036,7 @@ type EpvScene3D=class(Exception);
        property GlobalVulkanViewUniformBuffers:TGlobalVulkanViewUniformBuffers read fGlobalVulkanViewUniformBuffers;
        property Views:TViews read fViews;
        property PrimaryLightDirection:TpvVector3 read fPrimaryLightDirection write fPrimaryLightDirection;
+       property LightBuffers:TpvScene3D.TLightBuffers read fLightBuffers;
       published
        property VulkanDevice:TpvVulkanDevice read fVulkanDevice;
        property MeshComputeVulkanDescriptorSetLayout:TpvVulkanDescriptorSetLayout read fMeshComputeVulkanDescriptorSetLayout;
@@ -4484,10 +4523,11 @@ end;
 
 { TpvScene3D.TLightBuffer }
 
-constructor TpvScene3D.TLightBuffer.Create(const aSceneInstance:TpvScene3D);
+constructor TpvScene3D.TLightBuffer.Create(const aSceneInstance:TpvScene3D;const aInFlightFrameIndex:TpvSizeInt);
 begin
  inherited Create;
  fSceneInstance:=aSceneInstance;
+ fInFlightFrameIndex:=aInFlightFrameIndex;
  fUploaded:=false;
  fLightTree.Initialize;
  fLightAABBTreeGeneration:=fSceneInstance.fLightAABBTreeGeneration-2;
@@ -4506,12 +4546,13 @@ begin
   try
    FreeAndNil(fLightItemsVulkanBuffer);
    FreeAndNil(fLightTreeVulkanBuffer);
+   FreeAndNil(fLightMetaInfos);
 
    case fSceneInstance.fBufferStreamingMode of
 
     TBufferStreamingMode.Direct:begin
      fLightItemsVulkanBuffer:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
-                                                     MaxVisibleLights*SizeOf(TLightItem),
+                                                     MaxVisibleLights*SizeOf(TpvScene3D.TLightItem),
                                                      TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
                                                      TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
                                                      [],
@@ -4540,12 +4581,26 @@ begin
                                                     0,
                                                     [TpvVulkanBufferFlag.PersistentMapped]
                                                    );
-
+     fLightMetaInfoVulkanBuffer:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
+                                                        MaxVisibleLights*SizeOf(TpvScene3D.TLightMetaInfo),
+                                                        TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
+                                                        TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                        [],
+                                                        TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                        TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                                                        0,
+                                                        0,
+                                                        0,
+                                                        0,
+                                                        0,
+                                                        0,
+                                                        [TpvVulkanBufferFlag.PersistentMapped]
+                                                       );
     end;
 
     TBufferStreamingMode.Staging:begin
      fLightItemsVulkanBuffer:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
-                                                     MaxVisibleLights*SizeOf(TLightItem),
+                                                     MaxVisibleLights*SizeOf(TpvScene3D.TLightItem),
                                                      TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
                                                      TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
                                                      [],
@@ -4574,6 +4629,21 @@ begin
                                                     0,
                                                     []
                                                    );
+     fLightMetaInfoVulkanBuffer:=TpvVulkanBuffer.Create(fSceneInstance.fVulkanDevice,
+                                                        MaxVisibleLights*SizeOf(TpvScene3D.TLightMetaInfo),
+                                                        TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
+                                                        TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                        [],
+                                                        TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+                                                        0,
+                                                        0,
+                                                        TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                        0,
+                                                        0,
+                                                        0,
+                                                        0,
+                                                        []
+                                                       );
 
     end;
 
@@ -4594,13 +4664,14 @@ begin
   try
    FreeAndNil(fLightItemsVulkanBuffer);
    FreeAndNil(fLightTreeVulkanBuffer);
+   FreeAndNil(fLightMetaInfoVulkanBuffer);
   finally
    fUploaded:=false;
   end;
  end;
 end;
 
-procedure TpvScene3D.TLightBuffer.Update(const aInFlightFrameIndex:TpvSizeInt);
+procedure TpvScene3D.TLightBuffer.Update;
 const EmptyGPUSkipListNode:TpvBVHDynamicAABBTree.TGPUSkipListNode=
        (AABBMin:(x:0.0;y:0.0;z:0.0);
         SkipCount:0;
@@ -4618,42 +4689,54 @@ begin
 
     TBufferStreamingMode.Direct:begin
      if fLightItems.Count>0 then begin
-      fLightItemsVulkanBuffer.UpdateData(fLightItems.Items[0],0,Min(fLightItems.Count,MaxVisibleLights)*SizeOf(TLightItem),FlushUpdateData);
+      fLightItemsVulkanBuffer.UpdateData(fLightItems.Items[0],0,Min(fLightItems.Count,MaxVisibleLights)*SizeOf(TpvScene3D.TLightItem),FlushUpdateData);
      end;
      if fLightTree.Count>0 then begin
       fLightTreeVulkanBuffer.UpdateData(fLightTree.Items[0],0,Min(fLightTree.Count,MaxVisibleLights*4)*SizeOf(TpvBVHDynamicAABBTree.TGPUSkipListNode),FlushUpdateData);
      end else begin
       fLightTreeVulkanBuffer.UpdateData(EmptyGPUSkipListNode,0,SizeOf(TpvBVHDynamicAABBTree.TGPUSkipListNode),FlushUpdateData);
      end;
+     if fLightItems.Count>0 then begin
+      fLightMetaInfoVulkanBuffer.UpdateData(fLightMetaInfos[0],0,Min(fLightItems.Count,MaxVisibleLights)*SizeOf(TpvScene3D.TLightMetaInfo),FlushUpdateData);
+     end;
 
 {    fSceneInstance.AddInFlightFrameBufferMemoryBarrier(aInFlightFrameIndex,fLightItemsVulkanBuffer);
-     fSceneInstance.AddInFlightFrameBufferMemoryBarrier(aInFlightFrameIndex,fLightTreeVulkanBuffer);}
+     fSceneInstance.AddInFlightFrameBufferMemoryBarrier(aInFlightFrameIndex,fLightTreeVulkanBuffer);
+     fSceneInstance.AddInFlightFrameBufferMemoryBarrier(aInFlightFrameIndex,fLightMetaInfoVulkanBuffer);}
 
     end;
 
     TBufferStreamingMode.Staging:begin
      if fLightItems.Count>0 then begin
-      fSceneInstance.fVulkanLightItemsStagingBuffers[aInFlightFrameIndex].UpdateData(fLightItems.Items[0],0,Min(fLightItems.Count,MaxVisibleLights)*SizeOf(TLightItem),FlushUpdateData);
-      fLightItemsVulkanBuffer.CopyFrom(fSceneInstance.fVulkanBufferCopyBatchItemArrays[aInFlightFrameIndex],
-                                       fSceneInstance.fVulkanLightItemsStagingBuffers[aInFlightFrameIndex],
+      fSceneInstance.fVulkanLightItemsStagingBuffers[fInFlightFrameIndex].UpdateData(fLightItems.Items[0],0,Min(fLightItems.Count,MaxVisibleLights)*SizeOf(TpvScene3D.TLightItem),FlushUpdateData);
+      fLightItemsVulkanBuffer.CopyFrom(fSceneInstance.fVulkanBufferCopyBatchItemArrays[fInFlightFrameIndex],
+                                       fSceneInstance.fVulkanLightItemsStagingBuffers[fInFlightFrameIndex],
                                        0,
                                        0,
-                                       Min(fLightItems.Count,MaxVisibleLights)*SizeOf(TLightItem));
+                                       Min(fLightItems.Count,MaxVisibleLights)*SizeOf(TpvScene3D.TLightItem));
      end;
      if fLightTree.Count>0 then begin
-      fSceneInstance.fVulkanLightTreeStagingBuffers[aInFlightFrameIndex].UpdateData(fLightTree.Items[0],0,Min(fLightTree.Count,MaxVisibleLights*4)*SizeOf(TpvBVHDynamicAABBTree.TGPUSkipListNode),FlushUpdateData);
-      fLightTreeVulkanBuffer.CopyFrom(fSceneInstance.fVulkanBufferCopyBatchItemArrays[aInFlightFrameIndex],
-                                      fSceneInstance.fVulkanLightTreeStagingBuffers[aInFlightFrameIndex],
+      fSceneInstance.fVulkanLightTreeStagingBuffers[fInFlightFrameIndex].UpdateData(fLightTree.Items[0],0,Min(fLightTree.Count,MaxVisibleLights*4)*SizeOf(TpvBVHDynamicAABBTree.TGPUSkipListNode),FlushUpdateData);
+      fLightTreeVulkanBuffer.CopyFrom(fSceneInstance.fVulkanBufferCopyBatchItemArrays[fInFlightFrameIndex],
+                                      fSceneInstance.fVulkanLightTreeStagingBuffers[fInFlightFrameIndex],
                                       0,
                                       0,
                                       Min(fLightTree.Count,MaxVisibleLights*4)*SizeOf(TpvBVHDynamicAABBTree.TGPUSkipListNode));
      end else begin
-      fSceneInstance.fVulkanLightTreeStagingBuffers[aInFlightFrameIndex].UpdateData(EmptyGPUSkipListNode,0,SizeOf(TpvBVHDynamicAABBTree.TGPUSkipListNode),FlushUpdateData);
-      fLightTreeVulkanBuffer.CopyFrom(fSceneInstance.fVulkanBufferCopyBatchItemArrays[aInFlightFrameIndex],
-                                      fSceneInstance.fVulkanLightTreeStagingBuffers[aInFlightFrameIndex],
+      fSceneInstance.fVulkanLightTreeStagingBuffers[fInFlightFrameIndex].UpdateData(EmptyGPUSkipListNode,0,SizeOf(TpvBVHDynamicAABBTree.TGPUSkipListNode),FlushUpdateData);
+      fLightTreeVulkanBuffer.CopyFrom(fSceneInstance.fVulkanBufferCopyBatchItemArrays[fInFlightFrameIndex],
+                                      fSceneInstance.fVulkanLightTreeStagingBuffers[fInFlightFrameIndex],
                                       0,
                                       0,
                                       SizeOf(TpvBVHDynamicAABBTree.TGPUSkipListNode));
+     end;
+     if fLightItems.Count>0 then begin
+      fSceneInstance.fVulkanLightMetaInfoStagingBuffers[fInFlightFrameIndex].UpdateData(fLightMetaInfos[0],0,Min(fLightItems.Count,MaxVisibleLights)*SizeOf(TpvScene3D.TLightMetaInfo),FlushUpdateData);
+      fLightMetaInfoVulkanBuffer.CopyFrom(fSceneInstance.fVulkanBufferCopyBatchItemArrays[fInFlightFrameIndex],
+                                          fSceneInstance.fVulkanLightMetaInfoStagingBuffers[fInFlightFrameIndex],
+                                          0,
+                                          0,
+                                          Min(fLightItems.Count,MaxVisibleLights)*SizeOf(TpvScene3D.TLightMetaInfo));
      end;
     end;
 
@@ -6738,6 +6821,10 @@ begin
  fInstances:=TInstances.Create;
  fInstances.OwnsObjects:=false;
 
+ fNodeNameIndexHashMap:=TpvScene3D.TGroup.TNodeNameIndexHashMap.Create(-1);
+
+ fCameraNodeIndices:=TpvScene3D.TGroup.TCameraNodeIndices.Create;
+
 end;
 
 destructor TpvScene3D.TGroup.Destroy;
@@ -6800,6 +6887,10 @@ begin
  fJointBlocks.Finalize;
 
  fJointBlockOffsets:=nil;
+
+ FreeAndNil(fNodeNameIndexHashMap);
+
+ FreeAndNil(fCameraNodeIndices);
 
  FreeAndNil(fLock);
 
@@ -7885,10 +7976,16 @@ var LightMap:TpvScene3D.TGroup.TLights;
     fNodes.Add(Node);
    end;
   end;
+  fNodeNameIndexHashMap.Clear;
+  fCameraNodeIndices.Clear;
   for Index:=0 to fNodes.Count-1 do begin
-   fNodes[Index].Finish;
+   Node:=fNodes[Index];
+   Node.Finish;
+   fNodeNameIndexHashMap.Add(Node.fName,Index);
+   if assigned(Node.Camera) then begin
+    fCameraNodeIndices.Add(Index);
+   end;
   end;
-
   begin
    Offset:=fNodes.Count+1;
    for Index:=0 to length(fJointBlockOffsets)-1 do begin
@@ -8206,6 +8303,22 @@ end;
 function TpvScene3D.TGroup.CreateInstance:TpvScene3D.TGroup.TInstance;
 begin
  result:=TpvScene3D.TGroup.TInstance.Create(ResourceManager,self);
+end;
+
+function TpvScene3D.TGroup.GetNodeIndexByName(const aNodeName:TpvUTF8String):TpvSizeInt;
+begin
+ result:=fNodeNameIndexHashMap[aNodeName];
+end;
+
+function TpvScene3D.TGroup.GetNodeByName(const aNodeName:TpvUTF8String):TpvScene3D.TGroup.TNode;
+var NodeIndex:TpvSizeInt;
+begin
+ NodeIndex:=fNodeNameIndexHashMap[aNodeName];
+ if NodeIndex>=0 then begin
+  result:=fNodes[NodeIndex];
+ end else begin
+  result:=nil;
+ end;
 end;
 
 { TpvScene3D.TGroup.TInstance.TLight }
@@ -11476,6 +11589,110 @@ begin
 
 end;
 
+function TpvScene3D.TGroup.TInstance.GetCamera(const aNodeIndex:TPasGLTFSizeInt;
+                                               out aCameraMatrix:TpvMatrix4x4;
+                                               out aViewMatrix:TpvMatrix4x4;
+                                               out aProjectionMatrix:TpvMatrix4x4;
+                                               const aReversedZ:boolean;
+                                               const aInfiniteFarPlane:boolean;
+                                               const aZNear:PpvFloat;
+                                               const aZFar:PpvFloat;
+                                               const aAspectRatio:TpvFloat):boolean;
+const DEG2RAD=PI/180;
+var NodeMatrix:TpvMatrix4x4;
+    Camera:TpvScene3D.TGroup.TInstance.TCamera;
+    AspectRatio:TpvFloat;
+begin
+ result:=((aNodeIndex>=0) and (aNodeIndex<fGroup.fNodes.Count)) and assigned(fGroup.fNodes[aNodeIndex].Camera);
+ if result then begin
+  Camera:=fCameras[fGroup.fNodes[aNodeIndex].Camera.Index];
+  NodeMatrix:=fNodes[aNodeIndex].WorkMatrix;
+  aCameraMatrix:=NodeMatrix;
+  aViewMatrix:=NodeMatrix.Inverse;
+  case Camera.EffectiveData^.Type_ of
+   TpvScene3D.TCameraData.TType.Orthographic:begin
+    if aReversedZ or (Camera.EffectiveData^.Orthographic.ZFar<0) then begin
+     aProjectionMatrix:=TpvMatrix4x4.CreateOrthoRightHandedZeroToOne(-Camera.EffectiveData^.Orthographic.XMag,
+                                                                     Camera.EffectiveData^.Orthographic.XMag,
+                                                                     -Camera.EffectiveData^.Orthographic.YMag,
+                                                                     Camera.EffectiveData^.Orthographic.YMag,
+                                                                     Camera.EffectiveData^.Orthographic.ZFar,
+                                                                     Camera.EffectiveData^.Orthographic.ZNear);
+    end else begin
+     aProjectionMatrix:=TpvMatrix4x4.CreateOrthoRightHandedZeroToOne(-Camera.EffectiveData^.Orthographic.XMag,
+                                                                     Camera.EffectiveData^.Orthographic.XMag,
+                                                                     -Camera.EffectiveData^.Orthographic.YMag,
+                                                                     Camera.EffectiveData^.Orthographic.YMag,
+                                                                     Camera.EffectiveData^.Orthographic.ZNear,
+                                                                     Camera.EffectiveData^.Orthographic.ZFar);
+    end;
+    if assigned(aZNear) then begin
+     aZNear^:=Camera.EffectiveData^.Orthographic.ZNear;
+    end;
+    if assigned(aZFar) then begin
+     aZFar^:=Camera.EffectiveData^.Orthographic.ZFar;
+    end;
+    aProjectionMatrix:=aProjectionMatrix*TpvMatrix4x4.FlipYClipSpace;
+   end;
+   TpvScene3D.TCameraData.TType.Perspective:begin
+     if ((aAspectRatio<0.0) and not IsZero(aAspectRatio)) or
+        IsZero(Camera.EffectiveData^.Perspective.AspectRatio) then begin
+     AspectRatio:=abs(aAspectRatio);
+    end else begin
+     AspectRatio:=Camera.EffectiveData^.Perspective.AspectRatio;
+    end;
+    if aReversedZ or (Camera.EffectiveData^.Perspective.ZFar<0.0) then begin
+     aProjectionMatrix:=TpvMatrix4x4.CreatePerspectiveRightHandedOneToZero(Camera.EffectiveData^.Perspective.YFov*RAD2DEG,
+                                                                           AspectRatio,
+                                                                           abs(Camera.EffectiveData^.Perspective.ZNear),
+                                                                           IfThen(IsInfinite(Camera.EffectiveData^.Perspective.ZFar) or aInfiniteFarPlane,1024.0,abs(Camera.EffectiveData^.Perspective.ZFar)));
+    end else begin
+     aProjectionMatrix:=TpvMatrix4x4.CreatePerspectiveRightHandedZeroToOne(Camera.EffectiveData^.Perspective.YFov*RAD2DEG,
+                                                                           AspectRatio,
+                                                                           abs(Camera.EffectiveData^.Perspective.ZNear),
+                                                                           IfThen(IsInfinite(Camera.EffectiveData^.Perspective.ZFar) or aInfiniteFarPlane,1024.0,abs(Camera.EffectiveData^.Perspective.ZFar)));
+    end;
+    if (Camera.EffectiveData^.Perspective.ZFar<0.0) or aReversedZ then begin
+     if IsInfinite(Camera.EffectiveData^.Perspective.ZFar) or aInfiniteFarPlane then begin
+      // Convert to reversed infinite Z
+      aProjectionMatrix.RawComponents[2,2]:=0.0;
+      aProjectionMatrix.RawComponents[2,3]:=-1.0;
+      aProjectionMatrix.RawComponents[3,2]:=abs(Camera.EffectiveData^.Perspective.ZNear);
+      if assigned(aZNear) then begin
+       aZNear^:=Camera.EffectiveData^.Perspective.ZNear;
+      end;
+      if assigned(aZFar) then begin
+       aZFar^:=-Infinity;
+      end;
+     end else begin
+      // Convert to reversed non-infinite Z
+      aProjectionMatrix.RawComponents[2,2]:=abs(Camera.EffectiveData^.Perspective.ZNear)/(abs(Camera.EffectiveData^.Perspective.ZFar)-abs(Camera.EffectiveData^.Perspective.ZNear));
+      aProjectionMatrix.RawComponents[2,3]:=-1.0;
+      aProjectionMatrix.RawComponents[3,2]:=(abs(Camera.EffectiveData^.Perspective.ZNear)*abs(Camera.EffectiveData^.Perspective.ZFar))/(abs(Camera.EffectiveData^.Perspective.ZFar)-abs(Camera.EffectiveData^.Perspective.ZNear));
+      if assigned(aZNear) then begin
+       aZNear^:=Camera.EffectiveData^.Perspective.ZNear;
+      end;
+      if assigned(aZFar) then begin
+       aZFar^:=Camera.EffectiveData^.Perspective.ZFar;
+      end;
+     end;
+    end else begin
+     if assigned(aZNear) then begin
+      aZNear^:=Camera.EffectiveData^.Perspective.ZNear;
+     end;
+     if assigned(aZFar) then begin
+      aZFar^:=Camera.EffectiveData^.Perspective.ZFar;
+     end;
+    end;
+    aProjectionMatrix:=aProjectionMatrix*TpvMatrix4x4.FlipYClipSpace;
+   end;
+   else begin
+    result:=false;
+   end;
+  end;
+ end;
+end;
+
 procedure TpvScene3D.TGroup.TInstance.Prepare(const aInFlightFrameIndex:TpvSizeInt;
                                               const aRenderPassIndex:TpvSizeInt;
                                               const aFrustums:TpvFrustumDynamicArray);
@@ -12043,7 +12260,7 @@ begin
  end;
 
  for Index:=0 to fCountInFlightFrames-1 do begin
-  fLightBuffers[Index]:=TpvScene3D.TLightBuffer.Create(self);
+  fLightBuffers[Index]:=TpvScene3D.TLightBuffer.Create(self,Index);
  end;
 
  for Index:=0 to fCountInFlightFrames-1 do begin
@@ -12297,6 +12514,8 @@ begin
 
           fVulkanLightTreeStagingBuffers[Index]:=nil;
 
+          fVulkanLightMetaInfoStagingBuffers[Index]:=nil;
+
           fGlobalVulkanViewUniformStagingBuffers[Index]:=nil;
 
          end;
@@ -12325,7 +12544,7 @@ begin
          for Index:=0 to fCountInFlightFrames-1 do begin
 
           fVulkanLightItemsStagingBuffers[Index]:=TpvVulkanBuffer.Create(fVulkanDevice,
-                                                                         MaxVisibleLights*SizeOf(TLightItem),
+                                                                         MaxVisibleLights*SizeOf(TpvScene3D.TLightItem),
                                                                          TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_SRC_BIT) or
                                                                          TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT),
                                                                          TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
@@ -12357,6 +12576,23 @@ begin
                                                                         0,
                                                                         [TpvVulkanBufferFlag.PersistentMapped]
                                                                        );
+
+          fVulkanLightMetaInfoStagingBuffers[Index]:=TpvVulkanBuffer.Create(fVulkanDevice,
+                                                                            MaxVisibleLights*SizeOf(TpvScene3D.TLightMetaInfo),
+                                                                            TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_SRC_BIT) or
+                                                                            TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT),
+                                                                            TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                                            [],
+                                                                            TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                                            TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            0,
+                                                                            [TpvVulkanBufferFlag.PersistentMapped]
+                                                                           );
 
           fGlobalVulkanViewUniformStagingBuffers[Index]:=TpvVulkanBuffer.Create(fVulkanDevice,
                                                                                 SizeOf(TGlobalViewUniformBuffer),
@@ -12755,6 +12991,7 @@ begin
      for Index:=0 to fCountInFlightFrames-1 do begin
       FreeAndNil(fVulkanLightItemsStagingBuffers[Index]);
       FreeAndNil(fVulkanLightTreeStagingBuffers[Index]);
+      FreeAndNil(fVulkanLightMetaInfoStagingBuffers[Index]);
      end;
 
      for Group in fGroups do begin
@@ -12981,9 +13218,9 @@ begin
   end;
 
   LightBuffer:=fLightBuffers[aInFlightFrameIndex];
-  CollectLightAABBTreeLights(LightAABBTreeState^.TreeNodes,LightAABBTreeState^.Root,LightBuffer.fLightItems);
+  CollectLightAABBTreeLights(LightAABBTreeState^.TreeNodes,LightAABBTreeState^.Root,LightBuffer.fLightItems,LightBuffer.fLightMetaInfos);
   fLightAABBTree.GetGPUSkipListNodes(LightBuffer.fLightTree,GetLightUserDataIndex);
-  LightBuffer.Update(aInFlightFrameIndex);
+  LightBuffer.Update;
 
  end;
 
@@ -13272,9 +13509,11 @@ end;
 
 procedure TpvScene3D.CollectLightAABBTreeLights(const aTreeNodes:TpvBVHDynamicAABBTree.TTreeNodes;
                                                 const aRoot:TpvSizeInt;
-                                                var aLightItemArray:TpvScene3D.TLightItems);
+                                                var aLightItemArray:TpvScene3D.TLightItems;
+                                                var aLightMetaInfoArray:TpvScene3D.TLightMetaInfos);
  procedure ProcessLight(const aLight:TpvScene3D.TLight);
  var LightItem:TpvScene3D.PLightItem;
+     LightMetaInfo:TpvScene3D.PLightMetaInfo;
      InnerConeAngleCosinus,OuterConeAngleCosinus:TpvScalar;
  begin
   if aLightItemArray.Count<MaxVisibleLights then begin
@@ -13292,6 +13531,9 @@ procedure TpvScene3D.CollectLightAABBTreeLights(const aTreeNodes:TpvBVHDynamicAA
    LightItem^.PositionRange:=TpvVector4.InlineableCreate(aLight.fPosition,aLight.fDataPointer^.fRange);
    LightItem^.DirectionZFar:=TpvVector4.InlineableCreate(aLight.fDirection,0.0);
    LightItem^.ShadowMapMatrix:=TpvMatrix4x4.Identity;
+   LightMetaInfo:=@aLightMetaInfoArray[aLight.fLightItemIndex];
+   LightMetaInfo^.MinBounds:=TpvVector4.Create(aLight.fBoundingBox.Min,TpvUInt32(aLight.fDataPointer^.Type_));
+   LightMetaInfo^.MaxBounds:=TpvVector4.Create(aLight.fBoundingBox.Max,aLight.fBoundingBox.Radius);
   end else begin
    aLight.fLightItemIndex:=-1;
   end;

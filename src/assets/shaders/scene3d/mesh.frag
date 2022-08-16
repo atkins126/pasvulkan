@@ -226,67 +226,85 @@ layout(set = 1, binding = 4) uniform sampler2DArray uPassTextures[]; // 0 = SSAO
 
 #endif
 
+#ifdef LIGHTS
+layout (std140, set = 1, binding = 5) readonly uniform LightGlobals {
+  uvec4 tileSizeZNearZFar; 
+  vec4 viewRect;
+  uvec4 countLightsViewIndexSizeOffsetedViewIndex;
+  uvec4 clusterSize;
+  vec4 scaleBiasMax;
+} uLightGlobals;
+
+layout (std430, set = 1, binding = 6) readonly buffer LightGridIndexList {
+   uint lightGridIndexList[];
+};
+
+layout (std430, set = 1, binding = 7) readonly buffer LightGridClusters {
+  uvec2 lightGridClusters[];
+};
+#endif
+
 #if defined(WBOIT)
 
-  layout(std140, set = 1, binding = 5) uniform uboWBOIT {
+  layout(std140, set = 1, binding = 8) uniform uboWBOIT {
     vec4 wboitZNearZFar;
   } uWBOIT;
 
 #elif defined(MBOIT)
 
-  layout(std140, set = 1, binding = 5) uniform uboMBOIT {
+  layout(std140, set = 1, binding = 8) uniform uboMBOIT {
     vec4 mboitZNearZFar;
   } uMBOIT;
 
   #if defined(MBOITPASS1)
   #elif defined(MBOITPASS2)
     #ifdef MSAA
-      layout(input_attachment_index = 0, set = 1, binding = 6) uniform subpassInputMS uMBOITMoments0;
-      layout(input_attachment_index = 1, set = 1, binding = 7) uniform subpassInputMS uMBOITMoments1;
+      layout(input_attachment_index = 0, set = 1, binding = 9) uniform subpassInputMS uMBOITMoments0;
+      layout(input_attachment_index = 1, set = 1, binding = 10) uniform subpassInputMS uMBOITMoments1;
     #else
-      layout(input_attachment_index = 0, set = 1, binding = 6) uniform subpassInput uMBOITMoments0;
-      layout(input_attachment_index = 1, set = 1, binding = 7) uniform subpassInput uMBOITMoments1;
+      layout(input_attachment_index = 0, set = 1, binding = 9) uniform subpassInput uMBOITMoments0;
+      layout(input_attachment_index = 1, set = 1, binding = 10) uniform subpassInput uMBOITMoments1;
     #endif
   #endif
 
 #elif defined(LOCKOIT)
 
   #ifdef MSAA
-    layout(input_attachment_index = 0, set = 1, binding = 5) uniform subpassInputMS uOITImgDepth;
+    layout(input_attachment_index = 0, set = 1, binding = 8) uniform subpassInputMS uOITImgDepth;
   #else
-    layout(input_attachment_index = 0, set = 1, binding = 5) uniform subpassInput uOITImgDepth;
+    layout(input_attachment_index = 0, set = 1, binding = 8) uniform subpassInput uOITImgDepth;
   #endif
-  layout(set = 1, binding = 6, rgba32ui) uniform coherent uimageBuffer uOITImgABuffer;
-  layout(set = 1, binding = 7, r32ui) uniform coherent uimage2DArray uOITImgAux;
+  layout(set = 1, binding = 9, rgba32ui) uniform coherent uimageBuffer uOITImgABuffer;
+  layout(set = 1, binding = 10, r32ui) uniform coherent uimage2DArray uOITImgAux;
   #ifdef SPINLOCK
-    layout(set = 1, binding = 8, r32ui) uniform coherent uimage2DArray uOITImgSpinLock;
-    layout(std140, set = 1, binding = 9) uniform uboOIT {
+    layout(set = 1, binding = 11, r32ui) uniform coherent uimage2DArray uOITImgSpinLock;
+    layout(std140, set = 1, binding = 12) uniform uboOIT {
       ivec4 oitViewPort;
     } uOIT;
   #endif
   #ifdef INTERLOCK
-    layout(std140, set = 1, binding = 8) uniform uboOIT {
+    layout(std140, set = 1, binding = 11) uniform uboOIT {
       ivec4 oitViewPort;
     } uOIT;
   #endif
 
 #elif defined(LOOPOIT)
 
-  layout(std140, set = 1, binding = 5) uniform uboOIT {
+  layout(std140, set = 1, binding = 8) uniform uboOIT {
     ivec4 oitViewPort;
   } uOIT;
   #ifdef MSAA
-    layout(input_attachment_index = 0, set = 1, binding = 6) uniform subpassInputMS uOITImgDepth;
+    layout(input_attachment_index = 0, set = 1, binding = 9) uniform subpassInputMS uOITImgDepth;
   #else
-    layout(input_attachment_index = 0, set = 1, binding = 6) uniform subpassInput uOITImgDepth;
+    layout(input_attachment_index = 0, set = 1, binding = 9) uniform subpassInput uOITImgDepth;
   #endif
   #if defined(LOOPOIT_PASS1)
-    layout(set = 1, binding = 7, r32ui) uniform coherent uimageBuffer uOITImgZBuffer;
+    layout(set = 1, binding = 10, r32ui) uniform coherent uimageBuffer uOITImgZBuffer;
   #else
-    layout(set = 1, binding = 7, r32ui) uniform readonly uimageBuffer uOITImgZBuffer;
-    layout(set = 1, binding = 8, rg32ui) uniform coherent uimageBuffer uOITImgABuffer;
+    layout(set = 1, binding = 10, r32ui) uniform readonly uimageBuffer uOITImgZBuffer;
+    layout(set = 1, binding = 11, rg32ui) uniform coherent uimageBuffer uOITImgABuffer;
     #ifdef MSAA    
-      layout(set = 1, binding = 9, r32ui) uniform coherent uimageBuffer uOITImgSBuffer;
+      layout(set = 1, binding = 12, r32ui) uniform coherent uimageBuffer uOITImgSBuffer;
     #endif
   #endif 
 
@@ -1539,6 +1557,20 @@ void main() {
       specularOcclusion = getSpecularOcclusion(clamp(dot(normal, viewDirection), 0.0, 1.0), cavity * ambientOcclusion, alphaRoughness);
 
 #ifdef LIGHTS
+#define LIGHTCLUSTERS
+#ifdef LIGHTCLUSTERS
+      // Light cluster grid
+      uvec3 clusterXYZ = uvec3(uvec2(uvec2(gl_FragCoord.xy) / uLightGlobals.tileSizeZNearZFar.xy), 
+                               uint(clamp(fma(log2(-inViewSpacePosition.z), uLightGlobals.scaleBiasMax.x, uLightGlobals.scaleBiasMax.y), 0.0, uLightGlobals.scaleBiasMax.z)));
+      uint clusterIndex = clamp((((clusterXYZ.z * uLightGlobals.clusterSize.y) + clusterXYZ.y) * uLightGlobals.clusterSize.x) + clusterXYZ.x, 0u, uLightGlobals.countLightsViewIndexSizeOffsetedViewIndex.z) +
+                          (uint(gl_ViewIndex + uLightGlobals.countLightsViewIndexSizeOffsetedViewIndex.w) * uLightGlobals.countLightsViewIndexSizeOffsetedViewIndex.z);
+      uvec2 clusterData = lightGridClusters[clusterIndex];
+      for(uint clusterLightIndex = clusterData.x, clusterCountLights = clusterData.y; clusterCountLights > 0u; clusterLightIndex++, clusterCountLights--){
+        {
+          {
+            Light light = lights[lightGridIndexList[clusterLightIndex]];
+#else
+      // Light BVH
       uint lightTreeNodeIndex = 0;
       uint lightTreeNodeCount = lightTreeNodes[0].aabbMinSkipCount.w;
       while (lightTreeNodeIndex < lightTreeNodeCount) {
@@ -1548,6 +1580,7 @@ void main() {
         if (all(greaterThanEqual(inWorldSpacePosition.xyz, aabbMin)) && all(lessThanEqual(inWorldSpacePosition.xyz, aabbMax))) {
           if (lightTreeNode.aabbMaxUserData.w != 0xffffffffu) {
             Light light = lights[lightTreeNode.aabbMaxUserData.w];
+#endif
             float lightAttenuation = 1.0;
             vec3 lightDirection;
             vec3 lightPosition = light.positionRange.xyz; 
@@ -1743,12 +1776,18 @@ void main() {
               }
 #endif
             }
+#ifdef LIGHTCLUSTERS
+          }
+        }
+      }
+#else
           }
           lightTreeNodeIndex++;
         } else {
           lightTreeNodeIndex += max(1u, lightTreeNode.aabbMinSkipCount.w);
         }
       }
+#endif
 /*    if (lightTreeNodeIndex == 0u) {
         doSingleLight(vec3(1.7, 1.15, 0.70),              //
                       vec3(1.0),                          //

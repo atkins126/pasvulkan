@@ -72,6 +72,7 @@ type { TScreenMain }
        fCameraRotationX:TpvScalar;
        fCameraRotationY:TpvScalar;
        fZoom:TpvScalar;
+       fCameraIndex:TpvSizeInt;
        fCameraMatrix:TpvMatrix4x4;
        fCameraSpeed:TpvScalar;
        fUpdateLock:TPasMPCriticalSection;
@@ -214,6 +215,8 @@ begin
 
  CameraRotationX:=0.0;
  CameraRotationY:=0.0;
+
+ fCameraIndex:=-1;
 
  fCameraMatrix:=TpvMatrix4x4.CreateLookAt(Center+(TpvVector3.Create(sin(CameraRotationX*PI*2.0)*cos(-CameraRotationY*PI*2.0),
                                                                      sin(-CameraRotationY*PI*2.0),
@@ -400,10 +403,10 @@ end;
 
 procedure TScreenMain.DrawUpdate(const aInFlightFrameIndex:TpvInt32;const aFrameCounter:TpvInt64;const aDeltaTime:TpvDouble);
 var Index:TpvSizeInt;
-    ModelMatrix,ViewMatrix:TpvMatrix4x4;
+    ModelMatrix,CameraMatrix,ViewMatrix,ProjectionMatrix:TpvMatrix4x4;
     Center,Bounds:TpvVector3;
     t0,t1:Double;
-    ViewLeft,ViewRight:TpvScene3D.TView;
+    View:TpvScene3D.TView;
     InFlightFrameState:PInFlightFrameState;
     BlendFactor,Factor:single;
 begin
@@ -484,9 +487,36 @@ begin
 
    fScene3D.ResetRenderPasses;
 
-   fRendererInstance.CameraMatrix:=fCameraMatrix;
-
    fRendererInstance.Reset;
+
+   if assigned(fGroup) and
+      assigned(fGroupInstance) and
+      (fGroup.CameraNodeIndices.Count>0) and
+      (fCameraIndex>=0) and
+      (fCameraIndex<fGroup.CameraNodeIndices.Count) then begin
+    if fGroupInstance.GetCamera(fGroup.CameraNodeIndices[fCameraIndex],
+                                CameraMatrix,
+                                ViewMatrix,
+                                ProjectionMatrix,
+                                true,
+                                true,
+                                nil,
+                                nil,
+                                -(fRendererInstance.Width/fRendererInstance.Height)) then begin
+     fRendererInstance.CameraMatrix:=CameraMatrix;
+     if not assigned(UnitApplication.Application.VirtualReality) then begin
+      View.ViewMatrix:=ViewMatrix;
+      View.ProjectionMatrix:=ProjectionMatrix;
+      View.InverseViewMatrix:=ViewMatrix.Inverse;
+      View.InverseProjectionMatrix:=ProjectionMatrix.Inverse;
+      fRendererInstance.AddView(View);
+     end;
+    end else begin
+     fRendererInstance.CameraMatrix:=fCameraMatrix;
+    end;
+   end else begin
+    fRendererInstance.CameraMatrix:=fCameraMatrix;
+   end;
 
    fRendererInstance.DrawUpdate(aInFlightFrameIndex,aFrameCounter);
 
@@ -647,6 +677,22 @@ begin
    KEYCODE_C:begin
     fKeyRollDec:=aKeyEvent.KeyEventType=TpvApplicationInputKeyEventType.Down;
    end;
+   KEYCODE_HOME:begin
+    if (aKeyEvent.KeyEventType=TpvApplicationInputKeyEventType.Down) and assigned(fGroup) then begin
+     inc(fCameraIndex);
+     if fCameraIndex>=fGroup.CameraNodeIndices.Count then begin
+      fCameraIndex:=-1;
+     end;
+    end;
+   end;
+   KEYCODE_END:begin
+    if (aKeyEvent.KeyEventType=TpvApplicationInputKeyEventType.Down) and assigned(fGroup) then begin
+     dec(fCameraIndex);
+     if fCameraIndex<=-2 then begin
+      fCameraIndex:=fGroup.CameraNodeIndices.Count-1;
+     end;
+    end;
+   end;
   end;
  end;
 end;
@@ -734,6 +780,8 @@ begin
   fGroup:=TpvScene3D.TGroup(aResource);
 
   fGroupInstance:=fGroup.CreateInstance;
+
+  fCameraIndex:=-1;
 
   if assigned(fGroup) then begin
 

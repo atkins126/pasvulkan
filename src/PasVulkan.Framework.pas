@@ -602,6 +602,7 @@ type EpvVulkanException=class(Exception);
        fCanvasCommon:TObject;
        fImageFormatList:boolean;
        fUseNVIDIADeviceDiagnostics:boolean;
+       fFullScreenExclusiveSupport:boolean;
        fNVIDIADeviceDiagnosticsFlags:TVkDeviceDiagnosticsConfigFlagsNV;
        fNVIDIADeviceDiagnosticsConfigCreateInfoNV:TVkDeviceDiagnosticsConfigCreateInfoNV;
        fDescriptorIndexingFeaturesEXT:TVkPhysicalDeviceDescriptorIndexingFeaturesEXT;
@@ -663,6 +664,7 @@ type EpvVulkanException=class(Exception);
        property ImageFormatList:boolean read fImageFormatList;
        property UseNVIDIADeviceDiagnostics:boolean read fUseNVIDIADeviceDiagnostics write fUseNVIDIADeviceDiagnostics;
        property NVIDIADeviceDiagnosticsFlags:TVkDeviceDiagnosticsConfigFlagsNV read fNVIDIADeviceDiagnosticsFlags write fNVIDIADeviceDiagnosticsFlags;
+       property FullScreenExclusiveSupport:boolean read fFullScreenExclusiveSupport;
      end;
 
      TpvVulkanDeviceDebugMarker=class
@@ -1774,6 +1776,13 @@ type EpvVulkanException=class(Exception);
       Data:TVkUInt8Array;
      end;
 
+     TpvVulkanExclusiveFullScreenMode=
+      (
+       Default=-1,
+       Disallowed=0,
+       Allowed=1
+      );
+
      TpvVulkanSwapChain=class(TpvVulkanObject)
       private
        fDevice:TpvVulkanDevice;
@@ -1790,6 +1799,7 @@ type EpvVulkanException=class(Exception);
        fCountImages:TpvUInt32;
        fWidth:TpvInt32;
        fHeight:TpvInt32;
+       fExclusiveFullScreen:boolean;
        function GetImage(const aImageIndex:TpvInt32):TpvVulkanImage;
        function GetPreviousImage:TpvVulkanImage;
        function GetCurrentImage:TpvVulkanImage;
@@ -1811,7 +1821,10 @@ type EpvVulkanException=class(Exception);
                           const aPresentMode:TVkPresentModeKHR=VK_PRESENT_MODE_MAILBOX_KHR;
                           const aClipped:boolean=true;
                           const aDesiredTransform:TVkSurfaceTransformFlagsKHR=TVkSurfaceTransformFlagsKHR($ffffffff);
-                          const aSRGB:boolean=false); reintroduce; overload;
+                          const aSRGB:boolean=false;
+                          const aFullScreen:boolean=false;
+                          const aExclusiveFullScreenMode:TpvVulkanExclusiveFullScreenMode=TpvVulkanExclusiveFullScreenMode.Default;
+                          const aWindow:Pointer=nil); reintroduce; overload;
        constructor Create(const aDevice:TpvVulkanDevice;
                           const aSurface:TpvVulkanSurface;
                           const aOldSwapChain:TpvVulkanSwapChain=nil;
@@ -1844,6 +1857,7 @@ type EpvVulkanException=class(Exception);
        property CurrentImage:TpvVulkanImage read GetCurrentImage;
        property Width:TpvInt32 read fWidth;
        property Height:TpvInt32 read fHeight;
+       property ExclusiveFullScreen:boolean read fExclusiveFullScreen;
      end;
 
      TpvVulkanRenderTarget=class(TpvVulkanObject)
@@ -6231,6 +6245,9 @@ begin
   VK_ERROR_INVALID_SHADER_NV:begin
    result:='VK_ERROR_INVALID_SHADER_NV';
   end;
+  VK_ERROR_FULL_SCREEN_EXCLUSIVE_MODE_LOST_EXT:begin
+   result:='VK_ERROR_FULL_SCREEN_EXCLUSIVE_MODE_LOST_EXT';
+  end;
   else begin
    result:='Unknown error code detected ('+TpvVulkanCharString(IntToStr(TpvInt32(ErrorCode)))+')';
   end;
@@ -8519,6 +8536,8 @@ begin
      DeviceCreateInfo.pNext:=@fHostQueryResetFeaturesEXT;
     end;
    end;
+
+   fFullScreenExclusiveSupport:=fEnabledExtensionNames.IndexOf(VK_EXT_FULL_SCREEN_EXCLUSIVE_EXTENSION_NAME)>0;
 
   end;
 
@@ -14047,6 +14066,14 @@ begin
  end;
 end;
 
+{$if defined(Windows) and not declared(MonitorFromWindow)}
+const MONITOR_DEFAULTTONULL=$00000000;
+      MONITOR_DEFAULTTOPRIMARY=$00000001;
+      MONITOR_DEFAULTTONEAREST=$00000002;
+
+function MonitorFromWindow(aWnd:HWND;aFlags:DWORD):HMONITOR; stdcall; external 'user32.dll' name 'MonitorFromWindow';
+{$ifend}
+
 constructor TpvVulkanSwapChain.Create(const aDevice:TpvVulkanDevice;
                                       const aSurface:TpvVulkanSurface;
                                       const aOldSwapChain:TpvVulkanSwapChain;
@@ -14060,11 +14087,14 @@ constructor TpvVulkanSwapChain.Create(const aDevice:TpvVulkanDevice;
                                       const aImageSharingMode:TVkSharingMode;
                                       const aQueueFamilyIndices:array of TVkUInt32;
                                       const aCompositeAlpha:array of TVkCompositeAlphaFlagBitsKHR;
-                                      const aForceCompositeAlpha:boolean=false;
-                                      const aPresentMode:TVkPresentModeKHR=VK_PRESENT_MODE_MAILBOX_KHR;
-                                      const aClipped:boolean=true;
-                                      const aDesiredTransform:TVkSurfaceTransformFlagsKHR=TVkSurfaceTransformFlagsKHR($ffffffff);
-                                      const aSRGB:boolean=false);
+                                      const aForceCompositeAlpha:boolean;
+                                      const aPresentMode:TVkPresentModeKHR;
+                                      const aClipped:boolean;
+                                      const aDesiredTransform:TVkSurfaceTransformFlagsKHR;
+                                      const aSRGB:boolean;
+                                      const aFullScreen:boolean;
+                                      const aExclusiveFullScreenMode:TpvVulkanExclusiveFullScreenMode;
+                                      const aWindow:Pointer);
 type TPresentModes=VK_PRESENT_MODE_IMMEDIATE_KHR..VK_PRESENT_MODE_FIFO_RELAXED_KHR;
 const PresentModeTryOrder:array[TPresentModes,0..3] of TVkPresentModeKHR=
        ((VK_PRESENT_MODE_IMMEDIATE_KHR,VK_PRESENT_MODE_MAILBOX_KHR,VK_PRESENT_MODE_FIFO_RELAXED_KHR,VK_PRESENT_MODE_FIFO_KHR),
@@ -14087,6 +14117,14 @@ var Index,TryIterationIndex:TpvInt32;
     FormatProperties:TVkFormatProperties;
     SwapChainCreateInfo:TVkSwapchainCreateInfoKHR;
     Found:boolean;
+{$ifdef Windows}
+    Monitor:HMONITOR;
+    SurfaceFullScreenExclusiveWin32InfoEXT:TVkSurfaceFullScreenExclusiveWin32InfoEXT;
+    SurfaceFullScreenExclusiveInfoEXT:TVkSurfaceFullScreenExclusiveInfoEXT;
+    SurfaceCapabilitiesFullScreenExclusiveEXT:TVkSurfaceCapabilitiesFullScreenExclusiveEXT;
+    PhysicalDeviceSurfaceInfo2KHR:TVkPhysicalDeviceSurfaceInfo2KHR;
+    SurfaceCapabilities2KHR:TVkSurfaceCapabilities2KHR;
+{$endif}
 begin
  inherited Create;
 
@@ -14129,7 +14167,58 @@ begin
    fCountQueueFamilyIndices:=0;
   end;
 
-  SurfaceCapabilities:=fDevice.fPhysicalDevice.GetSurfaceCapabilities(fSurface);
+{$ifdef Windows}
+  if fDevice.FullScreenExclusiveSupport and aFullScreen and assigned(aWindow) and assigned(fDevice.Instance.Commands.Commands.GetPhysicalDeviceSurfaceCapabilities2KHR) then begin
+
+   Monitor:=MonitorFromWindow(HWND(aWindow^),MONITOR_DEFAULTTOPRIMARY);
+
+   FillChar(SurfaceFullScreenExclusiveWin32InfoEXT,SizeOf(TVkSurfaceFullScreenExclusiveWin32InfoEXT),#0);
+   SurfaceFullScreenExclusiveWin32InfoEXT.sType:=VK_STRUCTURE_TYPE_SURFACE_FULL_SCREEN_EXCLUSIVE_WIN32_INFO_EXT;
+   SurfaceFullScreenExclusiveWin32InfoEXT.pNext:=nil;
+   SurfaceFullScreenExclusiveWin32InfoEXT.hmonitor_:=Monitor;
+
+   FillChar(SurfaceFullScreenExclusiveInfoEXT,SizeOf(TVkSurfaceFullScreenExclusiveInfoEXT),#0);
+   SurfaceFullScreenExclusiveInfoEXT.sType:=VK_STRUCTURE_TYPE_SURFACE_FULL_SCREEN_EXCLUSIVE_INFO_EXT;
+   SurfaceFullScreenExclusiveInfoEXT.pNext:=@SurfaceFullScreenExclusiveWin32InfoEXT;
+   case aExclusiveFullScreenMode of
+    TpvVulkanExclusiveFullScreenMode.Disallowed:begin
+     SurfaceFullScreenExclusiveInfoEXT.fullScreenExclusive:=VK_FULL_SCREEN_EXCLUSIVE_DISALLOWED_EXT;
+    end;
+    TpvVulkanExclusiveFullScreenMode.Allowed:begin
+     SurfaceFullScreenExclusiveInfoEXT.fullScreenExclusive:=VK_FULL_SCREEN_EXCLUSIVE_ALLOWED_EXT;
+   //SurfaceFullScreenExclusiveInfoEXT.fullScreenExclusive:=VK_FULL_SCREEN_EXCLUSIVE_APPLICATION_CONTROLLED_EXT;
+    end;
+    else begin
+     SurfaceFullScreenExclusiveInfoEXT.fullScreenExclusive:=VK_FULL_SCREEN_EXCLUSIVE_DEFAULT_EXT;
+    end;
+   end;
+
+   FillChar(PhysicalDeviceSurfaceInfo2KHR,SizeOf(TVkPhysicalDeviceSurfaceInfo2KHR),#0);
+   PhysicalDeviceSurfaceInfo2KHR.sType:=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SURFACE_INFO_2_KHR;
+   PhysicalDeviceSurfaceInfo2KHR.pNext:=@SurfaceFullScreenExclusiveInfoEXT;
+   PhysicalDeviceSurfaceInfo2KHR.surface:=fSurface.Handle;
+
+   FillChar(SurfaceCapabilitiesFullScreenExclusiveEXT,SizeOf(SurfaceCapabilitiesFullScreenExclusiveEXT),#0);
+   SurfaceCapabilitiesFullScreenExclusiveEXT.sType:=VK_STRUCTURE_TYPE_SURFACE_CAPABILITIES_FULL_SCREEN_EXCLUSIVE_EXT;
+   SurfaceCapabilitiesFullScreenExclusiveEXT.fullScreenExclusiveSupported:=VK_FALSE;
+
+   FillChar(SurfaceCapabilities2KHR,SizeOf(SurfaceCapabilities2KHR),#0);
+   SurfaceCapabilities2KHR.sType:=VK_STRUCTURE_TYPE_SURFACE_CAPABILITIES_2_KHR;
+   SurfaceCapabilities2KHR.pNext:=@SurfaceCapabilitiesFullScreenExclusiveEXT;
+
+   VulkanCheckResult(fDevice.Instance.Commands.GetPhysicalDeviceSurfaceCapabilities2KHR(fDevice.PhysicalDevice.Handle,@PhysicalDeviceSurfaceInfo2KHR,@SurfaceCapabilities2KHR));
+
+   SurfaceCapabilities:=SurfaceCapabilities2KHR.surfaceCapabilities;
+
+   fExclusiveFullScreen:=SurfaceCapabilitiesFullScreenExclusiveEXT.fullScreenExclusiveSupported<>VK_FALSE;
+
+  end else{$endif}begin
+
+   SurfaceCapabilities:=fDevice.fPhysicalDevice.GetSurfaceCapabilities(fSurface);
+
+   fExclusiveFullScreen:=false;
+
+  end;
 
   FillChar(SwapChainCreateInfo,SizeOf(TVkSwapChainCreateInfoKHR),#0);
   SwapChainCreateInfo.sType:=VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
@@ -14293,7 +14382,25 @@ begin
    SwapChainCreateInfo.oldSwapchain:=VK_NULL_HANDLE;
   end;
 
-  VulkanCheckResult(fDevice.fDeviceVulkan.CreateSwapChainKHR(fDevice.fDeviceHandle,@SwapChainCreateInfo,fDevice.fAllocationCallbacks,@fSwapChainHandle));
+  if fExclusiveFullScreen then begin
+
+   SwapChainCreateInfo.pNext:=@SurfaceFullScreenExclusiveInfoEXT;
+
+   if fDevice.fDeviceVulkan.CreateSwapChainKHR(fDevice.fDeviceHandle,@SwapChainCreateInfo,fDevice.fAllocationCallbacks,@fSwapChainHandle)<>VK_SUCCESS then begin
+
+    SwapChainCreateInfo.pNext:=nil;
+
+    fExclusiveFullScreen:=false;
+
+    VulkanCheckResult(fDevice.fDeviceVulkan.CreateSwapChainKHR(fDevice.fDeviceHandle,@SwapChainCreateInfo,fDevice.fAllocationCallbacks,@fSwapChainHandle));
+
+   end;
+
+  end else begin
+
+   VulkanCheckResult(fDevice.fDeviceVulkan.CreateSwapChainKHR(fDevice.fDeviceHandle,@SwapChainCreateInfo,fDevice.fAllocationCallbacks,@fSwapChainHandle));
+
+  end;
 
   VulkanCheckResult(fDevice.fDeviceVulkan.GetSwapchainImagesKHR(fDevice.fDeviceHandle,fSwapChainHandle,@fCountImages,nil));
 
