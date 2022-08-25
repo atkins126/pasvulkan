@@ -78,8 +78,14 @@ uses SysUtils,
 
 type { TpvScene3DRendererPassesDepthMipMapComputePass }
      TpvScene3DRendererPassesDepthMipMapComputePass=class(TpvFrameGraph.TComputePass)
+      public
+       type TPushConstants=packed record
+             CountSamples:TpvUInt32;
+             BaseViewIndex:TpvUInt32;
+            end;
       private
        fInstance:TpvScene3DRendererInstance;
+       fFarthest:boolean;
        fResourceInput:TpvFrameGraph.TPass.TUsedImageResource;
        fDownsampleLevel0ComputeShaderModule:TpvVulkanShaderModule;
        fDownsampleLevel1ComputeShaderModule:TpvVulkanShaderModule;
@@ -245,6 +251,8 @@ begin
                                                        fInstance.Renderer.CountInFlightFrames*fInstance.DepthMipmappedArray2DImages[0].MipMapLevels);
  fVulkanDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,fInstance.Renderer.CountInFlightFrames*fInstance.DepthMipmappedArray2DImages[0].MipMapLevels);
  fVulkanDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,fInstance.Renderer.CountInFlightFrames*fInstance.DepthMipmappedArray2DImages[0].MipMapLevels);
+ fVulkanDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,fInstance.Renderer.CountInFlightFrames*fInstance.DepthMipmappedArray2DImages[0].MipMapLevels);
+ fVulkanDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,fInstance.Renderer.CountInFlightFrames*fInstance.DepthMipmappedArray2DImages[0].MipMapLevels);
  fVulkanDescriptorPool.Initialize;
 
  fVulkanDescriptorSetLayout:=TpvVulkanDescriptorSetLayout.Create(fInstance.Renderer.VulkanDevice);
@@ -258,10 +266,20 @@ begin
                                        1,
                                        TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),
                                        []);
+ fVulkanDescriptorSetLayout.AddBinding(2,
+                                       VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                       1,
+                                       TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),
+                                       []);
+ fVulkanDescriptorSetLayout.AddBinding(3,
+                                       VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                                       1,
+                                       TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),
+                                       []);
  fVulkanDescriptorSetLayout.Initialize;
 
  fPipelineLayout:=TpvVulkanPipelineLayout.Create(fInstance.Renderer.VulkanDevice);
- fPipelineLayout.AddPushConstantRange(TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),0,SizeOf(TpvUInt32));
+ fPipelineLayout.AddPushConstantRange(TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),0,SizeOf(TpvScene3DRendererPassesDepthMipMapComputePass.TPushConstants));
  fPipelineLayout.AddDescriptorSetLayout(fVulkanDescriptorSetLayout);
  fPipelineLayout.Initialize;
 
@@ -341,6 +359,24 @@ begin
                                                                                    [],
                                                                                    false
                                                                                   );
+   fVulkanDescriptorSets[InFlightFrameIndex,MipMapLevelIndex].WriteToDescriptorSet(2,
+                                                                                   0,
+                                                                                   1,
+                                                                                   TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
+                                                                                   [],
+                                                                                   [fInstance.NearestFarthestDepthVulkanBuffers[InFlightFrameIndex].DescriptorBufferInfo],
+                                                                                   [],
+                                                                                   false
+                                                                                  );
+   fVulkanDescriptorSets[InFlightFrameIndex,MipMapLevelIndex].WriteToDescriptorSet(3,
+                                                                                   0,
+                                                                                   1,
+                                                                                   TVkDescriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER),
+                                                                                   [],
+                                                                                   [fInstance.Renderer.Scene3D.GlobalVulkanViewUniformBuffers[InFlightFrameIndex].DescriptorBufferInfo],
+                                                                                   [],
+                                                                                   false
+                                                                                  );
    fVulkanDescriptorSets[InFlightFrameIndex,MipMapLevelIndex].Flush;
   end;
  end;
@@ -374,12 +410,33 @@ procedure TpvScene3DRendererPassesDepthMipMapComputePass.Execute(const aCommandB
 var InFlightFrameIndex,MipMapLevelIndex:TpvInt32;
     Pipeline:TpvVulkanComputePipeline;
     ImageMemoryBarrier:TVkImageMemoryBarrier;
+    BufferMemoryBarrier:TVkBufferMemoryBarrier;
     CountSamples:TpvUInt32;
+    NearestFarthestDepthVulkanBuffer:TpvVulkanBuffer;
+    PushConstants:TpvScene3DRendererPassesDepthMipMapComputePass.TPushConstants;
 begin
 
  inherited Execute(aCommandBuffer,aInFlightFrameIndex,aFrameIndex);
 
  InFlightFrameIndex:=aInFlightFrameIndex;
+
+ NearestFarthestDepthVulkanBuffer:=fInstance.NearestFarthestDepthVulkanBuffers[InFlightFrameIndex];
+
+// fInstance.NearestFarthestDepthVulkanBuffers[InFlightFrameIndex].
+
+ aCommandBuffer.CmdFillBuffer(NearestFarthestDepthVulkanBuffer.Handle,SizeOf(TVkUInt32)*0,SizeOf(TVkUInt32)*2,TVkUInt32($ffffffff));
+ aCommandBuffer.CmdFillBuffer(NearestFarthestDepthVulkanBuffer.Handle,SizeOf(TVkUInt32)*2,SizeOf(TVkUInt32)*2,TVkUInt32($00000000));
+
+ FillChar(BufferMemoryBarrier,SizeOf(TVkBufferMemoryBarrier),#0);
+ BufferMemoryBarrier.sType:=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+ BufferMemoryBarrier.pNext:=nil;
+ BufferMemoryBarrier.srcAccessMask:=TVkAccessFlags(VK_ACCESS_TRANSFER_WRITE_BIT);
+ BufferMemoryBarrier.dstAccessMask:=TVkAccessFlags(VK_ACCESS_SHADER_READ_BIT) or TVkAccessFlags(VK_ACCESS_SHADER_WRITE_BIT);
+ BufferMemoryBarrier.srcQueueFamilyIndex:=VK_QUEUE_FAMILY_IGNORED;
+ BufferMemoryBarrier.dstQueueFamilyIndex:=VK_QUEUE_FAMILY_IGNORED;
+ BufferMemoryBarrier.buffer:=NearestFarthestDepthVulkanBuffer.Handle;
+ BufferMemoryBarrier.offset:=0;
+ BufferMemoryBarrier.size:=VK_WHOLE_SIZE;
 
  FillChar(ImageMemoryBarrier,SizeOf(TVkImageMemoryBarrier),#0);
  ImageMemoryBarrier.sType:=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -396,11 +453,11 @@ begin
  ImageMemoryBarrier.subresourceRange.levelCount:=fInstance.DepthMipmappedArray2DImages[InFlightFrameIndex].MipMapLevels;
  ImageMemoryBarrier.subresourceRange.baseArrayLayer:=0;
  ImageMemoryBarrier.subresourceRange.layerCount:=fInstance.CountSurfaceViews;
- aCommandBuffer.CmdPipelineBarrier(fFrameGraph.VulkanDevice.PhysicalDevice.PipelineStageAllShaderBits,
+ aCommandBuffer.CmdPipelineBarrier(fFrameGraph.VulkanDevice.PhysicalDevice.PipelineStageAllShaderBits or  TVkPipelineStageFlags(VK_PIPELINE_STAGE_TRANSFER_BIT),
                                    TVkPipelineStageFlags(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT),
                                    0,
                                    0,nil,
-                                   0,nil,
+                                   1,@BufferMemoryBarrier,
                                    1,@ImageMemoryBarrier);
 
  for MipMapLevelIndex:=0 to fInstance.DepthMipmappedArray2DImages[InFlightFrameIndex].MipMapLevels-1 do begin
@@ -418,13 +475,14 @@ begin
    aCommandBuffer.CmdBindPipeline(VK_PIPELINE_BIND_POINT_COMPUTE,Pipeline.Handle);
   end;
 
-  CountSamples:=fInstance.Renderer.CountSurfaceMSAASamples;
+  PushConstants.CountSamples:=fInstance.Renderer.CountSurfaceMSAASamples;
+  PushConstants.BaseViewIndex:=fInstance.InFlightFrameStates^[InFlightFrameIndex].FinalViewIndex;
 
   aCommandBuffer.CmdPushConstants(fPipelineLayout.Handle,
                                   TVkShaderStageFlags(TVkShaderStageFlagBits.VK_SHADER_STAGE_COMPUTE_BIT),
                                   0,
-                                  SizeOf(TpvUInt32),
-                                  @CountSamples);
+                                  SizeOf(TpvScene3DRendererPassesDepthMipMapComputePass.TPushConstants),
+                                  @PushConstants);
 
   aCommandBuffer.CmdBindDescriptorSets(VK_PIPELINE_BIND_POINT_COMPUTE,
                                        fPipelineLayout.Handle,
@@ -461,11 +519,23 @@ begin
                                      0,nil,
                                      1,@ImageMemoryBarrier);
   end else begin
+
+   FillChar(BufferMemoryBarrier,SizeOf(TVkBufferMemoryBarrier),#0);
+   BufferMemoryBarrier.sType:=VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+   BufferMemoryBarrier.pNext:=nil;
+   BufferMemoryBarrier.srcAccessMask:=TVkAccessFlags(VK_ACCESS_SHADER_READ_BIT) or TVkAccessFlags(VK_ACCESS_SHADER_WRITE_BIT);
+   BufferMemoryBarrier.dstAccessMask:=TVkAccessFlags(VK_ACCESS_SHADER_READ_BIT) or TVkAccessFlags(VK_ACCESS_SHADER_WRITE_BIT);
+   BufferMemoryBarrier.srcQueueFamilyIndex:=VK_QUEUE_FAMILY_IGNORED;
+   BufferMemoryBarrier.dstQueueFamilyIndex:=VK_QUEUE_FAMILY_IGNORED;
+   BufferMemoryBarrier.buffer:=NearestFarthestDepthVulkanBuffer.Handle;
+   BufferMemoryBarrier.offset:=0;
+   BufferMemoryBarrier.size:=VK_WHOLE_SIZE;
+
    aCommandBuffer.CmdPipelineBarrier(TVkPipelineStageFlags(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT),
                                      fFrameGraph.VulkanDevice.PhysicalDevice.PipelineStageAllShaderBits,
                                      0,
                                      0,nil,
-                                     0,nil,
+                                     1,@BufferMemoryBarrier,
                                      1,@ImageMemoryBarrier);
   end;
 

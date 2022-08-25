@@ -79,6 +79,7 @@ uses Classes,
      PasVulkan.VirtualReality,
      PasVulkan.Scene3D,
      PasVulkan.Scene3D.Renderer.Globals,
+     PasVulkan.Scene3D.Renderer.CameraPreset,
      PasVulkan.Scene3D.Renderer,
      PasVulkan.Scene3D.Renderer.Array2DImage,
      PasVulkan.Scene3D.Renderer.MipmappedArray2DImage,
@@ -183,6 +184,12 @@ type { TpvScene3DRendererInstance }
             TMipmappedArray2DImages=array[0..MaxInFlightFrames-1] of TpvScene3DRendererMipmappedArray2DImage;
             TOrderIndependentTransparencyBuffers=array[0..MaxInFlightFrames-1] of TpvScene3DRendererOrderIndependentTransparencyBuffer;
             TOrderIndependentTransparencyImages=array[0..MaxInFlightFrames-1] of TpvScene3DRendererOrderIndependentTransparencyImage;
+            { TMeshFragmentSpecializationConstants }
+            TMeshFragmentSpecializationConstants=record
+             public
+              UseReversedZ:TVkBool32;
+              procedure SetPipelineShaderStage(const aVulkanPipelineShaderStage:TpvVulkanPipelineShaderStage);
+            end;
       private
        fFrameGraph:TpvFrameGraph;
        fVirtualReality:TpvVirtualReality;
@@ -209,10 +216,16 @@ type { TpvScene3DRendererInstance }
        fPointerToCameraMatrix:PpvMatrix4x4;
        fInFlightFrameStates:TInFlightFrameStates;
        fPointerToInFlightFrameStates:PInFlightFrameStates;
+       fMeshFragmentSpecializationConstants:TMeshFragmentSpecializationConstants;
+       fCameraPreset:TpvScene3DRendererCameraPreset;
       private
        fViews:TpvScene3D.TViews;
       private
        fVulkanRenderSemaphores:array[0..MaxInFlightFrames-1] of TpvVulkanSemaphore;
+      private
+       fNearestFarthestDepthVulkanBuffers:TVulkanBuffers;
+       fDepthOfFieldAutoFocusVulkanBuffers:TVulkanBuffers;
+       fDepthOfFieldBokenShapeTapVulkanBuffers:TVulkanBuffers;
       private
        fLightGridPushConstants:TpvScene3DRendererInstance.TLightGridPushConstants;
        fLightGridGlobalsVulkanBuffers:TVulkanBuffers;
@@ -243,7 +256,7 @@ type { TpvScene3DRendererInstance }
        fApproximationOrderIndependentTransparentUniformVulkanBuffer:TpvVulkanBuffer;
       private
        fDepthMipmappedArray2DImages:TMipmappedArray2DImages;
-       fForwardMipmappedArray2DImages:TMipmappedArray2DImages;
+       fSceneMipmappedArray2DImages:TMipmappedArray2DImages;
       private
        fCascadedShadowMapInverseProjectionMatrices:array[0..7] of TpvMatrix4x4;
        fCascadedShadowMapViewSpaceFrustumCorners:array[0..7,0..7] of TpvVector3;
@@ -255,6 +268,7 @@ type { TpvScene3DRendererInstance }
        fTAAEventReady:array[0..MaxInFlightFrames-1] of boolean;
       private
        fPasses:TObject;
+       fLastOutputResource:TpvFrameGraph.TPass.TUsedImageResource;
        procedure CalculateCascadedShadowMaps(const aInFlightFrameIndex:TpvInt32);
       public
        constructor Create(const aParent:TpvScene3DRendererBaseObject;const aVirtualReality:TpvVirtualReality=nil;const aExternalImageFormat:TVkFormat=VK_FORMAT_UNDEFINED); reintroduce;
@@ -277,6 +291,13 @@ type { TpvScene3DRendererInstance }
        property PointerToCameraMatrix:PpvMatrix4x4 read fPointerToCameraMatrix;
        property InFlightFrameStates:PInFlightFrameStates read fPointerToInFlightFrameStates;
        property Views:TpvScene3D.TViews read fViews;
+       property MeshFragmentSpecializationConstants:TMeshFragmentSpecializationConstants read fMeshFragmentSpecializationConstants;
+      published
+       property CameraPreset:TpvScene3DRendererCameraPreset read fCameraPreset;
+      public
+       property NearestFarthestDepthVulkanBuffers:TVulkanBuffers read fNearestFarthestDepthVulkanBuffers;
+       property DepthOfFieldAutoFocusVulkanBuffers:TVulkanBuffers read fDepthOfFieldAutoFocusVulkanBuffers;
+       property DepthOfFieldBokenShapeTapVulkanBuffers:TVulkanBuffers read fDepthOfFieldBokenShapeTapVulkanBuffers;
       public
        property LightGridSizeX:TpvInt32 read fLightGridSizeX;
        property LightGridSizeY:TpvInt32 read fLightGridSizeY;
@@ -311,10 +332,12 @@ type { TpvScene3DRendererInstance }
        property ApproximationOrderIndependentTransparentUniformVulkanBuffer:TpvVulkanBuffer read fApproximationOrderIndependentTransparentUniformVulkanBuffer;
       public
        property DepthMipmappedArray2DImages:TMipmappedArray2DImages read fDepthMipmappedArray2DImages;
-       property ForwardMipmappedArray2DImages:TMipmappedArray2DImages read fForwardMipmappedArray2DImages;
+       property SceneMipmappedArray2DImages:TMipmappedArray2DImages read fSceneMipmappedArray2DImages;
       public
        property TAAHistoryColorImages:TArray2DImages read fTAAHistoryColorImages;
        property TAAHistoryDepthImages:TArray2DImages read fTAAHistoryDepthImages;
+      public
+       property LastOutputResource:TpvFrameGraph.TPass.TUsedImageResource read fLastOutputResource write fLastOutputResource;
       published
        property FrameGraph:TpvFrameGraph read fFrameGraph;
        property VirtualReality:TpvVirtualReality read fVirtualReality;
@@ -339,6 +362,7 @@ implementation
 uses PasVulkan.Scene3D.Renderer.Passes.MeshComputePass,
      PasVulkan.Scene3D.Renderer.Passes.DepthVelocityNormalsRenderPass,
      PasVulkan.Scene3D.Renderer.Passes.DepthMipMapComputePass,
+     PasVulkan.Scene3D.Renderer.Passes.DepthOfFieldAutoFocusComputePass,
      PasVulkan.Scene3D.Renderer.Passes.LightClusterGridBuildComputePass,
      PasVulkan.Scene3D.Renderer.Passes.LightClusterGridAssignComputePass,
      PasVulkan.Scene3D.Renderer.Passes.CascadedShadowMapRenderPass,
@@ -369,6 +393,19 @@ uses PasVulkan.Scene3D.Renderer.Passes.MeshComputePass,
      PasVulkan.Scene3D.Renderer.Passes.AntialiasingTAAPreCustomPass,
      PasVulkan.Scene3D.Renderer.Passes.AntialiasingTAARenderPass,
      PasVulkan.Scene3D.Renderer.Passes.AntialiasingTAAPostCustomPass,
+     PasVulkan.Scene3D.Renderer.Passes.DepthOfFieldPrepareRenderPass,
+     PasVulkan.Scene3D.Renderer.Passes.DepthOfFieldBokehComputePass,
+     PasVulkan.Scene3D.Renderer.Passes.DepthOfFieldPrefilterRenderPass,
+     PasVulkan.Scene3D.Renderer.Passes.DepthOfFieldBlurRenderPass,
+     PasVulkan.Scene3D.Renderer.Passes.DepthOfFieldBruteforceRenderPass,
+     PasVulkan.Scene3D.Renderer.Passes.DepthOfFieldPostBlurRenderPass,
+     PasVulkan.Scene3D.Renderer.Passes.DepthOfFieldCombineRenderPass,
+     PasVulkan.Scene3D.Renderer.Passes.DepthOfFieldGatherPass1RenderPass,
+     PasVulkan.Scene3D.Renderer.Passes.DepthOfFieldGatherPass2RenderPass,
+     PasVulkan.Scene3D.Renderer.Passes.DepthOfFieldResolveRenderPass,
+     PasVulkan.Scene3D.Renderer.Passes.LensDownsampleComputePass,
+     PasVulkan.Scene3D.Renderer.Passes.LensUpsampleComputePass,
+     PasVulkan.Scene3D.Renderer.Passes.LensResolveRenderPass,
      PasVulkan.Scene3D.Renderer.Passes.TonemappingRenderPass,
      PasVulkan.Scene3D.Renderer.Passes.AntialiasingNoneRenderPass,
      PasVulkan.Scene3D.Renderer.Passes.AntialiasingDSAARenderPass,
@@ -383,6 +420,7 @@ type TpvScene3DRendererInstancePasses=class
        fMeshComputePass:TpvScene3DRendererPassesMeshComputePass;
        fDepthVelocityNormalsRenderPass:TpvScene3DRendererPassesDepthVelocityNormalsRenderPass;
        fDepthMipMapComputePass:TpvScene3DRendererPassesDepthMipMapComputePass;
+       fDepthOfFieldAutoFocusComputePass:TpvScene3DRendererPassesDepthOfFieldAutoFocusComputePass;
        fLightClusterGridBuildComputePass:TpvScene3DRendererPassesLightClusterGridBuildComputePass;
        fLightClusterGridAssignComputePass:TpvScene3DRendererPassesLightClusterGridAssignComputePass;
        fCascadedShadowMapRenderPass:TpvScene3DRendererPassesCascadedShadowMapRenderPass;
@@ -413,6 +451,19 @@ type TpvScene3DRendererInstancePasses=class
        fAntialiasingTAAPreCustomPass:TpvScene3DRendererPassesAntialiasingTAAPreCustomPass;
        fAntialiasingTAARenderPass:TpvScene3DRendererPassesAntialiasingTAARenderPass;
        fAntialiasingTAAPostCustomPass:TpvScene3DRendererPassesAntialiasingTAAPostCustomPass;
+       fDepthOfFieldPrepareRenderPass:TpvScene3DRendererPassesDepthOfFieldPrepareRenderPass;
+       fDepthOfFieldBokehComputePass:TpvScene3DRendererPassesDepthOfFieldBokehComputePass;
+       fDepthOfFieldPrefilterRenderPass:TpvScene3DRendererPassesDepthOfFieldPrefilterRenderPass;
+       fDepthOfFieldBlurRenderPass:TpvScene3DRendererPassesDepthOfFieldBlurRenderPass;
+       fDepthOfFieldBruteforceRenderPass:TpvScene3DRendererPassesDepthOfFieldBruteforceRenderPass;
+       fDepthOfFieldPostBlurRenderPass:TpvScene3DRendererPassesDepthOfFieldPostBlurRenderPass;
+       fDepthOfFieldCombineRenderPass:TpvScene3DRendererPassesDepthOfFieldCombineRenderPass;
+       fDepthOfFieldGatherPass1RenderPass:TpvScene3DRendererPassesDepthOfFieldGatherPass1RenderPass;
+       fDepthOfFieldGatherPass2RenderPass:TpvScene3DRendererPassesDepthOfFieldGatherPass2RenderPass;
+       fDepthOfFieldResolveRenderPass:TpvScene3DRendererPassesDepthOfFieldResolveRenderPass;
+       fLensDownsampleComputePass:TpvScene3DRendererPassesLensDownsampleComputePass;
+       fLensUpsampleComputePass:TpvScene3DRendererPassesLensUpsampleComputePass;
+       fLensResolveRenderPass:TpvScene3DRendererPassesLensResolveRenderPass;
        fTonemappingRenderPass:TpvScene3DRendererPassesTonemappingRenderPass;
        fAntialiasingNoneRenderPass:TpvScene3DRendererPassesAntialiasingNoneRenderPass;
        fAntialiasingDSAARenderPass:TpvScene3DRendererPassesAntialiasingDSAARenderPass;
@@ -428,6 +479,14 @@ const CountJitterOffsets=128;
 
 var JitterOffsets:array[0..CountJitterOffsets-1] of TpvVector2;
 
+{ TpvScene3DRendererInstance.TMeshFragmentSpecializationConstants }
+
+procedure TpvScene3DRendererInstance.TMeshFragmentSpecializationConstants.SetPipelineShaderStage(const aVulkanPipelineShaderStage:TpvVulkanPipelineShaderStage);
+begin
+{aVulkanPipelineShaderStage.AddSpecializationMapEntry(0,TVkPtrUInt(pointer(@UseReversedZ))-TVkPtrUInt(pointer(@self)),SizeOf(TVkBool32));
+ aVulkanPipelineShaderStage.AddSpecializationDataFromMemory(@self,SizeOf(TpvScene3DRendererInstance.TMeshFragmentSpecializationConstants),true);//}
+end;
+
 { TpvScene3DRendererInstance }
 
 constructor TpvScene3DRendererInstance.Create(const aParent:TpvScene3DRendererBaseObject;const aVirtualReality:TpvVirtualReality;const aExternalImageFormat:TVkFormat);
@@ -440,6 +499,8 @@ begin
  fExternalImageFormat:=aExternalImageFormat;
 
  fVirtualReality:=aVirtualReality;
+
+ fCameraPreset:=TpvScene3DRendererCameraPreset.Create;
 
  fLightGridSizeX:=16;
  fLightGridSizeY:=16;
@@ -584,6 +645,8 @@ begin
  fWidth:=1024;
  fHeight:=768;
 
+ fMeshFragmentSpecializationConstants.UseReversedZ:=IfThen(fZFar<0.0,VK_TRUE,VK_FALSE);
+
 end;
 
 destructor TpvScene3DRendererInstance.Destroy;
@@ -617,6 +680,8 @@ begin
  end;
 
  FreeAndNil(fPasses);
+
+ FreeAndNil(fCameraPreset);
 
  inherited Destroy;
 end;
@@ -739,7 +804,7 @@ begin
                                  );
 
  fFrameGraph.AddImageResourceType('resourcetype_color_optimized_non_alpha',
-                                  true,
+                                  false,
                                   Renderer.OptimizedNonAlphaFormat,
                                   TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT),
                                   TpvFrameGraph.TImageType.Color,
@@ -749,7 +814,7 @@ begin
                                  );
 
  fFrameGraph.AddImageResourceType('resourcetype_color_temporal_antialiasing',
-                                  true,
+                                  false,
                                   Renderer.OptimizedNonAlphaFormat,
                                   TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT),
                                   TpvFrameGraph.TImageType.Color,
@@ -759,7 +824,7 @@ begin
                                  );
 
  fFrameGraph.AddImageResourceType('resourcetype_color_tonemapping',
-                                  true,
+                                  false,
                                   VK_FORMAT_R8G8B8A8_SRGB,//TVkFormat(TpvInt32(IfThen(Renderer.SurfaceSampleCountFlagBits=TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT),TpvInt32(VK_FORMAT_R8G8B8A8_SRGB),TpvInt32(VK_FORMAT_R8G8B8A8_UNORM)))),
                                   TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT),
                                   TpvFrameGraph.TImageType.Color,
@@ -772,7 +837,7 @@ begin
                                  );
 
  fFrameGraph.AddImageResourceType('resourcetype_color',
-                                  true,
+                                  false,
                                   VK_FORMAT_R16G16B16A16_SFLOAT,
                                   TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT),
                                   TpvFrameGraph.TImageType.Color,
@@ -781,8 +846,38 @@ begin
                                   1
                                  );
 
+ fFrameGraph.AddImageResourceType('resourcetype_color_halfres',
+                                  false,
+                                  VK_FORMAT_R16G16B16A16_SFLOAT,
+                                  TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT),
+                                  TpvFrameGraph.TImageType.Color,
+                                  TpvFrameGraph.TImageSize.Create(TpvFrameGraph.TImageSize.TKind.SurfaceDependent,0.5,0.5,1.0,fCountSurfaceViews),
+                                  TVkImageUsageFlags(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) or TVkImageUsageFlags(VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT) or TVkImageUsageFlags(VK_IMAGE_USAGE_SAMPLED_BIT),
+                                  1
+                                 );
+
+{fFrameGraph.AddImageResourceType('resourcetype_color_posteffect',
+                                  false,
+                                  VK_FORMAT_R16G16B16A16_SFLOAT,
+                                  TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT),
+                                  TpvFrameGraph.TImageType.Color,
+                                  TpvFrameGraph.TImageSize.Create(TpvFrameGraph.TImageSize.TKind.SurfaceDependent,1.0,1.0,1.0,fCountSurfaceViews),
+                                  TVkImageUsageFlags(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) or TVkImageUsageFlags(VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT) or TVkImageUsageFlags(VK_IMAGE_USAGE_SAMPLED_BIT),
+                                  1
+                                 );
+
+ fFrameGraph.AddImageResourceType('resourcetype_color_posteffect_halfres',
+                                  false,
+                                  VK_FORMAT_R16G16B16A16_SFLOAT,
+                                  TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT),
+                                  TpvFrameGraph.TImageType.Color,
+                                  TpvFrameGraph.TImageSize.Create(TpvFrameGraph.TImageSize.TKind.SurfaceDependent,0.5,0.5,1.0,fCountSurfaceViews),
+                                  TVkImageUsageFlags(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) or TVkImageUsageFlags(VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT) or TVkImageUsageFlags(VK_IMAGE_USAGE_SAMPLED_BIT),
+                                  1
+                                 );}
+
  fFrameGraph.AddImageResourceType('resourcetype_color_antialiasing',
-                                  true,
+                                  false,
                                   VK_FORMAT_R8G8B8A8_SRGB,
                                   TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT),
                                   TpvFrameGraph.TImageType.Color,
@@ -792,7 +887,7 @@ begin
                                  );
 
  fFrameGraph.AddImageResourceType('resourcetype_depth',
-                                  true,
+                                  false,
                                   VK_FORMAT_D32_SFLOAT{pvApplication.VulkanDepthImageFormat},
                                   TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT),
                                   TpvFrameGraph.TImageType.From(VK_FORMAT_D32_SFLOAT{pvApplication.VulkanDepthImageFormat}),
@@ -802,7 +897,7 @@ begin
                                  );
 
  fFrameGraph.AddImageResourceType('resourcetype_predepth',
-                                  true,
+                                  false,
                                   VK_FORMAT_R32_SFLOAT,
                                   TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT),
                                   TpvFrameGraph.TImageType.Color,
@@ -812,7 +907,7 @@ begin
                                  );
 
  fFrameGraph.AddImageResourceType('resourcetype_velocity',
-                                  true,
+                                  false,
                                   VK_FORMAT_R32G32_SFLOAT,
                                   TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT),
                                   TpvFrameGraph.TImageType.Color,
@@ -822,7 +917,7 @@ begin
                                  );
 
  fFrameGraph.AddImageResourceType('resourcetype_normals',
-                                  true,
+                                  false,
                                   VK_FORMAT_A2B10G10R10_UNORM_PACK32,
                                   TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT),
                                   TpvFrameGraph.TImageType.Color,
@@ -832,7 +927,7 @@ begin
                                  );
 
  fFrameGraph.AddImageResourceType('resourcetype_ssao',
-                                  true,
+                                  false,
                                   VK_FORMAT_R32G32_SFLOAT,
                                   TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT),
                                   TpvFrameGraph.TImageType.Color,
@@ -842,7 +937,7 @@ begin
                                  );
 
  fFrameGraph.AddImageResourceType('resourcetype_ssao_final',
-                                  true,
+                                  false,
                                   VK_FORMAT_R8_UNORM,
                                   TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT),
                                   TpvFrameGraph.TImageType.Color,
@@ -934,6 +1029,16 @@ begin
                                   1
                                  );
 
+{fFrameGraph.AddImageResourceType('resourcetype_depthoffield',
+                                  false,
+                                  VK_FORMAT_R16G16B16A16_SFLOAT,
+                                  TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT),
+                                  TpvFrameGraph.TImageType.Color,
+                                  TpvFrameGraph.TImageSize.Create(TpvFrameGraph.TImageSize.TKind.SurfaceDependent,1.0,1.0,1.0,fCountSurfaceViews),
+                                  TVkImageUsageFlags(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) or TVkImageUsageFlags(VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT) or TVkImageUsageFlags(VK_IMAGE_USAGE_SAMPLED_BIT),
+                                  1
+                                 );}
+
  TpvScene3DRendererInstancePasses(fPasses).fMeshComputePass:=TpvScene3DRendererPassesMeshComputePass.Create(fFrameGraph,self);
 
  TpvScene3DRendererInstancePasses(fPasses).fDepthVelocityNormalsRenderPass:=TpvScene3DRendererPassesDepthVelocityNormalsRenderPass.Create(fFrameGraph,self);
@@ -941,6 +1046,9 @@ begin
 
  TpvScene3DRendererInstancePasses(fPasses).fDepthMipMapComputePass:=TpvScene3DRendererPassesDepthMipMapComputePass.Create(fFrameGraph,self);
  TpvScene3DRendererInstancePasses(fPasses).fDepthMipMapComputePass.AddExplicitPassDependency(TpvScene3DRendererInstancePasses(fPasses).fDepthVelocityNormalsRenderPass);
+
+ TpvScene3DRendererInstancePasses(fPasses).fDepthOfFieldAutoFocusComputePass:=TpvScene3DRendererPassesDepthOfFieldAutoFocusComputePass.Create(fFrameGraph,self);
+ TpvScene3DRendererInstancePasses(fPasses).fDepthOfFieldAutoFocusComputePass.AddExplicitPassDependency(TpvScene3DRendererInstancePasses(fPasses).fDepthMipMapComputePass);
 
  TpvScene3DRendererInstancePasses(fPasses).fLightClusterGridBuildComputePass:=TpvScene3DRendererPassesLightClusterGridBuildComputePass.Create(fFrameGraph,self);
  TpvScene3DRendererInstancePasses(fPasses).fLightClusterGridBuildComputePass.AddExplicitPassDependency(TpvScene3DRendererInstancePasses(fPasses).fDepthMipMapComputePass);
@@ -1119,6 +1227,75 @@ begin
 
  end;
 
+(**)
+ if (Renderer.DepthOfFieldMode<>TpvScene3DRendererDepthOfFieldMode.None) and not assigned(VirtualReality) then begin
+
+  TpvScene3DRendererInstancePasses(fPasses).fDepthOfFieldPrepareRenderPass:=TpvScene3DRendererPassesDepthOfFieldPrepareRenderPass.Create(fFrameGraph,self);
+
+  case Renderer.DepthOfFieldMode of
+
+   TpvScene3DRendererDepthOfFieldMode.HalfResSeparateNearFar,
+   TpvScene3DRendererDepthOfFieldMode.HalfResBruteforce:begin
+
+    TpvScene3DRendererInstancePasses(fPasses).fDepthOfFieldBokehComputePass:=TpvScene3DRendererPassesDepthOfFieldBokehComputePass.Create(fFrameGraph,self);
+
+    TpvScene3DRendererInstancePasses(fPasses).fDepthOfFieldPrefilterRenderPass:=TpvScene3DRendererPassesDepthOfFieldPrefilterRenderPass.Create(fFrameGraph,self);
+
+    TpvScene3DRendererInstancePasses(fPasses).fDepthOfFieldBlurRenderPass:=TpvScene3DRendererPassesDepthOfFieldBlurRenderPass.Create(fFrameGraph,self);
+    TpvScene3DRendererInstancePasses(fPasses).fDepthOfFieldBlurRenderPass.AddExplicitPassDependency(TpvScene3DRendererInstancePasses(fPasses).fDepthOfFieldBokehComputePass);
+
+    TpvScene3DRendererInstancePasses(fPasses).fDepthOfFieldPostBlurRenderPass:=TpvScene3DRendererPassesDepthOfFieldPostBlurRenderPass.Create(fFrameGraph,self);
+
+    TpvScene3DRendererInstancePasses(fPasses).fDepthOfFieldCombineRenderPass:=TpvScene3DRendererPassesDepthOfFieldCombineRenderPass.Create(fFrameGraph,self);
+
+   end;
+
+   TpvScene3DRendererDepthOfFieldMode.FullResBruteforce:begin
+
+    TpvScene3DRendererInstancePasses(fPasses).fDepthOfFieldBokehComputePass:=TpvScene3DRendererPassesDepthOfFieldBokehComputePass.Create(fFrameGraph,self);
+
+    TpvScene3DRendererInstancePasses(fPasses).fDepthOfFieldBruteforceRenderPass:=TpvScene3DRendererPassesDepthOfFieldBruteforceRenderPass.Create(fFrameGraph,self);
+    TpvScene3DRendererInstancePasses(fPasses).fDepthOfFieldBruteforceRenderPass.AddExplicitPassDependency(TpvScene3DRendererInstancePasses(fPasses).fDepthOfFieldBokehComputePass);
+
+   end;
+
+   else {TpvScene3DRendererDepthOfFieldMode.FullResHexagon:}begin
+
+    TpvScene3DRendererInstancePasses(fPasses).fDepthOfFieldGatherPass1RenderPass:=TpvScene3DRendererPassesDepthOfFieldGatherPass1RenderPass.Create(fFrameGraph,self);
+
+    TpvScene3DRendererInstancePasses(fPasses).fDepthOfFieldGatherPass2RenderPass:=TpvScene3DRendererPassesDepthOfFieldGatherPass2RenderPass.Create(fFrameGraph,self);
+
+   end;
+
+  end;
+
+  TpvScene3DRendererInstancePasses(fPasses).fDepthOfFieldResolveRenderPass:=TpvScene3DRendererPassesDepthOfFieldResolveRenderPass.Create(fFrameGraph,self);
+
+ end; //*)
+
+ if not assigned(VirtualReality) then begin
+
+  case Renderer.LensMode of
+
+   TpvScene3DRendererLensMode.DownUpsample:begin
+
+    TpvScene3DRendererInstancePasses(fPasses).fLensDownsampleComputePass:=TpvScene3DRendererPassesLensDownsampleComputePass.Create(fFrameGraph,self);
+
+    TpvScene3DRendererInstancePasses(fPasses).fLensUpsampleComputePass:=TpvScene3DRendererPassesLensUpsampleComputePass.Create(fFrameGraph,self);
+    TpvScene3DRendererInstancePasses(fPasses).fLensUpsampleComputePass.AddExplicitPassDependency(TpvScene3DRendererInstancePasses(fPasses).fLensDownsampleComputePass);
+
+    TpvScene3DRendererInstancePasses(fPasses).fLensResolveRenderPass:=TpvScene3DRendererPassesLensResolveRenderPass.Create(fFrameGraph,self);
+    TpvScene3DRendererInstancePasses(fPasses).fLensResolveRenderPass.AddExplicitPassDependency(TpvScene3DRendererInstancePasses(fPasses).fLensUpsampleComputePass);
+
+   end;
+
+   else begin
+   end;
+
+  end;
+
+ end;
+
  TpvScene3DRendererInstancePasses(fPasses).fTonemappingRenderPass:=TpvScene3DRendererPassesTonemappingRenderPass.Create(fFrameGraph,self);
 
  if Renderer.AntialiasingMode=TpvScene3DRendererAntialiasingMode.TAA then begin
@@ -1190,6 +1367,8 @@ begin
 
  end;
 
+ fCameraPreset.MaxCoC:=((fCameraPreset.BlurKernelSize*4.0)+6.0)/fHeight;
+
  FillChar(fInFlightFrameStates,SizeOf(TInFlightFrameStates),#0);
 
  fFrameGraph.SetSwapChain(pvApplication.VulkanSwapChain,
@@ -1227,6 +1406,51 @@ begin
 
     UniversalFence:=TpvVulkanFence.Create(Renderer.VulkanDevice);
     try
+
+     for InFlightFrameIndex:=0 to Renderer.CountInFlightFrames-1 do begin
+      fNearestFarthestDepthVulkanBuffers[InFlightFrameIndex]:=TpvVulkanBuffer.Create(pvApplication.VulkanDevice,
+                                                                                     SizeOf(TpvVector4),
+                                                                                     TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT),
+                                                                                     TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                                                     [],
+                                                                                     TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+                                                                                     0,
+                                                                                     0,
+                                                                                     TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                                                                                     0,
+                                                                                     0,
+                                                                                     0,
+                                                                                     0,
+                                                                                     []);
+      fDepthOfFieldAutoFocusVulkanBuffers[InFlightFrameIndex]:=TpvVulkanBuffer.Create(pvApplication.VulkanDevice,
+                                                                                      SizeOf(TpvVector4),
+                                                                                      TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT),
+                                                                                      TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                                                      [],
+                                                                                      TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+                                                                                      0,
+                                                                                      0,
+                                                                                      TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                                                                                      0,
+                                                                                      0,
+                                                                                      0,
+                                                                                      0,
+                                                                                      []);
+      fDepthOfFieldBokenShapeTapVulkanBuffers[InFlightFrameIndex]:=TpvVulkanBuffer.Create(pvApplication.VulkanDevice,
+                                                                                          (SizeOf(TpvVector2)*4096)+SizeOf(TpvVector4),
+                                                                                          TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT),
+                                                                                          TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                                                          [],
+                                                                                          TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+                                                                                          0,
+                                                                                          0,
+                                                                                          TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                                                                                          0,
+                                                                                          0,
+                                                                                          0,
+                                                                                          0,
+                                                                                          []);
+     end;
 
      fLightGridTileSizeX:=(fWidth+(fLightGridSizeX-1)) div fLightGridSizeX;
      fLightGridTileSizeY:=(fHeight+(fLightGridSizeY-1)) div fLightGridSizeY;
@@ -1306,7 +1530,7 @@ begin
 
      for InFlightFrameIndex:=0 to Renderer.CountInFlightFrames-1 do begin
       fDepthMipmappedArray2DImages[InFlightFrameIndex]:=TpvScene3DRendererMipmappedArray2DImage.Create(fWidth,fHeight,fCountSurfaceViews,VK_FORMAT_R32_SFLOAT,false,VK_SAMPLE_COUNT_1_BIT,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-      fForwardMipmappedArray2DImages[InFlightFrameIndex]:=TpvScene3DRendererMipmappedArray2DImage.Create(fWidth,fHeight,fCountSurfaceViews,Renderer.OptimizedNonAlphaFormat,true,VK_SAMPLE_COUNT_1_BIT,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+      fSceneMipmappedArray2DImages[InFlightFrameIndex]:=TpvScene3DRendererMipmappedArray2DImage.Create(fWidth,fHeight,fCountSurfaceViews,Renderer.OptimizedNonAlphaFormat,true,VK_SAMPLE_COUNT_1_BIT,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
      end;
 
      case Renderer.TransparencyMode of
@@ -1471,7 +1695,13 @@ begin
 
  for InFlightFrameIndex:=0 to Renderer.CountInFlightFrames-1 do begin
   FreeAndNil(fDepthMipmappedArray2DImages[InFlightFrameIndex]);
-  FreeAndNil(fForwardMipmappedArray2DImages[InFlightFrameIndex]);
+  FreeAndNil(fSceneMipmappedArray2DImages[InFlightFrameIndex]);
+ end;
+
+ for InFlightFrameIndex:=0 to Renderer.CountInFlightFrames-1 do begin
+  FreeAndNil(fNearestFarthestDepthVulkanBuffers[InFlightFrameIndex]);
+  FreeAndNil(fDepthOfFieldAutoFocusVulkanBuffers[InFlightFrameIndex]);
+  FreeAndNil(fDepthOfFieldBokenShapeTapVulkanBuffers[InFlightFrameIndex]);
  end;
 
  for InFlightFrameIndex:=0 to Renderer.CountInFlightFrames-1 do begin

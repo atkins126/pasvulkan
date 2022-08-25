@@ -111,6 +111,27 @@ type TpvScene3DRendererAntialiasingMode=
 
      PpvScene3DRendererTransparencyMode=^TpvScene3DRendererTransparencyMode;
 
+     TpvScene3DRendererDepthOfFieldMode=
+      (
+       Auto=0,
+       None,
+       HalfResSeparateNearFar,
+       HalfResBruteforce,
+       FullResHexagon,
+       FullResBruteforce
+      );
+
+     PpvScene3DRendererDepthOfFieldMode=^TpvScene3DRendererDepthOfFieldMode;
+
+     TpvScene3DRendererLensMode=
+      (
+       Auto=0,
+       None,
+       DownUpsample
+      );
+
+     PpvScene3DRendererLensMode=^TpvScene3DRendererLensMode;
+
 var pvScene3DShaderVirtualFileSystem:TpvVirtualFileSystem=nil;
 
 implementation

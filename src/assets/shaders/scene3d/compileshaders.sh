@@ -29,9 +29,31 @@ compileshaderarguments=(
   '-V downsample_depth.comp -DMIPMAPLEVEL=1 -DREVERSEDZ -o downsample_depth_reversedz_level1_comp.spv'
   '-V downsample_depth.comp -DMIPMAPLEVEL=1 -DMULTIVIEW -DREVERSEDZ -o downsample_depth_multiview_reversedz_level1_comp.spv'
 
+  '-V dof_autofocus.comp -o dof_autofocus_comp.spv'
+  '-V dof_bokeh.comp -o dof_bokeh_comp.spv'
+  '-V dof_prepare.frag -o dof_prepare_frag.spv'
+  '-V dof_prefilter.frag -o dof_prefilter_frag.spv'
+  '-V dof_blur.frag -o dof_blur_frag.spv'
+  '-V dof_bruteforce.frag -o dof_bruteforce_frag.spv'
+  '-V dof_postblur.frag -o dof_postblur_frag.spv'
+  '-V dof_combine.frag -o dof_combine_frag.spv'
+  '-V dof_gather.frag -DPASS1 -o dof_gather_pass1_frag.spv'
+  '-V dof_gather.frag -DPASS2 -o dof_gather_pass2_frag.spv'
+  '-V dof_resolve.frag -o dof_resolve_frag.spv'
+
   '-V lightclustergridbuild.comp -o lightclustergridbuild_comp.spv'
   '-V lightclustergridbuild.comp -DREVERSEDZ -o lightclustergridbuild_reversedz_comp.spv'
   '-V lightclusterassign.comp -o lightclusterassign_comp.spv'
+  
+  '-V lens_upsample.comp -DR11G11B10F -o lens_upsample_r11g11b10f_comp.spv'
+  '-V lens_upsample.comp -DRGBA16F -o lens_upsample_rgba16f_comp.spv'
+  '-V lens_upsample.comp -DR11G11B10F -DMULTIVIEW -o lens_upsample_r11g11b10f_multiview_comp.spv'
+  '-V lens_upsample.comp -DRGBA16F -DMULTIVIEW -o lens_upsample_rgba16f_multiview_comp.spv'
+  '-V lens_resolve.frag -o lens_resolve_frag.spv'
+
+  '-V lens_color.frag -o lens_color_frag.spv'
+  '-V lens_dirt.frag -o lens_dirt_frag.spv'
+  '-V lens_star.frag -o lens_star_frag.spv'
   
   '-V mesh.comp -o mesh_comp.spv'
 

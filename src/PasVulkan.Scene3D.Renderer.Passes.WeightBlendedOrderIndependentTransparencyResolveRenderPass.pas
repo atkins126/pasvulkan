@@ -119,7 +119,7 @@ begin
 
  fInstance:=aInstance;
 
- Name:='WeightBlendedOrderIndependentTransparencyResolve';
+ Name:='WeightBlendedOrderIndependentTransparencyResolveRenderPass';
 
  MultiviewMask:=fInstance.SurfaceMultiviewMask;
 
@@ -195,6 +195,8 @@ begin
                                          );
 
  end;
+
+ fInstance.LastOutputResource:=fResourceSurface;
 
 end;
 

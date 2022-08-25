@@ -116,7 +116,7 @@ begin
 
  fInstance:=aInstance;
 
- Name:='Tonemapping';
+ Name:='TonemappingRenderPass';
 
  MultiviewMask:=fInstance.SurfaceMultiviewMask;
 
@@ -132,7 +132,17 @@ begin
                                        1.0,
                                        fInstance.CountSurfaceViews);
 
- if fInstance.Renderer.AntialiasingMode=TpvScene3DRendererAntialiasingMode.TAA then begin
+ fResourceColor:=AddImageInput(fInstance.LastOutputResource.ResourceType.Name,
+                               fInstance.LastOutputResource.Resource.Name,
+                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                               [TpvFrameGraph.TResourceTransition.TFlag.Attachment]);
+
+{fResourceColor:=AddImageInput('resourcetype_depthoffield',
+                               'resource_depthoffield_final',
+                                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                [TpvFrameGraph.TResourceTransition.TFlag.Attachment]);}
+
+{if fInstance.Renderer.AntialiasingMode=TpvScene3DRendererAntialiasingMode.TAA then begin
   fResourceColor:=AddImageInput('resourcetype_color_temporal_antialiasing',
                                 'resource_temporal_antialiasing_color',
                                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
@@ -156,7 +166,7 @@ begin
                                  [TpvFrameGraph.TResourceTransition.TFlag.Attachment]
                                 );
   end;
- end;
+ end;       }
 
  fResourceSurface:=AddImageOutput('resourcetype_color_tonemapping',
                                   'resource_tonemapping_color',

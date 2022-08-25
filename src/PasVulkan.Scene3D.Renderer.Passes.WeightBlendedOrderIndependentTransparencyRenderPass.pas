@@ -126,7 +126,7 @@ inherited Create(aFrameGraph);
 
  fInstance:=aInstance;
 
- Name:='WeightBlendedOrderIndependentTransparency';
+ Name:='WeightBlendedOrderIndependentTransparencyRenderPass';
 
  MultiviewMask:=fInstance.SurfaceMultiviewMask;
 
@@ -193,10 +193,12 @@ begin
 end;
 
 procedure TpvScene3DRendererPassesWeightBlendedOrderIndependentTransparencyRenderPass.AcquirePersistentResources;
-var Index:TpvSizeInt;
-    Stream:TStream;
+var Stream:TStream;
+    MeshFragmentSpecializationConstants:TpvScene3DRendererInstance.TMeshFragmentSpecializationConstants;
 begin
  inherited AcquirePersistentResources;
+
+ MeshFragmentSpecializationConstants:=fInstance.MeshFragmentSpecializationConstants;
 
  Stream:=pvScene3DShaderVirtualFileSystem.GetFile('mesh_vert.spv');
  try
@@ -222,8 +224,10 @@ begin
  fVulkanPipelineShaderStageMeshVertex:=TpvVulkanPipelineShaderStage.Create(VK_SHADER_STAGE_VERTEX_BIT,fMeshVertexShaderModule,'main');
 
  fVulkanPipelineShaderStageMeshFragment:=TpvVulkanPipelineShaderStage.Create(VK_SHADER_STAGE_FRAGMENT_BIT,fMeshFragmentShaderModule,'main');
+ MeshFragmentSpecializationConstants.SetPipelineShaderStage(fVulkanPipelineShaderStageMeshFragment);
 
  fVulkanPipelineShaderStageMeshMaskedFragment:=TpvVulkanPipelineShaderStage.Create(VK_SHADER_STAGE_FRAGMENT_BIT,fMeshMaskedFragmentShaderModule,'main');
+ MeshFragmentSpecializationConstants.SetPipelineShaderStage(fVulkanPipelineShaderStageMeshMaskedFragment);
 
 end;
 
@@ -359,7 +363,7 @@ begin
                                                                        [TVkDescriptorImageInfo.Create(fInstance.Renderer.SSAOSampler.Handle,
                                                                                                       fResourceSSAO.VulkanImageViews[InFlightFrameIndex].Handle,
                                                                                                       fResourceSSAO.ResourceTransition.Layout), // TVkImageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))],
-                                                                        fInstance.ForwardMipmappedArray2DImages[InFlightFrameIndex].ArrayDescriptorImageInfo],
+                                                                        fInstance.SceneMipmappedArray2DImages[InFlightFrameIndex].ArrayDescriptorImageInfo],
                                                                        [],
                                                                        [],
                                                                        false);

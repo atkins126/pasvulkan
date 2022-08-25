@@ -301,16 +301,16 @@ type EpvFrameGraph=class(Exception);
              private
               fFrameGraph:TpvFrameGraph;
               fName:TpvRawByteString;
-              fPersientent:boolean;
+              fPersistent:boolean;
              public
               constructor Create(const aFrameGraph:TpvFrameGraph;
                                  const aName:TpvRawByteString;
-                                 const aPersientent:boolean); reintroduce; virtual;
+                                 const aPersistent:boolean); reintroduce; virtual;
               destructor Destroy; override;
              published
               property FrameGraph:TpvFrameGraph read fFrameGraph;
               property Name:TpvRawByteString read fName;
-              property Persientent:boolean read fPersientent write fPersientent;
+              property Persistent:boolean read fPersistent write fPersistent;
             end;
             TImageResourceType=class(TResourceType)
              private
@@ -327,7 +327,7 @@ type EpvFrameGraph=class(Exception);
              public
               constructor Create(const aFrameGraph:TpvFrameGraph;
                                  const aName:TpvRawByteString;
-                                 const aPersientent:boolean;
+                                 const aPersistent:boolean;
                                  const aFormat:TVkFormat;
                                  const aSamples:TVkSampleCountFlagBits;
                                  const aImageType:TImageType;
@@ -340,7 +340,7 @@ type EpvFrameGraph=class(Exception);
                                  const aAdditionalFormat:TVkFormat); reintroduce; overload;
               constructor Create(const aFrameGraph:TpvFrameGraph;
                                  const aName:TpvRawByteString;
-                                 const aPersientent:boolean;
+                                 const aPersistent:boolean;
                                  const aFormat:TVkFormat;
                                  const aSamples:TVkSampleCountFlagBits;
                                  const aImageType:TImageType;
@@ -380,7 +380,7 @@ type EpvFrameGraph=class(Exception);
              public
               constructor Create(const aFrameGraph:TpvFrameGraph;
                                  const aName:TpvRawByteString;
-                                 const aPersientent:boolean;
+                                 const aPersistent:boolean;
                                  const aSize:TVkDeviceSize;
                                  const aUsage:TVkBufferUsageFlags;
                                  const aMemoryRequiredPropertyFlags:TVkMemoryPropertyFlags=TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
@@ -412,7 +412,11 @@ type EpvFrameGraph=class(Exception);
             TResourceTypeList=TpvObjectGenericList<TResourceType>;
             TResourceTypeNameHashMap=TpvStringHashMap<TResourceType>;
             TResourceTransition=class;
-            TResourceTransitionList=TpvObjectGenericList<TResourceTransition>;
+            { TResourceTransitionList }
+            TResourceTransitionList=class(TpvObjectGenericList<TResourceTransition>)
+             public
+              function HasPhysicalPassesIntersectionWith(const aWith:TResourceTransitionList):boolean;
+            end;
             TResourcePhysicalData=class
              private
               fFrameGraph:TpvFrameGraph;
@@ -509,6 +513,10 @@ type EpvFrameGraph=class(Exception);
               fResourcePhysicalData:TResourcePhysicalData;
               fExternalData:TExternalData;
               fTransient:boolean;
+              fMinimumPhysicalPassStepIndex:TpvSizeInt;
+              fMaximumPhysicalPassStepIndex:TpvSizeInt;
+              fLastTransition:TResourceTransition;
+              fLayout:TVkImageLayout;
              public
               constructor Create(const aFrameGraph:TpvFrameGraph); reintroduce;
               destructor Destroy; override;
@@ -532,8 +540,6 @@ type EpvFrameGraph=class(Exception);
               fMinimumPhysicalPassStepIndex:TpvSizeInt;
               fMaximumPhysicalPassStepIndex:TpvSizeInt;
               fResourceAliasGroup:TResourceAliasGroup;
-              fLastTransition:TResourceTransition;
-              fLayout:TVkImageLayout;
               fLayoutHistory:TLayoutHistory;
               fExternalData:TExternalData;
               fTransient:boolean;
@@ -808,7 +814,7 @@ type EpvFrameGraph=class(Exception);
              public
               type TAttachment=record
                     Resource:TResource;
-                    Persientent:boolean;
+                    Persistent:boolean;
                     ImageType:TImageType;
                     Format:TVkFormat;
                     Samples:TVkSampleCountFlagBits;
@@ -904,6 +910,9 @@ type EpvFrameGraph=class(Exception);
               fDstStageMask:TVkPipelineStageFlags;
             end;
             TExplicitPassNameDependencyList=TpvObjectGenericList<TExplicitPassNameDependency>;
+
+            { TPass }
+
             TPass=class
              public
               type TFlag=
@@ -1017,6 +1026,8 @@ type EpvFrameGraph=class(Exception);
                                          const aBufferSubresourceRange:TBufferSubresourceRange;
                                          const aResourceInstanceType:TResourceInstanceType;
                                          const aExternalBufferData:TExternalBufferData):TResourceTransition; overload;
+              procedure AddStartMarker(const aQueue:TpvFrameGraph.TQueue;const aCommandBuffer:TpvVulkanCommandBuffer);
+              procedure AddEndMarker(const aQueue:TpvFrameGraph.TQueue;const aCommandBuffer:TpvVulkanCommandBuffer);
              public
               constructor Create(const aFrameGraph:TpvFrameGraph); reintroduce; virtual;
               destructor Destroy; override;
@@ -1206,7 +1217,7 @@ type EpvFrameGraph=class(Exception);
                               const aSurfaceDepthFormat:TVkFormat);
        function AddQueue(const aPhysicalQueue:TpvVulkanQueue):TQueue;
        function AddImageResourceType(const aName:TpvRawByteString;
-                                     const aPersientent:boolean;
+                                     const aPersistent:boolean;
                                      const aFormat:TVkFormat;
                                      const aSamples:TVkSampleCountFlagBits;
                                      const aImageType:TImageType;
@@ -1218,7 +1229,7 @@ type EpvFrameGraph=class(Exception);
                                      const aFinalLayout:TVkImageLayout=VK_IMAGE_LAYOUT_UNDEFINED;
                                      const aAdditionalFormat:TVkFormat=VK_FORMAT_UNDEFINED):TResourceType; overload;
        function AddImageResourceType(const aName:TpvRawByteString;
-                                     const aPersientent:boolean;
+                                     const aPersistent:boolean;
                                      const aFormat:TVkFormat;
                                      const aSamples:TVkSampleCountFlagBits;
                                      const aImageType:TImageType;
@@ -1229,7 +1240,7 @@ type EpvFrameGraph=class(Exception);
                                      const aFinalLayout:TVkImageLayout=VK_IMAGE_LAYOUT_UNDEFINED;
                                      const aAdditionalFormat:TVkFormat=VK_FORMAT_UNDEFINED):TResourceType; overload;
        function AddBufferResourceType(const aName:TpvRawByteString;
-                                      const aPersientent:boolean;
+                                      const aPersistent:boolean;
                                       const aSize:TVkDeviceSize;
                                       const aUsage:TVkBufferUsageFlags;
                                       const aMemoryRequiredPropertyFlags:TVkMemoryPropertyFlags=TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
@@ -1664,7 +1675,7 @@ end;
 
 constructor TpvFrameGraph.TResourceType.Create(const aFrameGraph:TpvFrameGraph;
                                                const aName:TpvRawByteString;
-                                               const aPersientent:boolean);
+                                               const aPersistent:boolean);
 begin
  inherited Create;
  if length(trim(String(aName)))=0 then begin
@@ -1677,7 +1688,7 @@ begin
  fName:=aName;
  fFrameGraph.fResourceTypes.Add(self);
  fFrameGraph.fResourceTypeNameHashMap.Add(fName,self);
- fPersientent:=aPersientent;
+ fPersistent:=aPersistent;
 end;
 
 destructor TpvFrameGraph.TResourceType.Destroy;
@@ -1689,7 +1700,7 @@ end;
 
 constructor TpvFrameGraph.TImageResourceType.Create(const aFrameGraph:TpvFrameGraph;
                                                     const aName:TpvRawByteString;
-                                                    const aPersientent:boolean;
+                                                    const aPersistent:boolean;
                                                     const aFormat:TVkFormat;
                                                     const aSamples:TVkSampleCountFlagBits;
                                                     const aImageType:TImageType;
@@ -1703,7 +1714,7 @@ constructor TpvFrameGraph.TImageResourceType.Create(const aFrameGraph:TpvFrameGr
 begin
  Create(aFrameGraph,
         aName,
-        aPersientent);
+        aPersistent);
  fFormat:=aFormat;
  fSamples:=aSamples;
  fImageType:=aImageType;
@@ -1718,7 +1729,7 @@ end;
 
 constructor TpvFrameGraph.TImageResourceType.Create(const aFrameGraph:TpvFrameGraph;
                                                     const aName:TpvRawByteString;
-                                                    const aPersientent:boolean;
+                                                    const aPersistent:boolean;
                                                     const aFormat:TVkFormat;
                                                     const aSamples:TVkSampleCountFlagBits;
                                                     const aImageType:TImageType;
@@ -1731,7 +1742,7 @@ constructor TpvFrameGraph.TImageResourceType.Create(const aFrameGraph:TpvFrameGr
 begin
  Create(aFrameGraph,
         aName,
-        aPersientent,
+        aPersistent,
         aFormat,
         aSamples,
         aImageType,
@@ -1757,7 +1768,7 @@ end;
 
 constructor TpvFrameGraph.TBufferResourceType.Create(const aFrameGraph:TpvFrameGraph;
                                                      const aName:TpvRawByteString;
-                                                     const aPersientent:boolean;
+                                                     const aPersistent:boolean;
                                                      const aSize:TVkDeviceSize;
                                                      const aUsage:TVkBufferUsageFlags;
                                                      const aMemoryRequiredPropertyFlags:TVkMemoryPropertyFlags;
@@ -1770,7 +1781,7 @@ constructor TpvFrameGraph.TBufferResourceType.Create(const aFrameGraph:TpvFrameG
                                                      const aMemoryPreferredNotHeapFlags:TVkMemoryHeapFlags;
                                                      const aBufferFlags:TpvVulkanBufferFlags);
 begin
- inherited Create(aFrameGraph,aName,aPersientent);
+ inherited Create(aFrameGraph,aName,aPersistent);
  fSize:=aSize;
  fUsage:=fUsage;
  fMemoryRequiredPropertyFlags:=aMemoryRequiredPropertyFlags;
@@ -2456,7 +2467,7 @@ begin
  fMinimumPhysicalPassStepIndex:=High(TpvSizeInt);
  fMaximumPhysicalPassStepIndex:=Low(TpvSizeInt);
 
- fLayout:=VK_IMAGE_LAYOUT_UNDEFINED;
+//fLayout:=VK_IMAGE_LAYOUT_UNDEFINED;
 
  fLayoutHistory:=TLayoutHistory.Create(VK_IMAGE_LAYOUT_UNDEFINED);
 
@@ -2484,6 +2495,27 @@ begin
  FreeAndNil(fResourceTransitions);
  FreeAndNil(fLayoutHistory);
  inherited Destroy;
+end;
+
+{ TpvFrameGraph.TResourceTransitionList }
+
+function TpvFrameGraph.TResourceTransitionList.HasPhysicalPassesIntersectionWith(const aWith:TpvFrameGraph.TResourceTransitionList):boolean;
+var Index,OtherIndex:TpvSizeInt;
+    ResourceTransitions:array[0..1] of TpvFrameGraph.TResourceTransition;
+begin
+ for Index:=0 to Count-1 do begin
+  ResourceTransitions[0]:=Items[Index];
+  for OtherIndex:=0 to aWith.Count-1 do begin
+   ResourceTransitions[1]:=aWith.Items[OtherIndex];
+   if (ResourceTransitions[0]=ResourceTransitions[1]) or
+      (ResourceTransitions[0].fPass=ResourceTransitions[1].fPass) or
+      (ResourceTransitions[0].fPass.fPhysicalPass=ResourceTransitions[1].fPass.fPhysicalPass) then begin
+    result:=true;
+    exit;
+   end;
+  end;
+ end;
+ result:=false;
 end;
 
 { TpvFrameGraph.TResourceTransition }
@@ -2946,6 +2978,58 @@ begin
                                     aAccessFlags,
                                     aBufferSubresourceRange);
  fFrameGraph.fValid:=false;
+end;
+
+procedure TpvFrameGraph.TPass.AddStartMarker(const aQueue:TpvFrameGraph.TQueue;const aCommandBuffer:TpvVulkanCommandBuffer);
+const LabelInfoColors:array[0..15,0..3] of TVkFloat=
+       (
+        (1.0,0.8,0.5,1.0),
+        (1.0,0.2,0.2,1.0),
+        (0.2,1.0,0.2,1.0),
+        (0.2,0.2,1.0,1.0),
+        (1.0,0.2,1.0,1.0),
+        (1.0,0.8,0.5,1.0),
+        (1.0,1.0,0.2,1.0),
+        (0.2,1.0,1.0,1.0),
+        (0.5,0.8,0.5,1.0),
+        (0.8,0.5,1.0,1.0),
+        (0.5,1.0,0.5,1.0),
+        (0.5,0.5,1.0,1.0),
+        (1.0,0.5,1.0,1.0),
+        (0.8,0.8,1.0,1.0),
+        (1.0,1.0,0.5,1.0),
+        (0.5,1.0,1.0,1.0)
+       );
+var LabelInfo:TVkDebugUtilsLabelEXT;
+begin
+ if assigned(aCommandBuffer.Device.Commands.Commands.CmdBeginDebugUtilsLabelEXT) and
+    assigned(aCommandBuffer.Device.Commands.Commands.CmdEndDebugUtilsLabelEXT) then begin
+  FillChar(LabelInfo,SizeOf(TVkDebugUtilsLabelEXT),#0);
+  LabelInfo.sType:=VK_STRUCTURE_TYPE_DEBUG_UTILS_LABEL_EXT;
+  LabelInfo.pNext:=nil;
+  LabelInfo.pLabelName:=PAnsiChar(fName);
+  LabelInfo.color[0]:=LabelInfoColors[fIndex and $f,0];
+  LabelInfo.color[1]:=LabelInfoColors[fIndex and $f,1];
+  LabelInfo.color[2]:=LabelInfoColors[fIndex and $f,2];
+  LabelInfo.color[3]:=LabelInfoColors[fIndex and $f,3];
+  aCommandBuffer.Device.Commands.CmdBeginDebugUtilsLabelEXT(aCommandBuffer.Handle,@LabelInfo);
+ end;
+ if assigned(fFrameGraph.fTimerQueries) and assigned(fFrameGraph.fTimerQueries[fFrameGraph.fDrawInFlightFrameIndex]) then begin
+  fTimerQueryIndices[fFrameGraph.fDrawInFlightFrameIndex]:=fFrameGraph.fTimerQueries[fFrameGraph.fDrawInFlightFrameIndex].Start(aQueue.fPhysicalQueue,aCommandBuffer,fName);
+ end else begin
+  fTimerQueryIndices[fFrameGraph.fDrawInFlightFrameIndex]:=-1;
+ end;
+end;
+
+procedure TpvFrameGraph.TPass.AddEndMarker(const aQueue:TpvFrameGraph.TQueue;const aCommandBuffer:TpvVulkanCommandBuffer);
+begin
+ if assigned(fFrameGraph.fTimerQueries) and assigned(fFrameGraph.fTimerQueries[fFrameGraph.fDrawInFlightFrameIndex]) then begin
+  fFrameGraph.fTimerQueries[fFrameGraph.fDrawInFlightFrameIndex].Stop(aQueue.fPhysicalQueue,aCommandBuffer);
+ end;
+ if assigned(aCommandBuffer.Device.Commands.Commands.CmdBeginDebugUtilsLabelEXT) and
+    assigned(aCommandBuffer.Device.Commands.Commands.CmdEndDebugUtilsLabelEXT) then begin
+  aCommandBuffer.Device.Commands.CmdEndDebugUtilsLabelEXT(aCommandBuffer.Handle);
+ end;
 end;
 
 function TpvFrameGraph.TPass.AddImageInput(const aResourceTypeName:TpvRawByteString;
@@ -3564,11 +3648,7 @@ end;
 procedure TpvFrameGraph.TPhysicalComputePass.Execute(const aCommandBuffer:TpvVulkanCommandBuffer);
 begin
  inherited Execute(aCommandBuffer);
- if assigned(fFrameGraph.fTimerQueries) and assigned(fFrameGraph.fTimerQueries[fFrameGraph.fDrawInFlightFrameIndex]) then begin
-  fComputePass.fTimerQueryIndices[fFrameGraph.fDrawInFlightFrameIndex]:=fFrameGraph.fTimerQueries[fFrameGraph.fDrawInFlightFrameIndex].Start(fQueue.fPhysicalQueue,aCommandBuffer,fComputePass.fName);
- end else begin
-  fComputePass.fTimerQueryIndices[fFrameGraph.fDrawInFlightFrameIndex]:=-1;
- end;
+ fComputePass.AddStartMarker(fQueue,aCommandBuffer);
  fEventPipelineBarrierGroups.Execute(aCommandBuffer);
  fBeforePipelineBarrierGroups.Execute(aCommandBuffer);
  ResetEvents(aCommandBuffer,fFrameGraph.fDrawInFlightFrameIndex);
@@ -3577,9 +3657,7 @@ begin
  end;
  fAfterPipelineBarrierGroups.Execute(aCommandBuffer);
  SetEvents(aCommandBuffer,fFrameGraph.fDrawInFlightFrameIndex);
- if assigned(fFrameGraph.fTimerQueries) and assigned(fFrameGraph.fTimerQueries[fFrameGraph.fDrawInFlightFrameIndex]) then begin
-  fFrameGraph.fTimerQueries[fFrameGraph.fDrawInFlightFrameIndex].Stop(fQueue.fPhysicalQueue,aCommandBuffer);
- end;
+ fComputePass.AddEndMarker(fQueue,aCommandBuffer);
 end;
 
 { TpvFrameGraph.TPhysicalTransferPass }
@@ -3631,11 +3709,7 @@ end;
 procedure TpvFrameGraph.TPhysicalTransferPass.Execute(const aCommandBuffer:TpvVulkanCommandBuffer);
 begin
  inherited Execute(aCommandBuffer);
- if assigned(fFrameGraph.fTimerQueries) and assigned(fFrameGraph.fTimerQueries[fFrameGraph.fDrawInFlightFrameIndex]) then begin
-  fTransferPass.fTimerQueryIndices[fFrameGraph.fDrawInFlightFrameIndex]:=fFrameGraph.fTimerQueries[fFrameGraph.fDrawInFlightFrameIndex].Start(fQueue.fPhysicalQueue,aCommandBuffer,fTransferPass.fName);
- end else begin
-  fTransferPass.fTimerQueryIndices[fFrameGraph.fDrawInFlightFrameIndex]:=-1;
- end;
+ fTransferPass.AddStartMarker(fQueue,aCommandBuffer);
  fEventPipelineBarrierGroups.Execute(aCommandBuffer);
  fBeforePipelineBarrierGroups.Execute(aCommandBuffer);
  ResetEvents(aCommandBuffer,fFrameGraph.fDrawInFlightFrameIndex);
@@ -3644,9 +3718,7 @@ begin
  end;
  fAfterPipelineBarrierGroups.Execute(aCommandBuffer);
  SetEvents(aCommandBuffer,fFrameGraph.fDrawInFlightFrameIndex);
- if assigned(fFrameGraph.fTimerQueries) and assigned(fFrameGraph.fTimerQueries[fFrameGraph.fDrawInFlightFrameIndex]) then begin
-  fFrameGraph.fTimerQueries[fFrameGraph.fDrawInFlightFrameIndex].Stop(fQueue.fPhysicalQueue,aCommandBuffer);
- end;
+ fTransferPass.AddEndMarker(fQueue,aCommandBuffer);
 end;
 
 { TpvFrameGraph.TPhysicalCustomPass }
@@ -3698,11 +3770,7 @@ end;
 procedure TpvFrameGraph.TPhysicalCustomPass.Execute(const aCommandBuffer:TpvVulkanCommandBuffer);
 begin
  inherited Execute(aCommandBuffer);
- if assigned(fFrameGraph.fTimerQueries) and assigned(fFrameGraph.fTimerQueries[fFrameGraph.fDrawInFlightFrameIndex]) then begin
-  fCustomPass.fTimerQueryIndices[fFrameGraph.fDrawInFlightFrameIndex]:=fFrameGraph.fTimerQueries[fFrameGraph.fDrawInFlightFrameIndex].Start(fQueue.fPhysicalQueue,aCommandBuffer,fCustomPass.fName);
- end else begin
-  fCustomPass.fTimerQueryIndices[fFrameGraph.fDrawInFlightFrameIndex]:=-1;
- end;
+ fCustomPass.AddStartMarker(fQueue,aCommandBuffer);
  fEventPipelineBarrierGroups.Execute(aCommandBuffer);
  fBeforePipelineBarrierGroups.Execute(aCommandBuffer);
  ResetEvents(aCommandBuffer,fFrameGraph.fDrawInFlightFrameIndex);
@@ -3711,9 +3779,7 @@ begin
  end;
  fAfterPipelineBarrierGroups.Execute(aCommandBuffer);
  SetEvents(aCommandBuffer,fFrameGraph.fDrawInFlightFrameIndex);
- if assigned(fFrameGraph.fTimerQueries) and assigned(fFrameGraph.fTimerQueries[fFrameGraph.fDrawInFlightFrameIndex]) then begin
-  fFrameGraph.fTimerQueries[fFrameGraph.fDrawInFlightFrameIndex].Stop(fQueue.fPhysicalQueue,aCommandBuffer);
- end;
+ fCustomPass.AddEndMarker(fQueue,aCommandBuffer);
 end;
 
 { TpvFrameGraph.TPhysicalRenderPass.TSubpass }
@@ -4022,7 +4088,9 @@ begin
  end;
 
  for Subpass in fSubpasses do begin
+//write('Compiling render pass ', Subpass.fRenderPass.Name,' . . .');
   Subpass.AcquireVolatileResources;
+//writeln(' OK!');
  end;
 
 end;
@@ -4100,15 +4168,9 @@ begin
  for SubpassIndex:=0 to fSubpasses.Count-1 do begin
   Subpass:=fSubpasses[SubpassIndex];
   if Subpass.fRenderPass.fDoubleBufferedEnabledState[fFrameGraph.fDrawFrameIndex and 1] then begin
-   if assigned(fFrameGraph.fTimerQueries) and assigned(fFrameGraph.fTimerQueries[fFrameGraph.fDrawInFlightFrameIndex]) then begin
-    Subpass.fRenderPass.fTimerQueryIndices[fFrameGraph.fDrawInFlightFrameIndex]:=fFrameGraph.fTimerQueries[fFrameGraph.fDrawInFlightFrameIndex].Start(fQueue.fPhysicalQueue,aCommandBuffer,Subpass.fRenderPass.fName);
-   end else begin
-    Subpass.fRenderPass.fTimerQueryIndices[fFrameGraph.fDrawInFlightFrameIndex]:=-1;
-   end;
+   Subpass.fRenderPass.AddStartMarker(fQueue,aCommandBuffer);
    Subpass.fRenderPass.Execute(aCommandBuffer,fFrameGraph.fDrawInFlightFrameIndex,fFrameGraph.fDrawFrameIndex);
-   if assigned(fFrameGraph.fTimerQueries) and assigned(fFrameGraph.fTimerQueries[fFrameGraph.fDrawInFlightFrameIndex]) then begin
-    fFrameGraph.fTimerQueries[fFrameGraph.fDrawInFlightFrameIndex].Stop(fQueue.fPhysicalQueue,aCommandBuffer);
-   end;
+   Subpass.fRenderPass.AddEndMarker(fQueue,aCommandBuffer);
   end;
   if (SubpassIndex+1)<fSubpasses.Count then begin
    aCommandBuffer.CmdNextSubpass(SubpassContents);
@@ -4341,7 +4403,7 @@ begin
 end;
 
 function TpvFrameGraph.AddImageResourceType(const aName:TpvRawByteString;
-                                            const aPersientent:boolean;
+                                            const aPersistent:boolean;
                                             const aFormat:TVkFormat;
                                             const aSamples:TVkSampleCountFlagBits;
                                             const aImageType:TImageType;
@@ -4355,7 +4417,7 @@ function TpvFrameGraph.AddImageResourceType(const aName:TpvRawByteString;
 begin
  result:=TImageResourceType.Create(self,
                                    aName,
-                                   aPersientent,
+                                   aPersistent,
                                    aFormat,
                                    aSamples,
                                    aImageType,
@@ -4369,7 +4431,7 @@ begin
 end;
 
 function TpvFrameGraph.AddImageResourceType(const aName:TpvRawByteString;
-                                            const aPersientent:boolean;
+                                            const aPersistent:boolean;
                                             const aFormat:TVkFormat;
                                             const aSamples:TVkSampleCountFlagBits;
                                             const aImageType:TImageType;
@@ -4382,7 +4444,7 @@ function TpvFrameGraph.AddImageResourceType(const aName:TpvRawByteString;
 begin
  result:=TImageResourceType.Create(self,
                                    aName,
-                                   aPersientent,
+                                   aPersistent,
                                    aFormat,
                                    aSamples,
                                    aImageType,
@@ -4395,7 +4457,7 @@ begin
 end;
 
 function TpvFrameGraph.AddBufferResourceType(const aName:TpvRawByteString;
-                                             const aPersientent:boolean;
+                                             const aPersistent:boolean;
                                              const aSize:TVkDeviceSize;
                                              const aUsage:TVkBufferUsageFlags;
                                              const aMemoryRequiredPropertyFlags:TVkMemoryPropertyFlags=TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
@@ -4410,7 +4472,7 @@ function TpvFrameGraph.AddBufferResourceType(const aName:TpvRawByteString;
 begin
  result:=TBufferResourceType.Create(self,
                                     aName,
-                                    aPersientent,
+                                    aPersistent,
                                     aSize,
                                     aUsage,
                                     aMemoryRequiredPropertyFlags,
@@ -5162,7 +5224,7 @@ type TEventBeforeAfter=(Event,Before,After);
  procedure CreateResourceAliasGroups;
   function CanResourceReused(const aResource:TResource):boolean;
   begin
-   result:=(not aResource.fResourceType.fPersientent) and
+   result:=(not aResource.fResourceType.fPersistent) and
            (not assigned(aResource.fExternalData)) and
            (not ((aResource.fResourceType is TImageResourceType) and
                  (TImageResourceType(aResource.fResourceType).fImageType=TImageType.Surface))) and
@@ -5173,6 +5235,7 @@ type TEventBeforeAfter=(Event,Before,After);
      Resource,
      OtherResource:TResource;
      ResourceTransition:TResourceTransition;
+     ResourceAliasGroup:TResourceAliasGroup;
  begin
   // Construct resource alias groups, depending on the non-intersecting resource lifetime span
   // segments and resource types
@@ -5183,12 +5246,18 @@ type TEventBeforeAfter=(Event,Before,After);
   for Index:=0 to fResources.Count-1 do begin
    Resource:=fResources.Items[Index];
    if not assigned(Resource.fResourceAliasGroup) then begin
-    Resource.fResourceAliasGroup:=TResourceAliasGroup.Create(self);
-    Resource.fResourceAliasGroup.fResourceType:=Resource.fResourceType;
-    Resource.fResourceAliasGroup.fResourceInstanceType:=Resource.fResourceInstanceType;
-    Resource.fResourceAliasGroup.fExternalData:=Resource.fExternalData;
-    Resource.fResourceAliasGroup.fTransient:=Resource.fTransient;
-    Resource.fResourceAliasGroup.fResources.Add(Resource);
+    ResourceAliasGroup:=TResourceAliasGroup.Create(self);
+    try
+     ResourceAliasGroup.fResourceType:=Resource.fResourceType;
+     ResourceAliasGroup.fResourceInstanceType:=Resource.fResourceInstanceType;
+     ResourceAliasGroup.fExternalData:=Resource.fExternalData;
+     ResourceAliasGroup.fTransient:=Resource.fTransient;
+     ResourceAliasGroup.fMinimumPhysicalPassStepIndex:=Resource.fMinimumPhysicalPassStepIndex;
+     ResourceAliasGroup.fMaximumPhysicalPassStepIndex:=Resource.fMaximumPhysicalPassStepIndex;
+     ResourceAliasGroup.fResources.Add(Resource);
+    finally
+     Resource.fResourceAliasGroup:=ResourceAliasGroup;
+    end;
     if CanResourceReused(Resource) then begin
      for OtherIndex:=Index+1 to fResources.Count-1 do begin
       OtherResource:=fResources.Items[OtherIndex];
@@ -5197,10 +5266,14 @@ type TEventBeforeAfter=(Event,Before,After);
          (Resource.fResourceInstanceType=OtherResource.fResourceInstanceType) and
          (Resource.fExternalData=OtherResource.fExternalData) and
          CanResourceReused(OtherResource) then begin
-       if not ((Resource.fMinimumPhysicalPassStepIndex<=OtherResource.fMaximumPhysicalPassStepIndex) and
-              (OtherResource.fMinimumPhysicalPassStepIndex<=Resource.fMaximumPhysicalPassStepIndex)) then begin
+       if (not ((ResourceAliasGroup.fMinimumPhysicalPassStepIndex<=OtherResource.fMaximumPhysicalPassStepIndex) and
+               (OtherResource.fMinimumPhysicalPassStepIndex<=ResourceAliasGroup.fMaximumPhysicalPassStepIndex))) and
+          not Resource.fResourceTransitions.HasPhysicalPassesIntersectionWith(OtherResource.fResourceTransitions) then begin
+        ResourceAliasGroup.fMinimumPhysicalPassStepIndex:=Min(ResourceAliasGroup.fMinimumPhysicalPassStepIndex,OtherResource.fMinimumPhysicalPassStepIndex);
+        ResourceAliasGroup.fMaximumPhysicalPassStepIndex:=Max(ResourceAliasGroup.fMaximumPhysicalPassStepIndex,OtherResource.fMaximumPhysicalPassStepIndex);
+        ResourceAliasGroup.fResources.Add(OtherResource);
         OtherResource.fResourceAliasGroup:=Resource.fResourceAliasGroup;
-        OtherResource.fResourceAliasGroup.fResources.Add(OtherResource);
+        //writeln(Resource.fName,' ',OtherResource.fName);
        end;
       end;
      end;
@@ -5557,6 +5630,7 @@ type TEventBeforeAfter=(Event,Before,After);
      ExplicitPassDependency:TExplicitPassDependency;
      Pass,
      OtherPass:TPass;
+     ResourceAliasGroup:TResourceAliasGroup;
      Resource:TResource;
      ResourceTransition,
      FromResourceTransition,
@@ -5571,9 +5645,9 @@ type TEventBeforeAfter=(Event,Before,After);
      NeedSemaphore:boolean;
  begin
 
-  for Resource in fResources do begin
-   Resource.fLayout:=VK_IMAGE_LAYOUT_UNDEFINED;
-   Resource.fLastTransition:=nil;
+  for ResourceAliasGroup in fResourceAliasGroups do begin
+   ResourceAliasGroup.fLayout:=VK_IMAGE_LAYOUT_UNDEFINED;
+   ResourceAliasGroup.fLastTransition:=nil;
   end;
 
   for Pass in fTopologicalSortedPasses do begin
@@ -5627,13 +5701,14 @@ type TEventBeforeAfter=(Event,Before,After);
 
     // Then add the remaining Subpass dependencies
     for ResourceTransitionIndex:=0 to Pass.fResourceTransitions.Count-1 do begin
+
      ResourceTransition:=Pass.fResourceTransitions[ResourceTransitionIndex];
 
      Assert(ResourceTransition.Pass=Pass);
 
      Resource:=ResourceTransition.Resource;
 
-     FromResourceTransition:=Resource.fLastTransition;
+     FromResourceTransition:=Resource.ResourceAliasGroup.fLastTransition;
 
      ToResourceTransition:=ResourceTransition;
 
@@ -5672,10 +5747,29 @@ type TEventBeforeAfter=(Event,Before,After);
                       (SubpassDependency.SrcStageMask<>SubpassDependency.DstStageMask) or
                       (FromResourceTransition.Layout<>ToResourceTransition.Layout);
 
-      if (FromResourceTransition.fKind in TResourceTransition.AllOutputs) and
-         (ToResourceTransition.fKind in TResourceTransition.AllInputs) then begin
+      if (
 
-       // Output => Input
+          // Output => Input
+          ((FromResourceTransition.fKind in TResourceTransition.AllOutputs) and
+           (ToResourceTransition.fKind in TResourceTransition.AllInputs)) or
+
+          // Input => Input
+          ((FromResourceTransition.fKind in TResourceTransition.AllInputs) and
+           (ToResourceTransition.fKind in TResourceTransition.AllInputs)) or
+
+          // Input => Output
+          ((FromResourceTransition.fKind in TResourceTransition.AllInputs) and
+           (ToResourceTransition.fKind in TResourceTransition.AllOutputs)) or
+
+          // Output => Output
+          ((FromResourceTransition.fKind in TResourceTransition.AllOutputs) and
+           (ToResourceTransition.fKind in TResourceTransition.AllOutputs))
+
+         ) and not
+         (
+          ((TResourceTransition.TFlag.PreviousFrameInput in FromResourceTransition.Flags) and not
+           (TResourceTransition.TFlag.PreviousFrameInput in ToResourceTransition.Flags))
+         ) then begin
 
        if (FromResourceTransition.fPass is TRenderPass) and
           (ToResourceTransition.fPass is TRenderPass) and
@@ -5881,241 +5975,6 @@ type TEventBeforeAfter=(Event,Before,After);
 
        end;
 
-      end else if (FromResourceTransition.fKind in TResourceTransition.AllInputs) and
-                  (ToResourceTransition.fKind in TResourceTransition.AllInputs) then begin
-
-       // Input => Input
-
-       if (FromResourceTransition.fPass is TRenderPass) and
-          (ToResourceTransition.fPass is TRenderPass) and
-          (FromResourceTransition.fPass.fPhysicalPass is TPhysicalRenderPass) and
-          (ToResourceTransition.fPass.fPhysicalPass is TPhysicalRenderPass) and
-          (FromResourceTransition.fKind in TResourceTransition.AllImages) and
-          (ToResourceTransition.fKind in TResourceTransition.AllImages) then begin
-
-        // Both passes are render passes
-
-        SubpassDependency.DependencyFlags:=TVkDependencyFlags(VK_DEPENDENCY_BY_REGION_BIT);
-
-        if FromResourceTransition.fPass.fPhysicalPass=ToResourceTransition.fPass.fPhysicalPass then begin
-
-         // Same physical render pass
-
-         SubpassDependency.SrcSubpass:=TRenderPass(FromResourceTransition.fPass).fPhysicalRenderPassSubpass;
-         SubpassDependency.DstSubpass:=TRenderPass(ToResourceTransition.fPass).fPhysicalRenderPassSubpass;
-         AddSubpassDependency(TPhysicalRenderPass(FromResourceTransition.fPass.fPhysicalPass).fSubpassDependencies,
-                              SubpassDependency);
-
-         NeedBarriers:=not ((TResourceTransition.TFlag.Attachment in FromResourceTransition.fFlags) and
-                            (TResourceTransition.TFlag.Attachment in ToResourceTransition.fFlags));
-
-        end else begin
-
-         // Different physical render passes
-
-         SubpassDependency.SrcSubpass:=TRenderPass(FromResourceTransition.fPass).fPhysicalRenderPassSubpass;
-         SubpassDependency.DstSubpass:=nil;
-         AddSubpassDependency(TPhysicalRenderPass(FromResourceTransition.fPass.fPhysicalPass).fSubpassDependencies,
-                              SubpassDependency);
-
-         SubpassDependency.SrcSubpass:=nil;
-         SubpassDependency.DstSubpass:=TRenderPass(ToResourceTransition.fPass).fPhysicalRenderPassSubpass;
-         AddSubpassDependency(TPhysicalRenderPass(ToResourceTransition.fPass.fPhysicalPass).fSubpassDependencies,
-                              SubpassDependency);
-
-         NeedBarriers:=true;
-
-        end;
-
-       end else begin
-
-        // Whether not both passes or none of the both passes are render passes, or any of the both resource
-        // transitions are not for a image attachment
-
-        if (FromResourceTransition.fPass is TRenderPass) and
-           (FromResourceTransition.fPass.fPhysicalPass is TPhysicalRenderPass) and
-           (FromResourceTransition.fKind in TResourceTransition.AllImages) then begin
-         SubpassDependency.SrcSubpass:=TRenderPass(FromResourceTransition.fPass).fPhysicalRenderPassSubpass;
-         SubpassDependency.DstSubpass:=nil;
-         SubpassDependency.DependencyFlags:=TVkDependencyFlags(VK_DEPENDENCY_BY_REGION_BIT);
-         AddSubpassDependency(TPhysicalRenderPass(FromResourceTransition.fPass.fPhysicalPass).fSubpassDependencies,
-                              SubpassDependency);
-        end;
-
-        if (ToResourceTransition.fPass is TRenderPass) and
-           (ToResourceTransition.fPass.fPhysicalPass is TPhysicalRenderPass) and
-           (ToResourceTransition.fKind in TResourceTransition.AllImages) then begin
-         SubpassDependency.SrcSubpass:=nil;
-         SubpassDependency.DstSubpass:=TRenderPass(ToResourceTransition.fPass).fPhysicalRenderPassSubpass;
-         SubpassDependency.DependencyFlags:=TVkDependencyFlags(VK_DEPENDENCY_BY_REGION_BIT);
-         AddSubpassDependency(TPhysicalRenderPass(ToResourceTransition.fPass.fPhysicalPass).fSubpassDependencies,
-                              SubpassDependency);
-        end;
-
-        SubpassDependency.DependencyFlags:=0;
-
-        NeedBarriers:=true;
-
-       end;
-
-       if NeedBarriers then begin
-
-        if FromResourceTransition.fPass.fPhysicalPass.fQueueCommandBuffer=ToResourceTransition.fPass.fPhysicalPass.fQueueCommandBuffer then begin
-
-         // Same command buffer (which also means: same queue and same queue family)
-
-         AddPipelineBarrier(TEventBeforeAfter.Before,
-                            nil,
-                            ToResourceTransition.fPass.fPhysicalPass,
-                            Resource.fResourceAliasGroup.fResourcePhysicalData,
-                            FromResourceTransition,
-                            ToResourceTransition,
-                            SrcQueueFamilyIndex,
-                            DstQueueFamilyIndex,
-                            SubpassDependency.SrcStageMask,
-                            SubpassDependency.DstStageMask,
-                            SubpassDependency.SrcAccessMask,
-                            SubpassDependency.DstAccessMask,
-                            SubpassDependency.DependencyFlags
-                           );
-
-         // No semaphores and no events are needed in this case, because we are in the same command buffer
-
-        end else begin
-
-         // Different command buffers
-
-         if FromResourceTransition.fPass.fQueue.fPhysicalQueue.QueueFamilyIndex=ToResourceTransition.fPass.fQueue.fPhysicalQueue.QueueFamilyIndex then begin
-
-          // Same queue family
-
-          if FromResourceTransition.fPass.fQueue.fPhysicalQueue=ToResourceTransition.fPass.fQueue.fPhysicalQueue then begin
-
-           // Same queue => Use events
-
-           AddPipelineBarrier(TEventBeforeAfter.Event,
-                              FromResourceTransition.fPass.fPhysicalPass,
-                              ToResourceTransition.fPass.fPhysicalPass,
-                              Resource.fResourceAliasGroup.fResourcePhysicalData,
-                              FromResourceTransition,
-                              ToResourceTransition,
-                              SrcQueueFamilyIndex,
-                              DstQueueFamilyIndex,
-                              SubpassDependency.SrcStageMask,
-                              SubpassDependency.DstStageMask,
-                              SubpassDependency.SrcAccessMask,
-                              SubpassDependency.DstAccessMask,
-                              SubpassDependency.DependencyFlags
-                             );
-
-           NeedSemaphore:=false;
-
-          end else begin
-
-           // Different queues
-
-           AddPipelineBarrier(TEventBeforeAfter.Before,
-                              nil,
-                              ToResourceTransition.fPass.fPhysicalPass,
-                              Resource.fResourceAliasGroup.fResourcePhysicalData,
-                              FromResourceTransition,
-                              ToResourceTransition,
-                              SrcQueueFamilyIndex,
-                              DstQueueFamilyIndex,
-                              SubpassDependency.SrcStageMask,
-                              SubpassDependency.DstStageMask,
-                              SubpassDependency.SrcAccessMask,
-                              SubpassDependency.DstAccessMask,
-                              SubpassDependency.DependencyFlags
-                             );
-
-           NeedSemaphore:=true;
-
-          end;
-
-         end else begin
-
-          // Different queue families (and different queues, of course)
-
-          // Release
-          AddPipelineBarrier(TEventBeforeAfter.After,
-                             nil,
-                             FromResourceTransition.fPass.fPhysicalPass,
-                             Resource.fResourceAliasGroup.fResourcePhysicalData,
-                             FromResourceTransition,
-                             ToResourceTransition,
-                             SrcQueueFamilyIndex,
-                             DstQueueFamilyIndex,
-                             SubpassDependency.SrcStageMask,
-                             TVkPipelineStageFlags(VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT),
-                             SubpassDependency.SrcAccessMask,
-                             0,
-                             SubpassDependency.DependencyFlags
-                            );
-
-          // Acquire
-          AddPipelineBarrier(TEventBeforeAfter.Before,
-                             nil,
-                             ToResourceTransition.fPass.fPhysicalPass,
-                             Resource.fResourceAliasGroup.fResourcePhysicalData,
-                             FromResourceTransition,
-                             ToResourceTransition,
-                             SrcQueueFamilyIndex,
-                             DstQueueFamilyIndex,
-                             TVkPipelineStageFlags(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT),
-                             SubpassDependency.DstStageMask,
-                             0,
-                             SubpassDependency.DstAccessMask,
-                             SubpassDependency.DependencyFlags
-                            );
-
-          NeedSemaphore:=true;
-
-         end;
-
-         if NeedSemaphore then begin
-
-          // Add a semaphore
-          AddSemaphoreSignalWait(FromResourceTransition.fPass.fPhysicalPass.fQueueCommandBuffer, // Signalling / After
-                                 ToResourceTransition.fPass.fPhysicalPass.fQueueCommandBuffer, // Waiting / Before
-                                 SubpassDependency.DstStageMask
-                                );
-
-         end;
-
-        end;
-
-       end;
-
-      end else if (FromResourceTransition.fKind in TResourceTransition.AllInputs) and
-                  (ToResourceTransition.fKind in TResourceTransition.AllOutputs) then begin
-
-       // Input => Output
-
-       if (TResourceTransition.TFlag.PreviousFrameInput in FromResourceTransition.Flags) and not
-          (TResourceTransition.TFlag.PreviousFrameInput in ToResourceTransition.Flags) then begin
-
-        // Ignore
-
-       end else begin
-
-        raise EpvFrameGraph.Create('Internal error 2021-11-04-11-34-0000');
-
-       end;
-
-      end else if (FromResourceTransition.fKind in TResourceTransition.AllOutputs) and
-                  (ToResourceTransition.fKind in TResourceTransition.AllOutputs) then begin
-
-       // Output => Output
-
-       raise EpvFrameGraph.Create('Internal error 2021-11-04-11-34-0001');
-
-      end else begin
-
-       // ? => ?
-
-       raise EpvFrameGraph.Create('Internal error 2021-11-04-11-3-0000');
-
       end;
 
      end else begin
@@ -6124,7 +5983,7 @@ type TEventBeforeAfter=(Event,Before,After);
        raise EpvFrameGraph.Create('Internal error 2021-11-04-10-55-0000');
       end else begin
 
-       if (Resource.fLayout=VK_IMAGE_LAYOUT_UNDEFINED) and
+       if (Resource.ResourceAliasGroup.fLayout=VK_IMAGE_LAYOUT_UNDEFINED) and
           (ToResourceTransition.Kind in TResourceTransition.AllImages) then begin
 
         if (Pass.fPhysicalPass is TPhysicalRenderPass) and
@@ -6161,8 +6020,8 @@ type TEventBeforeAfter=(Event,Before,After);
 
      end;
 
-     Resource.fLastTransition:=ResourceTransition;
-     Resource.fLayout:=ResourceTransition.Layout;
+     Resource.ResourceAliasGroup.fLastTransition:=ResourceTransition;
+     Resource.ResourceAliasGroup.fLayout:=ResourceTransition.Layout;
 
     end;
 
@@ -6375,7 +6234,7 @@ type TEventBeforeAfter=(Event,Before,After);
          AttachmentIndex:=PhysicalRenderPass.fAttachments.AddNew;
          Attachment:=@PhysicalRenderPass.fAttachments.Items[AttachmentIndex];
          Attachment^.Resource:=ResourceTransition.fResource;
-         Attachment^.Persientent:=ImageResourceType.fPersientent;
+         Attachment^.Persistent:=ImageResourceType.fPersistent;
          Attachment^.ImageType:=ImageResourceType.fImageType;
          Attachment^.Format:=ImageResourceType.fFormat;
          Attachment^.Samples:=ImageResourceType.fSamples;
@@ -6628,7 +6487,7 @@ type TEventBeforeAfter=(Event,Before,After);
        end;
        UsedBefore:=Resource.fMinimumTopologicalSortPassIndex<Subpass.fRenderPass.fTopologicalSortIndex;
        UsedAfter:=Subpass.fRenderPass.fTopologicalSortIndex<Resource.fMaximumTopologicalSortPassIndex;
-       IsSurfaceOrPersistent:=(Attachment^.ImageType=TImageType.Surface) or Attachment^.Persientent;
+       IsSurfaceOrPersistent:=(Attachment^.ImageType=TImageType.Surface) or Attachment^.Persistent;
        if UsedBefore and (not UsedNow) and (UsedAfter or IsSurfaceOrPersistent) then begin
         Subpass.fPreserveAttachments.Add(AttachmentIndex);
        end;

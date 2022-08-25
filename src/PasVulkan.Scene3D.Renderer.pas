@@ -85,7 +85,10 @@ uses Classes,
      PasVulkan.Scene3D.Renderer.MipmappedArray2DImage,
      PasVulkan.Scene3D.Renderer.ImageBasedLighting.EnvMapCubeMaps,
      PasVulkan.Scene3D.Renderer.Charlie.BRDF,
-     PasVulkan.Scene3D.Renderer.GGX.BRDF;
+     PasVulkan.Scene3D.Renderer.GGX.BRDF,
+     PasVulkan.Scene3D.Renderer.Lens.Color,
+     PasVulkan.Scene3D.Renderer.Lens.Dirt,
+     PasVulkan.Scene3D.Renderer.Lens.Star;
 
 type TpvScene3DRenderer=class;
 
@@ -123,6 +126,8 @@ type TpvScene3DRenderer=class;
        fAntialiasingMode:TpvScene3DRendererAntialiasingMode;
        fShadowMode:TpvScene3DRendererShadowMode;
        fTransparencyMode:TpvScene3DRendererTransparencyMode;
+       fDepthOfFieldMode:TpvScene3DRendererDepthOfFieldMode;
+       fLensMode:TpvScene3DRendererLensMode;
        fMaxMSAA:TpvInt32;
        fMaxShadowMSAA:TpvInt32;
        fShadowMapSize:TpvInt32;
@@ -142,12 +147,19 @@ type TpvScene3DRenderer=class;
        fSkyCubeMap:TpvScene3DRendererSkyCubeMap;
        fGGXBRDF:TpvScene3DRendererGGXBRDF;
        fCharlieBRDF:TpvScene3DRendererCharlieBRDF;
+       fLensColor:TpvScene3DRendererLensColor;
+       fLensDirt:TpvScene3DRendererLensDirt;
+       fLensStar:TpvScene3DRendererLensStar;
        fImageBasedLightingEnvMapCubeMaps:TpvScene3DRendererImageBasedLightingEnvMapCubeMaps;
        fSheenELUT:TpvVulkanTexture;
        fShadowMapSampler:TpvVulkanSampler;
+       fGeneralSampler:TpvVulkanSampler;
        fSSAOSampler:TpvVulkanSampler;
        fSMAAAreaTexture:TpvVulkanTexture;
        fSMAASearchTexture:TpvVulkanTexture;
+{      fLensColorTexture:TpvVulkanTexture;
+       fLensDirtTexture:TpvVulkanTexture;
+       fLensStarTexture:TpvVulkanTexture;}
        fVulkanFlushQueue:TpvVulkanQueue;
        fVulkanFlushCommandPool:TpvVulkanCommandPool;
        fVulkanFlushCommandBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanCommandBuffer;
@@ -170,6 +182,8 @@ type TpvScene3DRenderer=class;
        property AntialiasingMode:TpvScene3DRendererAntialiasingMode read fAntialiasingMode write fAntialiasingMode;
        property ShadowMode:TpvScene3DRendererShadowMode read fShadowMode write fShadowMode;
        property TransparencyMode:TpvScene3DRendererTransparencyMode read fTransparencyMode write fTransparencyMode;
+       property DepthOfFieldMode:TpvScene3DRendererDepthOfFieldMode read fDepthOfFieldMode write fDepthOfFieldMode;
+       property LensMode:TpvScene3DRendererLensMode read fLensMode write fLensMode;
        property MaxMSAA:TpvInt32 read fMaxMSAA write fMaxMSAA;
        property MaxShadowMSAA:TpvInt32 read fMaxShadowMSAA write fMaxShadowMSAA;
        property ShadowMapSize:TpvInt32 read fShadowMapSize write fShadowMapSize;
@@ -189,18 +203,26 @@ type TpvScene3DRenderer=class;
        property SkyCubeMap:TpvScene3DRendererSkyCubeMap read fSkyCubeMap;
        property GGXBRDF:TpvScene3DRendererGGXBRDF read fGGXBRDF;
        property CharlieBRDF:TpvScene3DRendererCharlieBRDF read fCharlieBRDF;
+       property LensColor:TpvScene3DRendererLensColor read fLensColor write fLensColor;
+       property LensDirt:TpvScene3DRendererLensDirt read fLensDirt write fLensDirt;
+       property LensStar:TpvScene3DRendererLensStar read fLensStar write fLensStar;
        property ImageBasedLightingEnvMapCubeMaps:TpvScene3DRendererImageBasedLightingEnvMapCubeMaps read fImageBasedLightingEnvMapCubeMaps;
        property SheenELUT:TpvVulkanTexture read fSheenELUT;
        property ShadowMapSampler:TpvVulkanSampler read fShadowMapSampler;
+       property GeneralSampler:TpvVulkanSampler read fGeneralSampler;
        property SSAOSampler:TpvVulkanSampler read fSSAOSampler;
        property SMAAAreaTexture:TpvVulkanTexture read fSMAAAreaTexture;
        property SMAASearchTexture:TpvVulkanTexture read fSMAASearchTexture;
+{      property LensColorTexture:TpvVulkanTexture read fLensColorTexture;
+       property LensDirtTexture:TpvVulkanTexture read fLensDirtTexture;
+       property LensStarTexture:TpvVulkanTexture read fLensStarTexture;}
      end;
 
 
 implementation
 
-uses PasVulkan.Scene3D.Renderer.Instance;
+uses PasVulkan.Scene3D.Assets,
+     PasVulkan.Scene3D.Renderer.Instance;
 
 { TpvScene3DRendererBaseObject }
 
@@ -312,6 +334,10 @@ begin
  fShadowMode:=TpvScene3DRendererShadowMode.Auto;
 
  fTransparencyMode:=TpvScene3DRendererTransparencyMode.Auto;
+
+ fDepthOfFieldMode:=TpvScene3DRendererDepthOfFieldMode.Auto;
+
+ fLensMode:=TpvScene3DRendererLensMode.Auto;
 
  fMaxMSAA:=0;
 
@@ -448,6 +474,8 @@ begin
  end else begin
   fOptimizedNonAlphaFormat:=VK_FORMAT_R16G16B16A16_SFLOAT;
  end;
+
+ fOptimizedNonAlphaFormat:=VK_FORMAT_R16G16B16A16_SFLOAT;
 
  case TpvVulkanVendorID(fVulkanDevice.PhysicalDevice.Properties.vendorID) of
   TpvVulkanVendorID.ImgTec,
@@ -679,6 +707,65 @@ begin
   end;
  end;
 
+ if fDepthOfFieldMode=TpvScene3DRendererDepthOfFieldMode.Auto then begin
+  case TpvVulkanVendorID(fVulkanDevice.PhysicalDevice.Properties.vendorID) of
+   TpvVulkanVendorID.AMD:begin
+    if fVulkanDevice.PhysicalDevice.Properties.deviceType=VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU then begin
+     fDepthOfFieldMode:=TpvScene3DRendererDepthOfFieldMode.FullResHexagon;
+    end else begin
+     fDepthOfFieldMode:=TpvScene3DRendererDepthOfFieldMode.HalfResBruteforce;
+    end;
+   end;
+   TpvVulkanVendorID.NVIDIA:begin
+    if fVulkanDevice.PhysicalDevice.Properties.deviceType=VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU then begin
+     fDepthOfFieldMode:=TpvScene3DRendererDepthOfFieldMode.FullResHexagon;
+    end else begin
+     fDepthOfFieldMode:=TpvScene3DRendererDepthOfFieldMode.HalfResBruteforce;
+    end;
+   end;
+   TpvVulkanVendorID.Intel:begin
+    if fVulkanDevice.PhysicalDevice.Properties.deviceType=VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU then begin
+     fDepthOfFieldMode:=TpvScene3DRendererDepthOfFieldMode.None;
+    end else begin
+     fDepthOfFieldMode:=TpvScene3DRendererDepthOfFieldMode.FullResHexagon;
+    end;
+   end;
+   else begin
+    fDepthOfFieldMode:=TpvScene3DRendererDepthOfFieldMode.None;
+   end;
+  end;
+ end;
+
+ if fLensMode=TpvScene3DRendererLensMode.Auto then begin
+  case TpvVulkanVendorID(fVulkanDevice.PhysicalDevice.Properties.vendorID) of
+   TpvVulkanVendorID.AMD:begin
+    if fVulkanDevice.PhysicalDevice.Properties.deviceType=VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU then begin
+     fLensMode:=TpvScene3DRendererLensMode.DownUpsample;
+    end else begin
+     fLensMode:=TpvScene3DRendererLensMode.DownUpsample;
+    end;
+   end;
+   TpvVulkanVendorID.NVIDIA:begin
+    if fVulkanDevice.PhysicalDevice.Properties.deviceType=VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU then begin
+     fLensMode:=TpvScene3DRendererLensMode.DownUpsample;
+    end else begin
+     fLensMode:=TpvScene3DRendererLensMode.DownUpsample;
+    end;
+   end;
+   TpvVulkanVendorID.Intel:begin
+    if fVulkanDevice.PhysicalDevice.Properties.deviceType=VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU then begin
+     fLensMode:=TpvScene3DRendererLensMode.DownUpsample;
+    end else begin
+     fLensMode:=TpvScene3DRendererLensMode.DownUpsample;
+    end;
+   end;
+   else begin
+    fLensMode:=TpvScene3DRendererLensMode.None;
+   end;
+  end;
+ end;
+
+
 end;
 
 procedure TpvScene3DRenderer.AcquirePersistentResources;
@@ -694,6 +781,12 @@ begin
  fGGXBRDF:=TpvScene3DRendererGGXBRDF.Create(fVulkanDevice,fVulkanPipelineCache);
 
  fCharlieBRDF:=TpvScene3DRendererCharlieBRDF.Create(fVulkanDevice,fVulkanPipelineCache);
+
+ fLensColor:=TpvScene3DRendererLensColor.Create(fVulkanDevice,fVulkanPipelineCache);
+
+ fLensDirt:=TpvScene3DRendererLensDirt.Create(fVulkanDevice,fVulkanPipelineCache);
+
+ fLensStar:=TpvScene3DRendererLensStar.Create(fVulkanDevice,fVulkanPipelineCache);
 
  fImageBasedLightingEnvMapCubeMaps:=TpvScene3DRendererImageBasedLightingEnvMapCubeMaps.Create(fVulkanDevice,fVulkanPipelineCache,fSkyCubeMap.DescriptorImageInfo,fOptimizedNonAlphaFormat);
 
@@ -762,6 +855,23 @@ begin
   end;
 
  end;
+
+ fGeneralSampler:=TpvVulkanSampler.Create(fVulkanDevice,
+                                          TVkFilter.VK_FILTER_LINEAR,
+                                          TVkFilter.VK_FILTER_LINEAR,
+                                          TVkSamplerMipmapMode.VK_SAMPLER_MIPMAP_MODE_LINEAR,
+                                          VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+                                          VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+                                          VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+                                          0.0,
+                                          false,
+                                          0.0,
+                                          false,
+                                          VK_COMPARE_OP_ALWAYS,
+                                          0.0,
+                                          0.0,
+                                          VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK,
+                                          false);
 
  fSSAOSampler:=TpvVulkanSampler.Create(fVulkanDevice,
                                        TVkFilter.VK_FILTER_LINEAR,
@@ -859,38 +969,116 @@ begin
       end;
      end;
 
-     Stream:=pvApplication.Assets.GetAssetStream('textures/sheenelut.png');
-     try
-      fSheenELUT:=TpvVulkanTexture.CreateFromMemory(fVulkanDevice,
-                                                    UniversalQueue,
-                                                    UniversalCommandBuffer,
-                                                    UniversalFence,
-                                                    UniversalQueue,
-                                                    UniversalCommandBuffer,
-                                                    UniversalFence,
-                                                    VK_FORMAT_R8_UNORM,
-                                                    VK_SAMPLE_COUNT_1_BIT,
-                                                    PasVulkan.Scene3D.Renderer.SheenELUTData.SheenELUTWidth,
-                                                    PasVulkan.Scene3D.Renderer.SheenELUTData.SheenELUTHeight,
-                                                    0,
-                                                    0,
-                                                    1,
-                                                    0,
-                                                    [TpvVulkanTextureUsageFlag.General,
-                                                     TpvVulkanTextureUsageFlag.TransferDst,
-                                                     TpvVulkanTextureUsageFlag.TransferSrc,
-                                                     TpvVulkanTextureUsageFlag.Sampled],
-                                                    @PasVulkan.Scene3D.Renderer.SheenELUTData.SheenELUTDataBytes[0],
-                                                    SizeOf(PasVulkan.Scene3D.Renderer.SheenELUTData.TSheenELUTData),
-                                                    false,
-                                                    false,
-                                                    0,
-                                                    true,
-                                                    false);
-      fSheenELUT.UpdateSampler;
-     finally
-      FreeAndNil(Stream);
-     end;
+{    case fLensMode of
+
+      TpvScene3DRendererLensMode.DownUpsample:begin
+
+       Stream:=TMemoryStream.Create;
+       try
+        Stream.Write(Scene3DLensColorData,Scene3DLensColorDataSize);
+        Stream.Seek(0,soBeginning);
+        fLensColorTexture:=TpvVulkanTexture.CreateFromImage(fVulkanDevice,
+                                                            UniversalQueue,
+                                                            UniversalCommandBuffer,
+                                                            UniversalFence,
+                                                            UniversalQueue,
+                                                            UniversalCommandBuffer,
+                                                            UniversalFence,
+                                                            Stream,
+                                                            false,
+                                                            true,
+                                                            false);
+        fLensColorTexture.WrapModeU:=TpvVulkanTextureWrapMode.ClampToEdge;
+        fLensColorTexture.WrapModeV:=TpvVulkanTextureWrapMode.ClampToEdge;
+        fLensColorTexture.WrapModeW:=TpvVulkanTextureWrapMode.ClampToEdge;
+        fLensColorTexture.UpdateSampler;
+       finally
+        FreeAndNil(Stream);
+       end;
+
+       Stream:=TMemoryStream.Create;
+       try
+        Stream.Write(Scene3DLensDirtData,Scene3DLensDirtDataSize);
+        Stream.Seek(0,soBeginning);
+        fLensDirtTexture:=TpvVulkanTexture.CreateFromImage(fVulkanDevice,
+                                                           UniversalQueue,
+                                                           UniversalCommandBuffer,
+                                                           UniversalFence,
+                                                           UniversalQueue,
+                                                           UniversalCommandBuffer,
+                                                           UniversalFence,
+                                                           Stream,
+                                                           false,
+                                                           true,
+                                                           false);
+        fLensDirtTexture.WrapModeU:=TpvVulkanTextureWrapMode.ClampToEdge;
+        fLensDirtTexture.WrapModeV:=TpvVulkanTextureWrapMode.ClampToEdge;
+        fLensDirtTexture.WrapModeW:=TpvVulkanTextureWrapMode.ClampToEdge;
+        fLensDirtTexture.UpdateSampler;
+       finally
+        FreeAndNil(Stream);
+       end;
+
+       Stream:=TMemoryStream.Create;
+       try
+        Stream.Write(Scene3DLensStarData,Scene3DLensStarDataSize);
+        Stream.Seek(0,soBeginning);
+        fLensStarTexture:=TpvVulkanTexture.CreateFromImage(fVulkanDevice,
+                                                           UniversalQueue,
+                                                           UniversalCommandBuffer,
+                                                           UniversalFence,
+                                                           UniversalQueue,
+                                                           UniversalCommandBuffer,
+                                                           UniversalFence,
+                                                           Stream,
+                                                           false,
+                                                           true,
+                                                           false);
+        fLensStarTexture.WrapModeU:=TpvVulkanTextureWrapMode.ClampToEdge;
+        fLensStarTexture.WrapModeV:=TpvVulkanTextureWrapMode.ClampToEdge;
+        fLensStarTexture.WrapModeW:=TpvVulkanTextureWrapMode.ClampToEdge;
+        fLensStarTexture.UpdateSampler;
+       finally
+        FreeAndNil(Stream);
+       end;
+
+      end;
+
+      else begin
+      end;
+
+     end;//}
+
+     fSheenELUT:=TpvVulkanTexture.CreateFromMemory(fVulkanDevice,
+                                                   UniversalQueue,
+                                                   UniversalCommandBuffer,
+                                                   UniversalFence,
+                                                   UniversalQueue,
+                                                   UniversalCommandBuffer,
+                                                   UniversalFence,
+                                                   VK_FORMAT_R8_UNORM,
+                                                   VK_SAMPLE_COUNT_1_BIT,
+                                                   PasVulkan.Scene3D.Renderer.SheenELUTData.SheenELUTWidth,
+                                                   PasVulkan.Scene3D.Renderer.SheenELUTData.SheenELUTHeight,
+                                                   0,
+                                                   0,
+                                                   1,
+                                                   0,
+                                                   [TpvVulkanTextureUsageFlag.General,
+                                                    TpvVulkanTextureUsageFlag.TransferDst,
+                                                    TpvVulkanTextureUsageFlag.TransferSrc,
+                                                    TpvVulkanTextureUsageFlag.Sampled],
+                                                   @PasVulkan.Scene3D.Renderer.SheenELUTData.SheenELUTDataBytes[0],
+                                                   SizeOf(PasVulkan.Scene3D.Renderer.SheenELUTData.TSheenELUTData),
+                                                   false,
+                                                   false,
+                                                   0,
+                                                   true,
+                                                   false);
+     fSheenELUT.WrapModeU:=TpvVulkanTextureWrapMode.ClampToEdge;
+     fSheenELUT.WrapModeV:=TpvVulkanTextureWrapMode.ClampToEdge;
+     fSheenELUT.WrapModeW:=TpvVulkanTextureWrapMode.ClampToEdge;
+     fSheenELUT.UpdateSampler;
 
     finally
      FreeAndNil(UniversalFence);
@@ -917,10 +1105,22 @@ begin
 
  FreeAndNil(fSSAOSampler);
 
+ FreeAndNil(fGeneralSampler);
+
  FreeAndNil(fSMAAAreaTexture);
  FreeAndNil(fSMAASearchTexture);
 
+{FreeAndNil(fLensColorTexture);
+ FreeAndNil(fLensDirtTexture);
+ FreeAndNil(fLensStarTexture);}
+
  FreeAndNil(fSheenELUT);
+
+ FreeAndNil(fLensColor);
+
+ FreeAndNil(fLensDirt);
+
+ FreeAndNil(fLensStar);
 
  FreeAndNil(fCharlieBRDF);
 

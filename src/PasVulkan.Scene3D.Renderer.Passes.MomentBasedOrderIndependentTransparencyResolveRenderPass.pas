@@ -119,7 +119,7 @@ begin
 
  fInstance:=aInstance;
 
- Name:='MomentBasedOrderIndependentTransparencyResolve';
+ Name:='MomentBasedOrderIndependentTransparencyResolveRenderPass';
 
  MultiviewMask:=fInstance.SurfaceMultiviewMask;
 
@@ -201,6 +201,8 @@ begin
                                          );
 
  end;
+
+ fInstance.LastOutputResource:=fResourceSurface;
 
 end;
 
