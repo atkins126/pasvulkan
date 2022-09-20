@@ -82,7 +82,8 @@ uses {$if defined(Windows)}
      PasVulkan.Image.BMP,
      PasVulkan.Image.JPEG,
      PasVulkan.Image.PNG,
-     PasVulkan.Image.TGA;
+     PasVulkan.Image.TGA,
+     PasVulkan.Image.QOI;
 
 var VulkanDefaultHeapAlignChunkSize:TVkDeviceSize=TVkDeviceSize(1) shl 5; // 32 bytes memory chunk size as alignment
 
@@ -1148,14 +1149,14 @@ type EpvVulkanException=class(Exception);
                           const aDataSize:TVkDeviceSize); overload;
        class procedure ProcessCopyBatch(const aTransferCommandBuffer:TpvVulkanCommandBuffer;
                                         const aCopyBatchItemArray:TpvVulkanBufferCopyBatchItemArray;
-                                        const aBarriers:boolean=false); static; overload;
+                                        const aBarriers:boolean=false); overload; static;
        class procedure ProcessCopyBatch(const aTransferQueue:TpvVulkanQueue;
                                         const aTransferCommandBuffer:TpvVulkanCommandBuffer;
                                         const aTransferFence:TpvVulkanFence;
                                         const aCopyBatchItemArray:TpvVulkanBufferCopyBatchItemArray;
                                         const aBarriers:boolean=false;
                                         const aWaitSemaphore:TpvVulkanSemaphore=nil;
-                                        const aSignalSemaphore:TpvVulkanSemaphore=nil); static; overload;
+                                        const aSignalSemaphore:TpvVulkanSemaphore=nil); overload; static;
        procedure UploadData(const aTransferQueue:TpvVulkanQueue;
                             const aTransferCommandBuffer:TpvVulkanCommandBuffer;
                             const aTransferFence:TpvVulkanFence;
@@ -1842,6 +1843,7 @@ type EpvVulkanException=class(Exception);
        procedure GetScreenshot(out aScreenshot:TpvVulkanSwapChainScreenshot;const aSwapChainImage:TpvVulkanImage=nil);
        procedure SaveScreenshotAsJPEGToStream(const aStream:TStream;const aSwapChainImage:TpvVulkanImage=nil;const aQuality:TpvInt32=95);
        procedure SaveScreenshotAsPNGToStream(const aStream:TStream;const aSwapChainImage:TpvVulkanImage=nil);
+       procedure SaveScreenshotAsQOIToStream(const aStream:TStream;const aSwapChainImage:TpvVulkanImage=nil);
        property Images[const aImageIndex:TpvInt32]:TpvVulkanImage read GetImage; default;
       published
        property Device:TpvVulkanDevice read fDevice;
@@ -3155,6 +3157,17 @@ type EpvVulkanException=class(Exception);
                                  const aSRGB:boolean;
                                  const aAdditionalSRGB:boolean=false);
        constructor CreateFromTGA(const aDevice:TpvVulkanDevice;
+                                 const aGraphicsQueue:TpvVulkanQueue;
+                                 const aGraphicsCommandBuffer:TpvVulkanCommandBuffer;
+                                 const aGraphicsFence:TpvVulkanFence;
+                                 const aTransferQueue:TpvVulkanQueue;
+                                 const aTransferCommandBuffer:TpvVulkanCommandBuffer;
+                                 const aTransferFence:TpvVulkanFence;
+                                 const aStream:TStream;
+                                 const aMipMaps:boolean;
+                                 const aSRGB:boolean;
+                                 const aAdditionalSRGB:boolean=false);
+       constructor CreateFromQOI(const aDevice:TpvVulkanDevice;
                                  const aGraphicsQueue:TpvVulkanQueue;
                                  const aGraphicsCommandBuffer:TpvVulkanCommandBuffer;
                                  const aGraphicsFence:TpvVulkanFence;
@@ -10981,7 +10994,7 @@ constructor TpvVulkanBuffer.Create(const aDevice:TpvVulkanDevice;
                                    const aMemoryPreferredHeapFlags:TVkMemoryHeapFlags;
                                    const aMemoryAvoidHeapFlags:TVkMemoryHeapFlags;
                                    const aMemoryPreferredNotHeapFlags:TVkMemoryHeapFlags;
-                                   const aBufferFlags:TpvVulkanBufferFlags=[]);
+                                   const aBufferFlags:TpvVulkanBufferFlags);
 var Index:TpvInt32;
     BufferCreateInfo:TVkBufferCreateInfo;
     MemoryBlockFlags:TpvVulkanDeviceMemoryBlockFlags;
@@ -14551,7 +14564,7 @@ end;
 procedure TpvVulkanSwapChain.GetScreenshot(out aScreenshot:TpvVulkanSwapChainScreenshot;const aSwapChainImage:TpvVulkanImage=nil);
 type PBytes=^TBytes;
      TBytes=array[0..$7ffffffe] of TpvUInt8;
-var x,y:TpvInt32;
+var Index,y:TpvSizeInt;
     NeedTwoSteps,CopyOnly,BlitSupported,NeedColorSwizzle:boolean;
     SrcColorFormatProperties,
     DstColorFormatProperties:TVkFormatProperties;
@@ -14565,8 +14578,9 @@ var x,y:TpvInt32;
     ImageSubresource:TVkImageSubresource;
     SubresourceLayout:TVkSubresourceLayout;
     ImageData,p,pr,pp:PpvUInt8;
+    pu:PpvUInt32;
     PNGData:TpvPointer;
-    PNGDataSize:TpvUInt32;
+    PNGDataSize,Pixel:TpvUInt32;
     DestColorFormat:TVkFormat;
     SwapChainImageHandle:TVkImage;
     Queue:TpvVulkanQueue;
@@ -14971,25 +14985,16 @@ begin
        NeedColorSwizzle:=(not BlitSupported) and (fImageFormat in [VK_FORMAT_B8G8R8A8_SRGB,VK_FORMAT_B8G8R8A8_UNORM,VK_FORMAT_B8G8R8A8_SNORM]);
 
        try
+
         pp:=@aScreenshot.Data[0];
-        for y:=0 to fHeight-1 do begin
-         pr:=p;
-         for x:=0 to fWidth-1 do begin
-          if NeedColorSwizzle then begin
-           PBytes(TpvPointer(pp))^[0]:=PBytes(TpvPointer(pr))^[2];
-           PBytes(TpvPointer(pp))^[1]:=PBytes(TpvPointer(pr))^[1];
-           PBytes(TpvPointer(pp))^[2]:=PBytes(TpvPointer(pr))^[0];
-           PBytes(TpvPointer(pp))^[3]:=$ff;//PBytes(TpvPointer(pr))^[3];
-          end else begin
-           PBytes(TpvPointer(pp))^[0]:=PBytes(TpvPointer(pr))^[0];
-           PBytes(TpvPointer(pp))^[1]:=PBytes(TpvPointer(pr))^[1];
-           PBytes(TpvPointer(pp))^[2]:=PBytes(TpvPointer(pr))^[2];
-           PBytes(TpvPointer(pp))^[3]:=$ff;//PBytes(TpvPointer(pr))^[3];
-          end;
-          inc(pp,4);
-          inc(pr,4);
+        if SubresourceLayout.rowPitch=(fWidth*SizeOf(TpvUInt32)) then begin
+         Move(p^,pp^,fWidth*fHeight*SizeOf(TpvUInt32));
+        end else begin
+         for y:=0 to fHeight-1 do begin
+          Move(p^,pp^,fWidth*SizeOf(TpvUInt32));
+          inc(p,SubresourceLayout.rowPitch);
+          inc(pp,fWidth*SizeOf(TpvUInt32));
          end;
-         inc(p,SubresourceLayout.rowPitch);
         end;
 
        finally
@@ -15018,6 +15023,23 @@ begin
 
  finally
   FirstImage.Free;
+ end;
+
+ pu:=Pointer(@aScreenshot.Data[0]);
+ if NeedColorSwizzle then begin
+  for Index:=0 to (fWidth*fHeight)-1 do begin
+   Pixel:=pu^;
+   pu^:=((Pixel and $00ff0000) shr 16) or
+        ((Pixel and $000000ff) shl 16) or
+        (Pixel and $0000ff00) or
+        TpvUInt32($ff000000);
+   inc(pu);
+  end;
+ end else begin
+  for Index:=0 to (fWidth*fHeight)-1 do begin
+   pu^:=pu^ or TpvUInt32($ff000000);
+   inc(pu);
+  end;
  end;
 
 end;
@@ -15066,6 +15088,32 @@ begin
      aStream.Seek(0,soBeginning);
     finally
      FreeMem(PNGData);
+    end;
+   end;
+  end;
+ finally
+  Finalize(SwapChainScreenshot);
+ end;
+end;
+
+procedure TpvVulkanSwapChain.SaveScreenshotAsQOIToStream(const aStream:TStream;const aSwapChainImage:TpvVulkanImage=nil);
+var SwapChainScreenshot:TpvVulkanSwapChainScreenshot;
+    QOIData:TpvPointer;
+    QOIDataSize:TpvUInt32;
+begin
+ Initialize(SwapChainScreenshot);
+ try
+  SwapChainScreenshot.Data:=nil;
+  GetScreenshot(SwapChainScreenshot,aSwapChainImage);
+  if length(SwapChainScreenshot.Data)>0 then begin
+   SaveQOIImage(@SwapChainScreenshot.Data[0],SwapChainScreenshot.Width,SwapChainScreenshot.Height,QOIData,QOIDataSize,true);
+   if assigned(QOIData) then begin
+    try
+     aStream.Seek(0,soBeginning);
+     aStream.WriteBuffer(QOIData^,QOIDataSize);
+     aStream.Seek(0,soBeginning);
+    finally
+     FreeMem(QOIData);
     end;
    end;
   end;
@@ -21414,6 +21462,114 @@ begin
  end;
 end;
 
+constructor TpvVulkanTexture.CreateFromQOI(const aDevice:TpvVulkanDevice;
+                                           const aGraphicsQueue:TpvVulkanQueue;
+                                           const aGraphicsCommandBuffer:TpvVulkanCommandBuffer;
+                                           const aGraphicsFence:TpvVulkanFence;
+                                           const aTransferQueue:TpvVulkanQueue;
+                                           const aTransferCommandBuffer:TpvVulkanCommandBuffer;
+                                           const aTransferFence:TpvVulkanFence;
+                                           const aStream:TStream;
+                                           const aMipMaps:boolean;
+                                           const aSRGB:boolean;
+                                           const aAdditionalSRGB:boolean);
+var Data,ImageData:TpvPointer;
+    DataSize,ImageWidth,ImageHeight,VulkanBytesPerPixel,x,y,Index:TpvInt32;
+    sRGB:boolean;
+    VulkanPixelFormat:TVkFormat;
+    p:PVkUInt8;
+    v:TVkFloat;
+begin
+ DataSize:=aStream.Size;
+ GetMem(Data,DataSize);
+ try
+  if aStream.Read(Data^,DataSize)<>DataSize then begin
+   raise EpvVulkanTextureException.Create('Invalid QOI stream');
+  end;
+  ImageData:=nil;
+  ImageWidth:=0;
+  ImageHeight:=0;
+  try
+   if LoadQOIImage(Data,DataSize,ImageData,ImageWidth,ImageHeight,false,sRGB) then begin
+    VulkanPixelFormat:=TVkFormat(TVkInt32(IfThen(aSRGB,TVkInt32(VK_FORMAT_R8G8B8A8_SRGB),TVkInt32(VK_FORMAT_R8G8B8A8_UNORM))));
+    VulkanBytesPerPixel:=4;
+    if sRGB and not aSRGB then begin
+     // sRGB => Linear
+     p:=ImageData;
+     Index:=0;
+     for y:=1 to ImageHeight do begin
+      for x:=1 to ImageWidth do begin
+       if (Index and 3)<>3 then begin
+        // Only convert the RGB color channels, but not the alpha channel
+        v:=p^/255.0;
+        if v<0.04045 then begin
+         v:=v/12.92;
+        end else begin
+         v:=Power((v+0.055)/1.055,2.4);
+        end;
+        p^:=Min(Max(Round(v*255.0),0),255);
+       end;
+       inc(p);
+       inc(Index);
+      end;
+     end;
+    end else if aSRGB and not sRGB then begin
+     // Linear => sRGB
+     p:=ImageData;
+     Index:=0;
+     for y:=1 to ImageHeight do begin
+      for x:=1 to ImageWidth do begin
+       if (Index and 3)<>3 then begin
+        // Only convert the RGB color channels, but not the alpha channel
+        v:=p^/255.0;
+        if v<0.0031308 then begin
+         v:=v*12.92;
+        end else begin
+         v:=(Power(v,1.0/2.4)*1.055)-0.055;
+        end;
+        p^:=Min(Max(Round(v*255.0),0),255);
+       end;
+       inc(p);
+       inc(Index);
+      end;
+     end;
+    end;
+    CreateFromMemory(aDevice,
+                     aGraphicsQueue,
+                     aGraphicsCommandBuffer,
+                     aGraphicsFence,
+                     aTransferQueue,
+                     aTransferCommandBuffer,
+                     aTransferFence,
+                     VulkanPixelFormat,
+                     VK_SAMPLE_COUNT_1_BIT,
+                     Max(1,ImageWidth),
+                     Max(1,ImageHeight),
+                     0,
+                     0,
+                     1,
+                     MipMapLevels[aMipMaps],
+                     [TpvVulkanTextureUsageFlag.TransferDst,TpvVulkanTextureUsageFlag.Sampled],
+                     ImageData,
+                     ImageWidth*ImageHeight*VulkanBytesPerPixel,
+                     false,
+                     false,
+                     1,
+                     true,
+                     aAdditionalSRGB);
+   end else begin
+    raise EpvVulkanTextureException.Create('Invalid QOI stream');
+   end;
+  finally
+   if assigned(ImageData) then begin
+    FreeMem(ImageData);
+   end;
+  end;
+ finally
+  FreeMem(Data);
+ end;
+end;
+
 constructor TpvVulkanTexture.CreateFromPNG(const aDevice:TpvVulkanDevice;
                                            const aGraphicsQueue:TpvVulkanQueue;
                                            const aGraphicsCommandBuffer:TpvVulkanCommandBuffer;
@@ -21454,7 +21610,7 @@ begin
       VulkanBytesPerPixel:=8;
       if aSRGB then begin
        // Because VK_FORMAT_R16G16B16A16_SRGB doesn't exist (yet), . . .
-       p:=@ImageData;
+       p:=ImageData;
        Index:=0;
        for y:=1 to ImageHeight do begin
         for x:=1 to ImageWidth do begin
@@ -21713,7 +21869,19 @@ begin
                  aTransferFence,
                  aStream,
                  aAdditionalSRGB);
- end else if (FirstBytes[0]=$89) and (FirstBytes[1]=$50) and (FirstBytes[2]=$4e) and (FirstBytes[3]=$47) and (FirstBytes[4]=$0d) and (FirstBytes[5]=$0a) and (FirstBytes[6]=$1a) and (FirstBytes[7]=$0a) then begin
+ end else if (FirstBytes[0]=TpvUInt8(AnsiChar('q'))) and (FirstBytes[1]=TpvUInt8(AnsiChar('o'))) and (FirstBytes[2]=TpvUInt8(AnsiChar('i'))) and (FirstBytes[3]=TpvUInt8(AnsiChar('f'))) then begin
+  CreateFromQOI(aDevice,
+                aGraphicsQueue,
+                aGraphicsCommandBuffer,
+                aGraphicsFence,
+                aTransferQueue,
+                aTransferCommandBuffer,
+                aTransferFence,
+                aStream,
+                aMipMaps,
+                aSRGB,
+                aAdditionalSRGB);
+  end else if (FirstBytes[0]=$89) and (FirstBytes[1]=$50) and (FirstBytes[2]=$4e) and (FirstBytes[3]=$47) and (FirstBytes[4]=$0d) and (FirstBytes[5]=$0a) and (FirstBytes[6]=$1a) and (FirstBytes[7]=$0a) then begin
   CreateFromPNG(aDevice,
                 aGraphicsQueue,
                 aGraphicsCommandBuffer,

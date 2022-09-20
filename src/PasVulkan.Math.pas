@@ -1063,21 +1063,21 @@ type PpvScalar=^TpvScalar;
        function Radius:TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
        function Compare(const WithAABB:TpvAABB):boolean; {$ifdef CAN_INLINE}inline;{$endif}
        function Intersect(const WithAABB:TpvAABB;Threshold:TpvScalar=EPSILON):boolean; overload; {$ifdef CAN_INLINE}inline;{$endif}
-       class function Intersect(const aAABBMin,aAABBMax:TpvVector3;const WithAABB:TpvAABB;Threshold:TpvScalar=EPSILON):boolean; static; overload; {$ifdef CAN_INLINE}inline;{$endif}
+       class function Intersect(const aAABBMin,aAABBMax:TpvVector3;const WithAABB:TpvAABB;Threshold:TpvScalar=EPSILON):boolean; overload; static; {$ifdef CAN_INLINE}inline;{$endif}
        function Contains(const AABB:TpvAABB):boolean; overload; {$ifdef CAN_INLINE}inline;{$endif}
-       class function Contains(const aAABBMin,aAABBMax:TpvVector3;const aAABB:TpvAABB):boolean; static; overload; {$ifdef CAN_INLINE}inline;{$endif}
+       class function Contains(const aAABBMin,aAABBMax:TpvVector3;const aAABB:TpvAABB):boolean; overload; static; {$ifdef CAN_INLINE}inline;{$endif}
        function Contains(const Vector:TpvVector3):boolean; overload; {$ifdef CAN_INLINE}inline;{$endif}
-       class function Contains(const aAABBMin,aAABBMax,aVector:TpvVector3):boolean; static; overload; {$ifdef CAN_INLINE}inline;{$endif}
+       class function Contains(const aAABBMin,aAABBMax,aVector:TpvVector3):boolean; overload; static;  {$ifdef CAN_INLINE}inline;{$endif}
        function Touched(const Vector:TpvVector3;const Threshold:TpvScalar=1e-5):boolean; {$ifdef CAN_INLINE}inline;{$endif}
        function GetIntersection(const WithAABB:TpvAABB):TpvAABB; {$ifdef CAN_INLINE}inline;{$endif}
        function FastRayIntersection(const Origin,Direction:TpvVector3):boolean; overload; {$ifdef CAN_INLINE}inline;{$endif}
-       class function FastRayIntersection(const aAABBMin,aAABBMax:TpvVector3;const Origin,Direction:TpvVector3):boolean; static; overload; {$ifdef CAN_INLINE}inline;{$endif}
+       class function FastRayIntersection(const aAABBMin,aAABBMax:TpvVector3;const Origin,Direction:TpvVector3):boolean; overload; static;  {$ifdef CAN_INLINE}inline;{$endif}
        function RayIntersectionHitDistance(const Origin,Direction:TpvVector3;var HitDist:TpvScalar):boolean;
        function RayIntersectionHitPoint(const Origin,Direction:TpvVector3;out HitPoint:TpvVector3):boolean;
        function RayIntersection(const Origin,Direction:TpvVector3;out Time:TpvScalar):boolean; overload;
-       class function RayIntersection(const aAABBMin,aAABBMax:TpvVector3;const Origin,Direction:TpvVector3;out Time:TpvScalar):boolean; static; overload;
+       class function RayIntersection(const aAABBMin,aAABBMax:TpvVector3;const Origin,Direction:TpvVector3;out Time:TpvScalar):boolean; overload; static;
        function LineIntersection(const StartPoint,EndPoint:TpvVector3):boolean; overload;
-       class function LineIntersection(const aAABBMin,aAABBMax:TpvVector3;const StartPoint,EndPoint:TpvVector3):boolean; static; overload;
+       class function LineIntersection(const aAABBMin,aAABBMax:TpvVector3;const StartPoint,EndPoint:TpvVector3):boolean; overload; static;
        function TriangleIntersection(const Triangle:TpvTriangle):boolean;
        function Transform(const Transform:TpvMatrix3x3):TpvAABB; overload; {$ifdef CAN_INLINE}inline;{$endif}
        function Transform(const Transform:TpvMatrix4x4):TpvAABB; overload; {$ifdef CAN_INLINE}inline;{$endif}
@@ -3014,13 +3014,13 @@ end;
 {$elseif defined(SIMD) and defined(cpux64)}
 asm
 {$ifdef Windows}
- movss xmm0,dword ptr [ecx+0]
- movss xmm1,dword ptr [ecx+4]
- movss xmm2,dword ptr [ecx+8]
+ movss xmm0,dword ptr [rcx+0]
+ movss xmm1,dword ptr [rcx+4]
+ movss xmm2,dword ptr [rcx+8]
 {$else}
- movss xmm0,dword ptr [edi+0]
- movss xmm1,dword ptr [edi+4]
- movss xmm2,dword ptr [edi+8]
+ movss xmm0,dword ptr [rdi+0]
+ movss xmm1,dword ptr [rdi+4]
+ movss xmm2,dword ptr [rdi+8]
 {$endif}
  movlhps xmm0,xmm1
  shufps xmm0,xmm2,$88
@@ -13614,7 +13614,7 @@ begin
                (abs((Direction.x*Diff.y)-(Direction.y*Diff.x))>((BoxExtents.x*abs(Direction.y))+(BoxExtents.y*abs(Direction.x))))));
 end;
 
-class function TpvAABB.FastRayIntersection(const aAABBMin,aAABBMax:TpvVector3;const Origin,Direction:TpvVector3):boolean; static; overload; {$ifdef CAN_INLINE}inline;{$endif}
+class function TpvAABB.FastRayIntersection(const aAABBMin,aAABBMax:TpvVector3;const Origin,Direction:TpvVector3):boolean;
 var Center,BoxExtents,Diff:TpvVector3;
 begin
  Center:=(aAABBMin+aAABBMax)*0.5;
@@ -13793,7 +13793,7 @@ begin
  end;
 end;
 
-class function TpvAABB.RayIntersection(const aAABBMin,aAABBMax:TpvVector3;const Origin,Direction:TpvVector3;out Time:TpvScalar):boolean; static; overload; {$ifdef CAN_INLINE}inline;{$endif}
+class function TpvAABB.RayIntersection(const aAABBMin,aAABBMax:TpvVector3;const Origin,Direction:TpvVector3;out Time:TpvScalar):boolean;
 var InvDirection,a,b,AABBMin,AABBMax:TpvVector3;
     TimeMin,TimeMax:TpvScalar;
 begin
@@ -17215,7 +17215,7 @@ begin
   if aColor[ChannelIndex]<0.0031308 then begin
    result[ChannelIndex]:=aColor[ChannelIndex]*12.92;
   end else if aColor[ChannelIndex]<1.0 then begin
-   result[ChannelIndex]:=Power(aColor[ChannelIndex],InverseGamma)-0.055;
+   result[ChannelIndex]:=(Power(aColor[ChannelIndex],InverseGamma)*1.055)-0.055;
   end else begin
    result[ChannelIndex]:=1.0;
   end;
@@ -17230,7 +17230,7 @@ begin
   if aColor[ChannelIndex]<0.0031308 then begin
    result[ChannelIndex]:=aColor[ChannelIndex]*12.92;
   end else if aColor[ChannelIndex]<1.0 then begin
-   result[ChannelIndex]:=Power(aColor[ChannelIndex],InverseGamma)-0.055;
+   result[ChannelIndex]:=(Power(aColor[ChannelIndex],InverseGamma)*1.055)-0.055;
   end else begin
    result[ChannelIndex]:=1.0;
   end;
@@ -17246,7 +17246,7 @@ begin
   if aColor[ChannelIndex]<0.04045 then begin
    result[ChannelIndex]:=aColor[ChannelIndex]*Inverse12d92;
   end else if aColor[ChannelIndex]<1.0 then begin
-   result[ChannelIndex]:=Power(aColor[ChannelIndex]+0.055,2.4);
+   result[ChannelIndex]:=Power((aColor[ChannelIndex]+0.055)/1.055,2.4);
   end else begin
    result[ChannelIndex]:=1.0;
   end;
@@ -17261,7 +17261,7 @@ begin
   if aColor[ChannelIndex]<0.04045 then begin
    result[ChannelIndex]:=aColor[ChannelIndex]*Inverse12d92;
   end else if aColor[ChannelIndex]<1.0 then begin
-   result[ChannelIndex]:=Power(aColor[ChannelIndex]+0.055,2.4);
+   result[ChannelIndex]:=Power((aColor[ChannelIndex]+0.055)/1.055,2.4);
   end else begin
    result[ChannelIndex]:=1.0;
   end;

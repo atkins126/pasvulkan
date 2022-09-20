@@ -947,7 +947,12 @@ type EpvApplication=class(Exception)
 
      TpvApplication=class
       private
-       type TAcquireVulkanBackBufferState=
+       type TVulkanBackBufferState=
+             (
+              Acquire,
+              Present
+             );
+            TAcquireVulkanBackBufferState=
              (
               Entry,
               WaitOnPreviousFrames,
@@ -973,6 +978,8 @@ type EpvApplication=class(Exception)
        fVersion:TpvUInt32;
 
        fWindowTitle:TpvUTF8String;
+
+       fHasNewWindowTitle:TPasMPBool32;
 
        fPathName:TpvUTF8String;
 
@@ -1231,6 +1238,8 @@ type EpvApplication=class(Exception)
 
        fVulkanPhysicalDeviceHandle:TVkPhysicalDevice;
 
+       fVulkanBackBufferState:TVulkanBackBufferState;
+
        fAcquireVulkanBackBufferState:TAcquireVulkanBackBufferState;
 
        fVulkanWaitSemaphore:TpvVulkanSemaphore;
@@ -1271,6 +1280,8 @@ type EpvApplication=class(Exception)
 
        fVulkanGraphicsCommandPool:TpvVulkanCommandPool;
 
+       fVulkanSurfaceRecreated:boolean;
+
        fVulkanBlankCommandBuffers:array[0..MaxSwapChainImages-1] of TpvVulkanCommandBuffer;
 
        fVulkanBlankCommandBufferSemaphores:array[0..MaxSwapChainImages-1] of TpvVulkanSemaphore;
@@ -1286,6 +1297,15 @@ type EpvApplication=class(Exception)
 
        fVulkanDrawToPresentImageBarrierPresentQueueCommandBuffers:array[0..MaxSwapChainImages-1] of TpvVulkanCommandBuffer;
        fVulkanDrawToPresentImageBarrierPresentQueueCommandBufferSemaphores:array[0..MaxSwapChainImages-1] of TpvVulkanSemaphore;
+
+       fVulkanFrameFences:array[0..3] of TpvVulkanFence;
+       fVulkanFrameFencesReady:TpvUInt32;
+       fVulkanFrameFenceCounter:TpvUInt32;
+       fVulkanFrameFenceCommandBuffers:array[0..MaxSwapChainImages-1,0..3] of TpvVulkanCommandBuffer;
+       fVulkanFrameFenceSemaphores:array[0..MaxSwapChainImages-1,0..3] of TpvVulkanSemaphore;
+
+       fVulkanWaitFenceCommandBuffers:array[0..MaxSwapChainImages-1] of TpvVulkanCommandBuffer;
+       fVulkanWaitFenceSemaphores:array[0..MaxSwapChainImages-1] of TpvVulkanSemaphore;
 
        fVulkanNVIDIADiagnosticConfigExtensionFound:boolean;
 
@@ -1361,6 +1381,8 @@ type EpvApplication=class(Exception)
        function IsVisibleToUser:boolean;
 
        function WaitForReadyState:boolean;
+
+       procedure DrawBlackScreen(const aSwapChainImageIndex:TpvInt32;var aWaitSemaphore:TpvVulkanSemaphore;const aWaitFence:TpvVulkanFence=nil); virtual;
 
       public
 
@@ -1708,10 +1730,15 @@ end;
 {$else}
 function DumpException(e:Exception):string;
 const LineEnding={$ifdef Unix}#10{$else}#13#10{$endif};
+var s:string;
 begin
  result:='Program exception! '+LineEnding;
  if assigned(e) then begin
   result:=result+'Exception class: '+e.ClassName+LineEnding+'Message: '+e.Message+LineEnding;
+  s:=e.StackTrace;
+  if length(s)>0 then begin
+   result:=result+s;
+  end;
  end;
 end;
 {$ifend}
@@ -5409,6 +5436,8 @@ begin
 
  fWindowTitle:=fTitle;
 
+ fHasNewWindowTitle:=false;
+
  fPathName:='PasVulkanApplication';
 
  fCacheStoragePath:='';
@@ -5446,6 +5475,13 @@ begin
  fAudio:=nil;
 
  fResourceManager:=TpvResourceManager.Create;
+
+ for FrameIndex:=low(fVulkanFrameFences) to high(fVulkanFrameFences) do begin
+  fVulkanFrameFences[FrameIndex]:=nil;
+ end;
+
+ fVulkanFrameFencesReady:=0;
+ fVulkanFrameFenceCounter:=0;
 
  fRunnableList:=nil;
  fRunnableListCount:=0;
@@ -5566,6 +5602,8 @@ begin
 
  fVulkanPhysicalDeviceHandle:=VK_NULL_HANDLE;
 
+ fVulkanBackBufferState:=TVulkanBackBufferState.Acquire;
+
  fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.Entry;
 
  fVulkanSwapChainQueueFamilyIndices.Initialize;
@@ -5597,15 +5635,15 @@ begin
 
  fDrawFrameCounter:=0;
 
- SetDesiredCountInFlightFrames(-1);
+ SetDesiredCountInFlightFrames(2);
 
  fCurrentInFlightFrameIndex:=0;
 
- fNextInFlightFrameIndex:=0;
+ fNextInFlightFrameIndex:=1;
 
  fDrawInFlightFrameIndex:=0;
 
- fUpdateInFlightFrameIndex:=0;
+ fUpdateInFlightFrameIndex:=1;
 
  SetDesiredCountSwapChainImages(3);
 
@@ -5742,9 +5780,7 @@ procedure TpvApplication.SetWindowTitle(const aWindowTitle:TpvUTF8String);
 begin
  if fWindowTitle<>aWindowTitle then begin
   fWindowTitle:=aWindowTitle;
-{$if defined(PasVulkanUseSDL2)}
-  SDL_SetWindowTitle(fSurfaceWindow,PAnsiChar(TpvApplicationRawByteString(fWindowTitle)));
-{$ifend}
+  TPasMPInterlocked.Write(fHasNewWindowTitle,true);
  end;
 end;
 
@@ -6510,20 +6546,6 @@ begin
 
  fCountSwapChainImages:=fVulkanSwapChain.CountImages;
 
- if fDesiredCountInFlightFrames<0 then begin;
-  fCountInFlightFrames:=fCountSwapChainImages;
- end else begin
-  fCountInFlightFrames:=fDesiredCountInFlightFrames;
- end;
-
- fCurrentInFlightFrameIndex:=0;
-
- fNextInFlightFrameIndex:=1;
-
- fDrawInFlightFrameIndex:=0;
-
- fUpdateInFlightFrameIndex:=1;
-
  fSwapChainImageCounterIndex:=0;
 
  fSwapChainImageIndex:=0;
@@ -6781,7 +6803,7 @@ begin
 end;
 
 procedure TpvApplication.CreateVulkanCommandBuffers;
-var Index:TpvInt32;
+var Index,OtherIndex:TpvInt32;
     ImageMemoryBarrier:TVkImageMemoryBarrier;
 begin
 {$if (defined(fpc) and defined(android)) and not defined(Release)}
@@ -6798,7 +6820,26 @@ begin
                                                          fVulkanDevice.GraphicsQueueFamilyIndex,
                                                          TVkCommandPoolCreateFlags(VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT));
 
+ for Index:=low(fVulkanFrameFences) to high(fVulkanFrameFences) do begin
+  fVulkanFrameFences[Index]:=TpvVulkanFence.Create(fVulkanDevice);
+ end;
+
+ fVulkanFrameFencesReady:=0;
+ fVulkanFrameFenceCounter:=0;
+
  for Index:=0 to CountSwapChainImages-1 do begin
+
+  for OtherIndex:=low(fVulkanFrameFences) to high(fVulkanFrameFences) do begin
+   fVulkanFrameFenceCommandBuffers[Index,OtherIndex]:=TpvVulkanCommandBuffer.Create(fVulkanGraphicsCommandPool,VK_COMMAND_BUFFER_LEVEL_PRIMARY);
+   fVulkanFrameFenceSemaphores[Index,OtherIndex]:=TpvVulkanSemaphore.Create(fVulkanDevice);
+   fVulkanFrameFenceCommandBuffers[Index,OtherIndex].BeginRecording(TVkCommandBufferUsageFlags(VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT));
+   fVulkanFrameFenceCommandBuffers[Index,OtherIndex].EndRecording;
+  end;
+
+  fVulkanWaitFenceCommandBuffers[Index]:=TpvVulkanCommandBuffer.Create(fVulkanGraphicsCommandPool,VK_COMMAND_BUFFER_LEVEL_PRIMARY);
+  fVulkanWaitFenceSemaphores[Index]:=TpvVulkanSemaphore.Create(fVulkanDevice);
+  fVulkanWaitFenceCommandBuffers[Index].BeginRecording(TVkCommandBufferUsageFlags(VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT));
+  fVulkanWaitFenceCommandBuffers[Index].EndRecording;
 
   fVulkanBlankCommandBuffers[Index]:=TpvVulkanCommandBuffer.Create(fVulkanGraphicsCommandPool,VK_COMMAND_BUFFER_LEVEL_PRIMARY);
   fVulkanBlankCommandBufferSemaphores[Index]:=TpvVulkanSemaphore.Create(fVulkanDevice);
@@ -6971,12 +7012,21 @@ begin
 end;
 
 procedure TpvApplication.DestroyVulkanCommandBuffers;
-var Index:TpvInt32;
+var Index,OtherIndex:TpvInt32;
 begin
 {$if (defined(fpc) and defined(android)) and not defined(Release)}
  __android_log_write(ANDROID_LOG_VERBOSE,'PasVulkanApplication','Entering TpvApplication.DestroyVulkanCommandBuffers');
 {$ifend}
+ for Index:=low(fVulkanFrameFences) to high(fVulkanFrameFences) do begin
+  FreeAndNil(fVulkanFrameFences[Index]);
+ end;
  for Index:=0 to CountSwapChainImages-1 do begin
+  for OtherIndex:=low(fVulkanFrameFences) to high(fVulkanFrameFences) do begin
+   FreeAndNil(fVulkanFrameFenceCommandBuffers[Index,OtherIndex]);
+   FreeAndNil(fVulkanFrameFenceSemaphores[Index,OtherIndex]);
+  end;
+  FreeAndNil(fVulkanWaitFenceCommandBuffers[Index]);
+  FreeAndNil(fVulkanWaitFenceSemaphores[Index]);
   FreeAndNil(fVulkanBlankCommandBuffers[Index]);
   FreeAndNil(fVulkanBlankCommandBufferSemaphores[Index]);
   FreeAndNil(fVulkanPresentToDrawImageBarrierGraphicsQueueCommandBuffers[Index]);
@@ -7042,370 +7092,412 @@ begin
 
  result:=false;
 
- if not assigned(fVulkanSwapChain) then begin
-  fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.RecreateSurface;
- end;
+ fVulkanSurfaceRecreated:=false;
 
- RecreationTries:=0;
+ try
 
- repeat
+  case fVulkanBackBufferState of
 
-  case fAcquireVulkanBackBufferState of
+   TVulkanBackBufferState.Acquire:begin
 
-   TAcquireVulkanBackBufferState.Entry:begin
-    fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.WaitOnPreviousFrames;
-    continue;
-   end;
-
-   TAcquireVulkanBackBufferState.WaitOnPreviousFrames:begin
-    if fWaitOnPreviousFrames then begin
-     for ImageIndex:=0 to fCountSwapChainImages-1 do begin
-      if fVulkanPresentCompleteFencesReady[ImageIndex] then begin
-       if fVulkanPresentCompleteFences[ImageIndex].GetStatus<>VK_SUCCESS then begin
-        if fBlocking then begin
-         fVulkanPresentCompleteFences[ImageIndex].WaitFor;
-        end else begin
-         exit;
-        end;
-       end;
-       fVulkanPresentCompleteFences[ImageIndex].Reset;
-       fVulkanPresentCompleteFencesReady[ImageIndex]:=false;
-      end;
-      if fVulkanWaitFencesReady[ImageIndex] then begin
-       if fVulkanWaitFences[ImageIndex].GetStatus<>VK_SUCCESS then begin
-        if fBlocking then begin
-         fVulkanWaitFences[ImageIndex].WaitFor;
-        end else begin
-         exit;
-        end;
-       end;
-       fVulkanWaitFences[ImageIndex].Reset;
-       fVulkanWaitFencesReady[ImageIndex]:=false;
-      end;
-     end;
-     fVulkanDevice.WaitIdle; // even when fBlocking is false, for to satisfy the validation layers in some edge-cases
-     for FrameIndex:=0 to MaxInFlightFrames-1 do begin
-      fVulkanInFlightFenceIndices[FrameIndex]:=-1;
-     end;
+    if not assigned(fVulkanSwapChain) then begin
+     fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.RecreateSurface;
+     fVulkanSurfaceRecreated:=true;
     end;
-    fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.WaitOnPresentCompleteFence;
-    continue;
-   end;
 
-   TAcquireVulkanBackBufferState.WaitOnPresentCompleteFence:begin
-    if fVulkanPresentCompleteFencesReady[fSwapChainImageCounterIndex] then begin
-     if fVulkanPresentCompleteFences[fSwapChainImageCounterIndex].GetStatus<>VK_SUCCESS then begin
-      if fBlocking then begin
-       fVulkanPresentCompleteFences[fSwapChainImageCounterIndex].WaitFor;
-      end else begin
-       break;
-      end;
-     end;
-     fVulkanPresentCompleteFences[fSwapChainImageCounterIndex].Reset;
-     fVulkanPresentCompleteFencesReady[fSwapChainImageCounterIndex]:=false;
-    end;
-    fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.CheckSettings;
-    continue;
-   end;
+    RecreationTries:=0;
 
-   TAcquireVulkanBackBufferState.CheckSettings:begin
-    if (fVulkanSwapChain.Width<>fWidth) or
-       (fVulkanSwapChain.Height<>fHeight) or
-       (fVulkanSwapChain.PresentMode<>PresentModeToVulkanPresentMode[fPresentMode]) then begin
-     VulkanDebugLn('New surface dimension size and/or vertical synchronization setting detected!');
-     fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.RecreateSwapChain;
-    end else begin
-     fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.Acquire;
-    end;
-    continue;
-   end;
+    repeat
 
-   TAcquireVulkanBackBufferState.Acquire:begin
-    try
-     if fBlocking then begin
-      if fCountSwapChainImages>1 then begin
-       TimeOut:=TpvUInt64(high(TpvUInt64));
-      end else begin
-       TimeOut:=1000000000; // 1e+9 nanoseconds = 1000 milliseconds = 1 second, for AMD drivers, which have a immediate-present-mode deadlock problem at fullscreen otherwise
-      end;
-     end else begin
-      TimeOut:=0;
-     end;
-     NextInFlightFrameIndex:=fCurrentInFlightFrameIndex+1;
-     if NextInFlightFrameIndex>=fCountInFlightFrames then begin
-      dec(NextInFlightFrameIndex,fCountInFlightFrames);
-     end;
-     case fVulkanSwapChain.AcquireNextImage(fVulkanPresentCompleteSemaphores[fSwapChainImageCounterIndex],
-                                            fVulkanPresentCompleteFences[fSwapChainImageCounterIndex],
-                                            TimeOut) of
-      VK_SUCCESS:begin
-       fVulkanPresentCompleteFencesReady[fSwapChainImageCounterIndex]:=true;
-       fCurrentInFlightFrameIndex:=NextInFlightFrameIndex;
-       fNextInFlightFrameIndex:=fCurrentInFlightFrameIndex+1;
-       if fNextInFlightFrameIndex>=fCountInFlightFrames then begin
-        dec(fNextInFlightFrameIndex,fCountInFlightFrames);
-       end;
-       fSwapChainImageIndex:=fVulkanSwapChain.CurrentImageIndex;
-       fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.WaitOnFence;
+     case fAcquireVulkanBackBufferState of
+
+      TAcquireVulkanBackBufferState.Entry:begin
+       fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.WaitOnPreviousFrames;
        continue;
       end;
-      VK_SUBOPTIMAL_KHR:begin
-       if fVulkanRecreateSwapChainOnSuboptimalSurface then begin
-        VulkanDebugLn('Suboptimal surface detected!');
+
+      TAcquireVulkanBackBufferState.WaitOnPreviousFrames:begin
+       if fWaitOnPreviousFrames then begin
+        for ImageIndex:=0 to fCountSwapChainImages-1 do begin
+         if fVulkanPresentCompleteFencesReady[ImageIndex] then begin
+          if fVulkanPresentCompleteFences[ImageIndex].GetStatus<>VK_SUCCESS then begin
+           if fBlocking then begin
+            fVulkanPresentCompleteFences[ImageIndex].WaitFor;
+           end else begin
+            exit;
+           end;
+          end;
+          fVulkanPresentCompleteFences[ImageIndex].Reset;
+          fVulkanPresentCompleteFencesReady[ImageIndex]:=false;
+         end;
+         if fVulkanWaitFencesReady[ImageIndex] then begin
+          if fVulkanWaitFences[ImageIndex].GetStatus<>VK_SUCCESS then begin
+           if fBlocking then begin
+            fVulkanWaitFences[ImageIndex].WaitFor;
+           end else begin
+            exit;
+           end;
+          end;
+          fVulkanWaitFences[ImageIndex].Reset;
+          fVulkanWaitFencesReady[ImageIndex]:=false;
+         end;
+        end;
+        fVulkanDevice.WaitIdle; // even when fBlocking is false, for to satisfy the validation layers in some edge-cases
+        for FrameIndex:=0 to MaxInFlightFrames-1 do begin
+         fVulkanInFlightFenceIndices[FrameIndex]:=-1;
+        end;
+       end;
+       fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.WaitOnPresentCompleteFence;
+       continue;
+      end;
+
+      TAcquireVulkanBackBufferState.WaitOnPresentCompleteFence:begin
+       if fVulkanPresentCompleteFencesReady[fSwapChainImageCounterIndex] then begin
+        if fVulkanPresentCompleteFences[fSwapChainImageCounterIndex].GetStatus<>VK_SUCCESS then begin
+         if fBlocking then begin
+          fVulkanPresentCompleteFences[fSwapChainImageCounterIndex].WaitFor;
+         end else begin
+          break;
+         end;
+        end;
+        fVulkanPresentCompleteFences[fSwapChainImageCounterIndex].Reset;
+        fVulkanPresentCompleteFencesReady[fSwapChainImageCounterIndex]:=false;
+       end;
+       fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.CheckSettings;
+       continue;
+      end;
+
+      TAcquireVulkanBackBufferState.CheckSettings:begin
+       if (fVulkanSwapChain.Width<>fWidth) or
+          (fVulkanSwapChain.Height<>fHeight) or
+          (fVulkanSwapChain.PresentMode<>PresentModeToVulkanPresentMode[fPresentMode]) then begin
+        VulkanDebugLn('New surface dimension size and/or vertical synchronization setting detected!');
         fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.RecreateSwapChain;
+       end else begin
+        fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.Acquire;
+       end;
+       continue;
+      end;
+
+      TAcquireVulkanBackBufferState.Acquire:begin
+       try
+        if fBlocking then begin
+         if fCountSwapChainImages>1 then begin
+          TimeOut:=TpvUInt64(high(TpvUInt64));
+         end else begin
+          TimeOut:=1000000000; // 1e+9 nanoseconds = 1000 milliseconds = 1 second, for AMD drivers, which have a immediate-present-mode deadlock problem at fullscreen otherwise
+         end;
+        end else begin
+         TimeOut:=0;
+        end;
+        NextInFlightFrameIndex:=fCurrentInFlightFrameIndex+1;
+        if NextInFlightFrameIndex>=fCountInFlightFrames then begin
+         dec(NextInFlightFrameIndex,fCountInFlightFrames);
+        end;
+        case fVulkanSwapChain.AcquireNextImage(fVulkanPresentCompleteSemaphores[fSwapChainImageCounterIndex],
+                                               fVulkanPresentCompleteFences[fSwapChainImageCounterIndex],
+                                               TimeOut) of
+         VK_SUCCESS:begin
+          fVulkanPresentCompleteFencesReady[fSwapChainImageCounterIndex]:=true;
+          fCurrentInFlightFrameIndex:=NextInFlightFrameIndex;
+          fNextInFlightFrameIndex:=fCurrentInFlightFrameIndex+1;
+          if fNextInFlightFrameIndex>=fCountInFlightFrames then begin
+           dec(fNextInFlightFrameIndex,fCountInFlightFrames);
+          end;
+          fSwapChainImageIndex:=fVulkanSwapChain.CurrentImageIndex;
+          fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.WaitOnFence;
+          continue;
+         end;
+         VK_SUBOPTIMAL_KHR:begin
+          if fVulkanRecreateSwapChainOnSuboptimalSurface then begin
+           VulkanDebugLn('Suboptimal surface detected!');
+           fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.RecreateSwapChain;
+           continue;
+          end else begin
+           fVulkanPresentCompleteFencesReady[fSwapChainImageCounterIndex]:=true;
+           fCurrentInFlightFrameIndex:=NextInFlightFrameIndex;
+           fNextInFlightFrameIndex:=fCurrentInFlightFrameIndex+1;
+           if fNextInFlightFrameIndex>=fCountInFlightFrames then begin
+            dec(fNextInFlightFrameIndex,fCountInFlightFrames);
+           end;
+           fSwapChainImageIndex:=fVulkanSwapChain.CurrentImageIndex;
+           fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.WaitOnFence;
+           continue;
+          end;
+         end;
+         else {VK_TIMEOUT:}begin
+          break;
+         end;
+        end;
+       except
+        on VulkanResultException:EpvVulkanResultException do begin
+         case VulkanResultException.ResultCode of
+          VK_ERROR_SURFACE_LOST_KHR,
+          VK_ERROR_FULL_SCREEN_EXCLUSIVE_MODE_LOST_EXT:begin
+           fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.RecreateSurface;
+           VulkanDebugLn(TpvUTF8String(VulkanResultException.ClassName+': '+VulkanResultException.Message));
+          end;
+          VK_ERROR_OUT_OF_DATE_KHR,
+          VK_SUBOPTIMAL_KHR:begin
+           fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.RecreateSwapChain;
+           VulkanDebugLn(TpvUTF8String(VulkanResultException.ClassName+': '+VulkanResultException.Message));
+          end;
+          else begin
+           raise;
+          end;
+         end;
+        end;
+       end;
+      end;
+
+      TAcquireVulkanBackBufferState.WaitOnFence:begin
+       InFlightFenceIndex:=fVulkanInFlightFenceIndices[fCurrentInFlightFrameIndex];
+       if (InFlightFenceIndex>=0) and
+          fVulkanWaitFencesReady[InFlightFenceIndex] then begin
+        if fVulkanWaitFences[InFlightFenceIndex].GetStatus<>VK_SUCCESS then begin
+         if fBlocking then begin
+          fVulkanWaitFences[InFlightFenceIndex].WaitFor;
+         end else begin
+          break;
+         end;
+        end;
+        fVulkanWaitFences[InFlightFenceIndex].Reset;
+        fVulkanWaitFencesReady[InFlightFenceIndex]:=false;
+        fVulkanInFlightFenceIndices[fCurrentInFlightFrameIndex]:=-1;
+       end;
+       if fVulkanWaitFencesReady[fSwapChainImageIndex] then begin
+        if fVulkanWaitFences[fSwapChainImageIndex].GetStatus<>VK_SUCCESS then begin
+         if fBlocking then begin
+          fVulkanWaitFences[fSwapChainImageIndex].WaitFor;
+         end else begin
+          break;
+         end;
+        end;
+        fVulkanWaitFences[fSwapChainImageIndex].Reset;
+        fVulkanWaitFencesReady[fSwapChainImageIndex]:=false;
+       end;
+       fVulkanInFlightFenceIndices[fCurrentInFlightFrameIndex]:=fSwapChainImageIndex;
+       fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.Apply;
+       continue;
+      end;
+
+      TAcquireVulkanBackBufferState.Apply:begin
+
+       fVulkanWaitSemaphore:=fVulkanPresentCompleteSemaphores[fSwapChainImageCounterIndex];
+
+       if assigned(fVulkanPresentToDrawImageBarrierGraphicsQueueCommandBuffers[fSwapChainImageIndex]) then begin
+
+        // If present and graphics queue families are different, then a image barrier is required
+
+        fVulkanPresentToDrawImageBarrierPresentQueueCommandBuffers[fSwapChainImageIndex].Execute(fVulkanDevice.PresentQueue,
+                                                                                                             TVkPipelineStageFlags(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT),
+                                                                                                             fVulkanWaitSemaphore,
+                                                                                                             fVulkanPresentToDrawImageBarrierPresentQueueCommandBufferSemaphores[fSwapChainImageIndex],
+                                                                                                             nil,
+                                                                                                             false);
+        fVulkanWaitSemaphore:=fVulkanPresentToDrawImageBarrierPresentQueueCommandBufferSemaphores[fSwapChainImageIndex];
+
+        fVulkanPresentToDrawImageBarrierGraphicsQueueCommandBuffers[fSwapChainImageIndex].Execute(fVulkanDevice.GraphicsQueue,
+                                                                                                              TVkPipelineStageFlags(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT),
+                                                                                                              fVulkanWaitSemaphore,
+                                                                                                              fVulkanPresentToDrawImageBarrierGraphicsQueueCommandBufferSemaphores[fSwapChainImageIndex],
+                                                                                                              nil,
+                                                                                                              false);
+        fVulkanWaitSemaphore:=fVulkanPresentToDrawImageBarrierGraphicsQueueCommandBufferSemaphores[fSwapChainImageIndex];
+
+       end;
+
+ {     if assigned(fVulkanDrawToPresentImageBarrierGraphicsQueueCommandBuffers[fSwapChainImageIndex]) and
+          assigned(fVulkanDrawToPresentImageBarrierPresentQueueCommandBuffers[fSwapChainImageIndex]) then begin
+        fVulkanWaitFence:=nil;
+       end else begin
+        fVulkanWaitFence:=fVulkanWaitFences[fSwapChainImageIndex];
+       end;}
+
+       fVulkanWaitFence:=nil;
+
+       result:=true;
+
+       fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.Entry;
+
+       fVulkanBackBufferState:=TVulkanBackBufferState.Present;
+
+       break;
+
+      end;
+
+      TAcquireVulkanBackBufferState.RecreateSwapChain,
+      TAcquireVulkanBackBufferState.RecreateSurface:begin
+
+       for ImageIndex:=0 to fCountSwapChainImages-1 do begin
+        if fVulkanPresentCompleteFencesReady[ImageIndex] then begin
+         fVulkanPresentCompleteFences[ImageIndex].WaitFor;
+         fVulkanPresentCompleteFences[ImageIndex].Reset;
+         fVulkanPresentCompleteFencesReady[ImageIndex]:=false;
+        end;
+        if fVulkanWaitFencesReady[ImageIndex] then begin
+         fVulkanWaitFences[ImageIndex].WaitFor;
+         fVulkanWaitFences[ImageIndex].Reset;
+         fVulkanWaitFencesReady[ImageIndex]:=false;
+        end;
+       end;
+
+       fVulkanDevice.WaitIdle;
+
+       if fAcquireVulkanBackBufferState=TAcquireVulkanBackBufferState.RecreateSurface then begin
+        VulkanDebugLn('Recreating vulkan surface... ');
+       end else begin
+        VulkanDebugLn('Recreating vulkan swap chain... ');
+       end;
+       if fVulkanTransferInFlightCommandsFromOldSwapChain then begin
+        fVulkanOldSwapChain:=fVulkanSwapChain;
+       end else begin
+        fVulkanOldSwapChain:=nil;
+       end;
+       try
+        VulkanWaitIdle;
+        BeforeDestroySwapChainWithCheck;
+        if fVulkanTransferInFlightCommandsFromOldSwapChain then begin
+         fVulkanSwapChain:=nil;
+        end;
+        DestroyVulkanCommandBuffers;
+        DestroyVulkanFrameBuffers;
+        DestroyVulkanRenderPass;
+        DestroyVulkanSwapChain;
+        if fAcquireVulkanBackBufferState=TAcquireVulkanBackBufferState.RecreateSurface then begin
+         DestroyVulkanSurface;
+         CreateVulkanSurface;
+        end;
+        CreateVulkanSwapChain;
+        CreateVulkanRenderPass;
+        CreateVulkanFrameBuffers;
+        CreateVulkanCommandBuffers;
+        VulkanWaitIdle;
+        AfterCreateSwapChainWithCheck;
+       finally
+        FreeAndNil(fVulkanOldSwapChain);
+       end;
+       if fAcquireVulkanBackBufferState=TAcquireVulkanBackBufferState.RecreateSurface then begin
+        VulkanDebugLn('Recreated vulkan surface... ');
+       end else begin
+        VulkanDebugLn('Recreated vulkan swap chain... ');
+       end;
+
+       fVulkanWaitSemaphore:=nil;
+       fVulkanWaitFence:=nil;
+
+       fSwapChainImageCounterIndex:=0;
+
+       fSwapChainImageIndex:=0;
+
+       fVulkanSurfaceRecreated:=true;
+
+       fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.Entry;
+
+       if RecreationTries<3 then begin
+        inc(RecreationTries);
         continue;
        end else begin
-        fVulkanPresentCompleteFencesReady[fSwapChainImageCounterIndex]:=true;
-        fCurrentInFlightFrameIndex:=NextInFlightFrameIndex;
-        fNextInFlightFrameIndex:=fCurrentInFlightFrameIndex+1;
-        if fNextInFlightFrameIndex>=fCountInFlightFrames then begin
-         dec(fNextInFlightFrameIndex,fCountInFlightFrames);
-        end;
-        fSwapChainImageIndex:=fVulkanSwapChain.CurrentImageIndex;
-        fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.WaitOnFence;
-        continue;
+        // For to avoid main loop deadlocks
+        break;
        end;
+
       end;
-      else {VK_TIMEOUT:}begin
+
+      else begin
        break;
       end;
+
      end;
-    except
-     on VulkanResultException:EpvVulkanResultException do begin
-      case VulkanResultException.ResultCode of
-       VK_ERROR_SURFACE_LOST_KHR,
-       VK_ERROR_FULL_SCREEN_EXCLUSIVE_MODE_LOST_EXT:begin
-        fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.RecreateSurface;
-        VulkanDebugLn(TpvUTF8String(VulkanResultException.ClassName+': '+VulkanResultException.Message));
-       end;
-       VK_ERROR_OUT_OF_DATE_KHR,
-       VK_SUBOPTIMAL_KHR:begin
-        fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.RecreateSwapChain;
-        VulkanDebugLn(TpvUTF8String(VulkanResultException.ClassName+': '+VulkanResultException.Message));
-       end;
-       else begin
-        raise;
-       end;
-      end;
-     end;
-    end;
-   end;
 
-   TAcquireVulkanBackBufferState.WaitOnFence:begin
-    InFlightFenceIndex:=fVulkanInFlightFenceIndices[fCurrentInFlightFrameIndex];
-    if (InFlightFenceIndex>=0) and
-       fVulkanWaitFencesReady[InFlightFenceIndex] then begin
-     if fVulkanWaitFences[InFlightFenceIndex].GetStatus<>VK_SUCCESS then begin
-      if fBlocking then begin
-       fVulkanWaitFences[InFlightFenceIndex].WaitFor;
-      end else begin
-       break;
-      end;
-     end;
-     fVulkanWaitFences[InFlightFenceIndex].Reset;
-     fVulkanWaitFencesReady[InFlightFenceIndex]:=false;
-     fVulkanInFlightFenceIndices[fCurrentInFlightFrameIndex]:=-1;
-    end;
-    if fVulkanWaitFencesReady[fSwapChainImageIndex] then begin
-     if fVulkanWaitFences[fSwapChainImageIndex].GetStatus<>VK_SUCCESS then begin
-      if fBlocking then begin
-       fVulkanWaitFences[fSwapChainImageIndex].WaitFor;
-      end else begin
-       break;
-      end;
-     end;
-     fVulkanWaitFences[fSwapChainImageIndex].Reset;
-     fVulkanWaitFencesReady[fSwapChainImageIndex]:=false;
-    end;
-    fVulkanInFlightFenceIndices[fCurrentInFlightFrameIndex]:=fSwapChainImageIndex;
-    fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.Apply;
-    continue;
-   end;
-
-   TAcquireVulkanBackBufferState.Apply:begin
-
-    fVulkanWaitSemaphore:=fVulkanPresentCompleteSemaphores[fSwapChainImageCounterIndex];
-
-    if assigned(fVulkanPresentToDrawImageBarrierGraphicsQueueCommandBuffers[fSwapChainImageIndex]) then begin
-
-     // If present and graphics queue families are different, then a image barrier is required
-
-     fVulkanPresentToDrawImageBarrierPresentQueueCommandBuffers[fSwapChainImageIndex].Execute(fVulkanDevice.PresentQueue,
-                                                                                                          TVkPipelineStageFlags(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT),
-                                                                                                          fVulkanWaitSemaphore,
-                                                                                                          fVulkanPresentToDrawImageBarrierPresentQueueCommandBufferSemaphores[fSwapChainImageIndex],
-                                                                                                          nil,
-                                                                                                          false);
-     fVulkanWaitSemaphore:=fVulkanPresentToDrawImageBarrierPresentQueueCommandBufferSemaphores[fSwapChainImageIndex];
-
-     fVulkanPresentToDrawImageBarrierGraphicsQueueCommandBuffers[fSwapChainImageIndex].Execute(fVulkanDevice.GraphicsQueue,
-                                                                                                           TVkPipelineStageFlags(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT),
-                                                                                                           fVulkanWaitSemaphore,
-                                                                                                           fVulkanPresentToDrawImageBarrierGraphicsQueueCommandBufferSemaphores[fSwapChainImageIndex],
-                                                                                                           nil,
-                                                                                                           false);
-     fVulkanWaitSemaphore:=fVulkanPresentToDrawImageBarrierGraphicsQueueCommandBufferSemaphores[fSwapChainImageIndex];
-
-    end;
-
-    if assigned(fVulkanDrawToPresentImageBarrierGraphicsQueueCommandBuffers[fSwapChainImageIndex]) and
-       assigned(fVulkanDrawToPresentImageBarrierPresentQueueCommandBuffers[fSwapChainImageIndex]) then begin
-     fVulkanWaitFence:=nil;
-    end else begin
-     fVulkanWaitFence:=fVulkanWaitFences[fSwapChainImageIndex];
-    end;
-
-    result:=true;
-
-    fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.Entry;
-
-    break;
-
-   end;
-
-   TAcquireVulkanBackBufferState.RecreateSwapChain,
-   TAcquireVulkanBackBufferState.RecreateSurface:begin
-
-    for ImageIndex:=0 to fCountSwapChainImages-1 do begin
-     if fVulkanPresentCompleteFencesReady[ImageIndex] then begin
-      fVulkanPresentCompleteFences[ImageIndex].WaitFor;
-      fVulkanPresentCompleteFences[ImageIndex].Reset;
-      fVulkanPresentCompleteFencesReady[ImageIndex]:=false;
-     end;
-     if fVulkanWaitFencesReady[ImageIndex] then begin
-      fVulkanWaitFences[ImageIndex].WaitFor;
-      fVulkanWaitFences[ImageIndex].Reset;
-      fVulkanWaitFencesReady[ImageIndex]:=false;
-     end;
-    end;
-
-    fVulkanDevice.WaitIdle;
-
-    if fAcquireVulkanBackBufferState=TAcquireVulkanBackBufferState.RecreateSurface then begin
-     VulkanDebugLn('Recreating vulkan surface... ');
-    end else begin
-     VulkanDebugLn('Recreating vulkan swap chain... ');
-    end;
-    if fVulkanTransferInFlightCommandsFromOldSwapChain then begin
-     fVulkanOldSwapChain:=fVulkanSwapChain;
-    end else begin
-     fVulkanOldSwapChain:=nil;
-    end;
-    try
-     VulkanWaitIdle;
-     BeforeDestroySwapChainWithCheck;
-     if fVulkanTransferInFlightCommandsFromOldSwapChain then begin
-      fVulkanSwapChain:=nil;
-     end;
-     DestroyVulkanCommandBuffers;
-     DestroyVulkanFrameBuffers;
-     DestroyVulkanRenderPass;
-     DestroyVulkanSwapChain;
-     if fAcquireVulkanBackBufferState=TAcquireVulkanBackBufferState.RecreateSurface then begin
-      DestroyVulkanSurface;
-      CreateVulkanSurface;
-     end;
-     CreateVulkanSwapChain;
-     CreateVulkanRenderPass;
-     CreateVulkanFrameBuffers;
-     CreateVulkanCommandBuffers;
-     VulkanWaitIdle;
-     AfterCreateSwapChainWithCheck;
-    finally
-     FreeAndNil(fVulkanOldSwapChain);
-    end;
-    if fAcquireVulkanBackBufferState=TAcquireVulkanBackBufferState.RecreateSurface then begin
-     VulkanDebugLn('Recreated vulkan surface... ');
-    end else begin
-     VulkanDebugLn('Recreated vulkan swap chain... ');
-    end;
-
-    fVulkanWaitSemaphore:=nil;
-    fVulkanWaitFence:=nil;
-
-    fSwapChainImageCounterIndex:=0;
-
-    fSwapChainImageIndex:=0;
-
-    fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.Entry;
-
-    if RecreationTries<3 then begin
-     inc(RecreationTries);
-     continue;
-    end else begin
-     // For to avoid main loop deadlocks
      break;
-    end;
+
+    until false;
 
    end;
 
-   else begin
-    break;
+   else {TVulkanBackBufferState.Present:}begin
+    result:=true;
    end;
 
   end;
 
-  break;
-
- until false;
+ except
+  Log(LOG_VERBOSE,'TpvApplication.AcquireVulkanBackBuffer','Exception');
+  raise;
+ end;
 
 end;
 
 function TpvApplication.PresentVulkanBackBuffer:boolean;
 begin
+
  result:=false;
 
- if assigned(fVulkanDrawToPresentImageBarrierGraphicsQueueCommandBuffers[fSwapChainImageIndex]) and
-    assigned(fVulkanDrawToPresentImageBarrierPresentQueueCommandBuffers[fSwapChainImageIndex]) then begin
-
-  // If present and graphics queue families are different, then a image barrier is required
-
-  fVulkanDrawToPresentImageBarrierGraphicsQueueCommandBuffers[fSwapChainImageIndex].Execute(fVulkanDevice.GraphicsQueue,
-                                                                                                        TVkPipelineStageFlags(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT),
-                                                                                                        fVulkanWaitSemaphore,
-                                                                                                        fVulkanDrawToPresentImageBarrierGraphicsQueueCommandBufferSemaphores[fSwapChainImageIndex],
-                                                                                                        nil,
-                                                                                                        false);
-  fVulkanWaitSemaphore:=fVulkanDrawToPresentImageBarrierGraphicsQueueCommandBufferSemaphores[fSwapChainImageIndex];
-
-  fVulkanDrawToPresentImageBarrierPresentQueueCommandBuffers[fSwapChainImageIndex].Execute(fVulkanDevice.PresentQueue,
-                                                                                                       TVkPipelineStageFlags(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT),
-                                                                                                       fVulkanWaitSemaphore,
-                                                                                                       fVulkanDrawToPresentImageBarrierPresentQueueCommandBufferSemaphores[fSwapChainImageIndex],
-                                                                                                       fVulkanWaitFences[fSwapChainImageIndex],
-                                                                                                       false);
-  fVulkanWaitSemaphore:=fVulkanDrawToPresentImageBarrierPresentQueueCommandBufferSemaphores[fSwapChainImageIndex];
-
-  fVulkanWaitFence:=fVulkanWaitFences[fSwapChainImageIndex];
- end;
-
- fVulkanWaitFencesReady[fSwapChainImageIndex]:=true;
-
-//fVulkanDevice.GraphicsQueue.WaitIdle; // A GPU/CPU graphics queue synchronization point only for debug cases here, when something got run wrong
-
  try
-  case fVulkanSwapChain.QueuePresent(fVulkanDevice.PresentQueue,fVulkanWaitSemaphore) of
-   VK_SUCCESS:begin
-    //fVulkanDevice.WaitIdle; // A GPU/CPU frame synchronization point only for debug cases here, when something got run wrong
-    fNextInFlightFrameIndex:=fCurrentInFlightFrameIndex+1;
-    if fNextInFlightFrameIndex>=fCountInFlightFrames then begin
-     dec(fNextInFlightFrameIndex,fCountInFlightFrames);
-    end;
-    inc(fSwapChainImageCounterIndex);
-    if fSwapChainImageCounterIndex>=fCountSwapChainImages then begin
-     dec(fSwapChainImageCounterIndex,fCountSwapChainImages);
-    end;
-    result:=true;
-   end;
-   VK_SUBOPTIMAL_KHR:begin
-    if fVulkanRecreateSwapChainOnSuboptimalSurface then begin
-     if not (fAcquireVulkanBackBufferState in [TAcquireVulkanBackBufferState.RecreateSwapChain,
-                                               TAcquireVulkanBackBufferState.RecreateSurface,
-                                               TAcquireVulkanBackBufferState.RecreateDevice]) then begin
-      VulkanDebugLn('Suboptimal surface detected!');
-      fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.RecreateSwapChain;
-     end;
-    end else begin
+
+  if (fVulkanFrameFencesReady and (TpvUInt32(1) shl (fVulkanFrameFenceCounter and 3)))<>0 then begin
+   fVulkanFrameFences[fVulkanFrameFenceCounter and 3].Reset;
+  end;
+
+  fVulkanFrameFenceCommandBuffers[fSwapChainImageIndex,fVulkanFrameFenceCounter].Execute(fVulkanDevice.GraphicsQueue,
+                                                                                         TVkPipelineStageFlags(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT) or TVkPipelineStageFlags(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT) or TVkPipelineStageFlags(VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT),
+                                                                                         fVulkanWaitSemaphore,
+                                                                                         fVulkanFrameFenceSemaphores[fSwapChainImageIndex,fVulkanFrameFenceCounter],
+                                                                                         fVulkanFrameFences[fVulkanFrameFenceCounter],
+                                                                                         false);
+  fVulkanWaitSemaphore:=fVulkanFrameFenceSemaphores[fSwapChainImageIndex,fVulkanFrameFenceCounter];
+
+  fVulkanFrameFencesReady:=fVulkanFrameFencesReady or (TpvUInt32(1) shl (fVulkanFrameFenceCounter and 3));
+
+  fVulkanFrameFenceCounter:=(fVulkanFrameFenceCounter+1) and 3;
+
+  if assigned(fVulkanDrawToPresentImageBarrierGraphicsQueueCommandBuffers[fSwapChainImageIndex]) and
+     assigned(fVulkanDrawToPresentImageBarrierPresentQueueCommandBuffers[fSwapChainImageIndex]) then begin
+
+   // If present and graphics queue families are different, then a image barrier is required
+
+   fVulkanDrawToPresentImageBarrierGraphicsQueueCommandBuffers[fSwapChainImageIndex].Execute(fVulkanDevice.GraphicsQueue,
+                                                                                             TVkPipelineStageFlags(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT),
+                                                                                             fVulkanWaitSemaphore,
+                                                                                             fVulkanDrawToPresentImageBarrierGraphicsQueueCommandBufferSemaphores[fSwapChainImageIndex],
+                                                                                             nil,
+                                                                                             false);
+   fVulkanWaitSemaphore:=fVulkanDrawToPresentImageBarrierGraphicsQueueCommandBufferSemaphores[fSwapChainImageIndex];
+
+   fVulkanDrawToPresentImageBarrierPresentQueueCommandBuffers[fSwapChainImageIndex].Execute(fVulkanDevice.PresentQueue,
+                                                                                            TVkPipelineStageFlags(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT),
+                                                                                            fVulkanWaitSemaphore,
+                                                                                            fVulkanDrawToPresentImageBarrierPresentQueueCommandBufferSemaphores[fSwapChainImageIndex],
+                                                                                            fVulkanWaitFences[fSwapChainImageIndex],
+                                                                                            false);
+   fVulkanWaitSemaphore:=fVulkanDrawToPresentImageBarrierPresentQueueCommandBufferSemaphores[fSwapChainImageIndex];
+
+   fVulkanWaitFence:=fVulkanWaitFences[fSwapChainImageIndex];
+
+  end else if not assigned(fVulkanWaitFence) then begin
+
+   fVulkanWaitFenceCommandBuffers[fSwapChainImageIndex].Execute(fVulkanDevice.GraphicsQueue,
+                                                                TVkPipelineStageFlags(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT) or TVkPipelineStageFlags(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT) or TVkPipelineStageFlags(VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT),
+                                                                fVulkanWaitSemaphore,
+                                                                fVulkanWaitFenceSemaphores[fSwapChainImageIndex],
+                                                                fVulkanWaitFences[fSwapChainImageIndex],
+                                                                false);
+   fVulkanWaitSemaphore:=fVulkanWaitFenceSemaphores[fSwapChainImageIndex];
+
+   fVulkanWaitFence:=fVulkanWaitFences[fSwapChainImageIndex];
+
+  end;
+
+  fVulkanWaitFencesReady[fSwapChainImageIndex]:=true;
+
+ //fVulkanDevice.GraphicsQueue.WaitIdle; // A GPU/CPU graphics queue synchronization point only for debug cases here, when something got run wrong
+
+  fVulkanBackBufferState:=TVulkanBackBufferState.Acquire;
+
+  try
+   case fVulkanSwapChain.QueuePresent(fVulkanDevice.PresentQueue,fVulkanWaitSemaphore) of
+    VK_SUCCESS:begin
      //fVulkanDevice.WaitIdle; // A GPU/CPU frame synchronization point only for debug cases here, when something got run wrong
      fNextInFlightFrameIndex:=fCurrentInFlightFrameIndex+1;
      if fNextInFlightFrameIndex>=fCountInFlightFrames then begin
@@ -7417,41 +7509,66 @@ begin
      end;
      result:=true;
     end;
-   end;
-  end;
- except
-  on VulkanResultException:EpvVulkanResultException do begin
-   case VulkanResultException.ResultCode of
-    VK_ERROR_SURFACE_LOST_KHR,
-    VK_ERROR_FULL_SCREEN_EXCLUSIVE_MODE_LOST_EXT:begin
-     if not (fAcquireVulkanBackBufferState in [TAcquireVulkanBackBufferState.RecreateSurface,
-                                               TAcquireVulkanBackBufferState.RecreateDevice]) then begin
-      fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.RecreateSurface;
-     end;
-     VulkanDebugLn(TpvUTF8String(VulkanResultException.ClassName+': '+VulkanResultException.Message));
-    end;
-    VK_ERROR_OUT_OF_DATE_KHR,
     VK_SUBOPTIMAL_KHR:begin
-     if not (fAcquireVulkanBackBufferState in [TAcquireVulkanBackBufferState.RecreateSwapChain,
-                                               TAcquireVulkanBackBufferState.RecreateSurface,
-                                               TAcquireVulkanBackBufferState.RecreateDevice]) then begin
-      fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.RecreateSwapChain;
+     if fVulkanRecreateSwapChainOnSuboptimalSurface then begin
+      if not (fAcquireVulkanBackBufferState in [TAcquireVulkanBackBufferState.RecreateSwapChain,
+                                                TAcquireVulkanBackBufferState.RecreateSurface,
+                                                TAcquireVulkanBackBufferState.RecreateDevice]) then begin
+       VulkanDebugLn('Suboptimal surface detected!');
+       fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.RecreateSwapChain;
+      end;
+     end else begin
+      //fVulkanDevice.WaitIdle; // A GPU/CPU frame synchronization point only for debug cases here, when something got run wrong
+      fNextInFlightFrameIndex:=fCurrentInFlightFrameIndex+1;
+      if fNextInFlightFrameIndex>=fCountInFlightFrames then begin
+       dec(fNextInFlightFrameIndex,fCountInFlightFrames);
+      end;
+      inc(fSwapChainImageCounterIndex);
+      if fSwapChainImageCounterIndex>=fCountSwapChainImages then begin
+       dec(fSwapChainImageCounterIndex,fCountSwapChainImages);
+      end;
+      result:=true;
      end;
-{    inc(fCurrentInFlightFrameIndex);
-     if fCurrentInFlightFrameIndex>=fCountInFlightFrames then begin
-      dec(fCurrentInFlightFrameIndex,fCountInFlightFrames);
-     end;}
-     fNextInFlightFrameIndex:=fCurrentInFlightFrameIndex+1;
-     if fNextInFlightFrameIndex>=fCountInFlightFrames then begin
-      dec(fNextInFlightFrameIndex,fCountInFlightFrames);
-     end;
-     VulkanDebugLn(TpvUTF8String(VulkanResultException.ClassName+': '+VulkanResultException.Message));
     end;
-    else begin
-     raise;
+   end;
+  except
+   on VulkanResultException:EpvVulkanResultException do begin
+    case VulkanResultException.ResultCode of
+     VK_ERROR_SURFACE_LOST_KHR,
+     VK_ERROR_FULL_SCREEN_EXCLUSIVE_MODE_LOST_EXT:begin
+      if not (fAcquireVulkanBackBufferState in [TAcquireVulkanBackBufferState.RecreateSurface,
+                                                TAcquireVulkanBackBufferState.RecreateDevice]) then begin
+       fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.RecreateSurface;
+      end;
+      VulkanDebugLn(TpvUTF8String(VulkanResultException.ClassName+': '+VulkanResultException.Message));
+     end;
+     VK_ERROR_OUT_OF_DATE_KHR,
+     VK_SUBOPTIMAL_KHR:begin
+      if not (fAcquireVulkanBackBufferState in [TAcquireVulkanBackBufferState.RecreateSwapChain,
+                                                TAcquireVulkanBackBufferState.RecreateSurface,
+                                                TAcquireVulkanBackBufferState.RecreateDevice]) then begin
+       fAcquireVulkanBackBufferState:=TAcquireVulkanBackBufferState.RecreateSwapChain;
+      end;
+ {    inc(fCurrentInFlightFrameIndex);
+      if fCurrentInFlightFrameIndex>=fCountInFlightFrames then begin
+       dec(fCurrentInFlightFrameIndex,fCountInFlightFrames);
+      end;}
+      fNextInFlightFrameIndex:=fCurrentInFlightFrameIndex+1;
+      if fNextInFlightFrameIndex>=fCountInFlightFrames then begin
+       dec(fNextInFlightFrameIndex,fCountInFlightFrames);
+      end;
+      VulkanDebugLn(TpvUTF8String(VulkanResultException.ClassName+': '+VulkanResultException.Message));
+     end;
+     else begin
+      raise;
+     end;
     end;
    end;
   end;
+
+ except
+  Log(LOG_VERBOSE,'TpvApplication.PresentVulkanBackBuffer','Exception');
+  raise;
  end;
 
 end;
@@ -7804,8 +7921,12 @@ end;
 {$ifend}
 
 procedure TpvApplication.ProcessMessages;
-{$define TpvApplicationUpdateJobOnMainThread}
-var Index,Counter,Tries:TpvInt32;
+{-$define TpvApplicationUpdateJobOnMainThread}
+{$define TpvApplicationDrawJobOnMainThread}
+var Index,Counter,Tries,
+    PrepreviousFrameFrenceIndex:TpvInt32;
+    PrepreviousFrameFrenceMask:TpvUInt32;
+    PrepreviousFrameFrence:TpvVulkanFence;
     Joystick:TpvApplicationJoystick;
 {$if defined(PasVulkanUseSDL2)}
     SDLJoystick:PSDL_Joystick;
@@ -7813,16 +7934,25 @@ var Index,Counter,Tries:TpvInt32;
 {$else}
 {$ifend}
     OK,Found,DoUpdateMainJoystick:boolean;
-{$ifdef TpvApplicationUpdateJobOnMainThread}
+{$if defined(TpvApplicationUpdateJobOnMainThread)}
     DrawJob:PPasMPJob;
+{$elseif defined(TpvApplicationDrawJobOnMainThread)}
+    UpdateJob:PPasMPJob;
 {$else}
     Jobs:array[0..1] of PPasMPJob;
-{$endif}
+{$ifend}
+    DoProcess:boolean;
 begin
 
  ProcessRunnables;
 
  DoUpdateMainJoystick:=false;
+
+ if TPasMPInterlocked.CompareExchange(fHasNewWindowTitle,false,true) then begin
+{$if defined(PasVulkanUseSDL2)}
+  SDL_SetWindowTitle(fSurfaceWindow,PAnsiChar(TpvApplicationRawByteString(fWindowTitle)));
+{$ifend}
+ end;
 
  if fCurrentHideSystemBars<>ord(fHideSystemBars) then begin
 {$if defined(PasVulkanUseSDL2)}
@@ -7903,11 +8033,13 @@ begin
 
     if fInput.fLastTextInput<>fInput.fTextInput then begin
      fInput.fLastTextInput:=fInput.fTextInput;
+{$if defined(PasVulkanUseSDL2)}
      if fInput.fTextInput then begin
       SDL_StartTextInput;
      end else begin
       SDL_StopTextInput;
      end;
+{$ifend}
     end;
 
    fInput.fEventCount:=0;
@@ -8245,7 +8377,12 @@ begin
 
  if fGraphicsReady and IsVisibleToUser then begin
 
-  fResourceManager.FinishResources(fBackgroundResourceLoaderFrameTimeout);
+  try
+   fResourceManager.FinishResources(fBackgroundResourceLoaderFrameTimeout);
+  except
+   Log(LOG_VERBOSE,'TpvApplication.ProcessMessages','Exception at fResourceManager.FinishResources');
+   raise;
+  end;
 
   if fSkipNextDrawFrame or not
      ((not (CanBeParallelProcessed and (fCountInFlightFrames>1))) or
@@ -8270,6 +8407,13 @@ begin
    fUpdateFrameCounter:=fFrameCounter;
    fDrawFrameCounter:=fFrameCounter;
 
+   fCurrentInFlightFrameIndex:=fNextInFlightFrameIndex;
+
+   fNextInFlightFrameIndex:=fCurrentInFlightFrameIndex+1;
+   if fNextInFlightFrameIndex>=fCountInFlightFrames then begin
+    fNextInFlightFrameIndex:=0;
+   end;
+
    fDrawInFlightFrameIndex:=fCurrentInFlightFrameIndex;
    fUpdateInFlightFrameIndex:=fCurrentInFlightFrameIndex;
 
@@ -8287,90 +8431,253 @@ begin
 
   end else begin
 
-   if AcquireVulkanBackBuffer then begin
+   if fVulkanBackBufferState=TVulkanBackBufferState.Present then begin
 
-    fNowTime:=fHighResolutionTimer.GetTime;
-    if fHasLastTime then begin
-     fDeltaTime:=fNowTime-fLastTime;
-    end else begin
-     fDeltaTime:=0;
-    end;
-    fFloatDeltaTime:=fHighResolutionTimer.ToFloatSeconds(fDeltaTime);
-    fLastTime:=fNowTime;
-    fHasLastTime:=true;
+    DoProcess:=true;
 
-    UpdateFrameTimesHistory;
+   end else begin
 
-    fUpdateDeltaTime:=Min(Max(fFloatDeltaTime,0.0),0.25);
+    // Based on a Sebastian Aaltonen tweet thread, which can found at
+    // https://twitter.com/SebAaltonen/status/1569608367618011136 .
+    // Reformulated summary:
+    // If instead of waiting for the GPU to finish with previous frame
+    // respectively the Minus-InFlightFrameCount frame at the beginning
+    // of the simulation, we consider waiting for the GPU to finish with
+    // the frame before the previous frame (-2 frame index), so we will
+    // have a lower overall latency (input lag) and only have to buffer
+    // twice the dynamic resources.
+    // This approach stabilizes latencies and results in up to three frames
+    // in flight, and furthermore the simulation can then also write directly
+    // to GPU buffer data pointers if desired.
+    // Indeed, in a GPU-bound scenario, this can have only marginally worse
+    // latency than waiting for idle, but however far higher throughput.
+    // Moreover, it seems to be the best compromise between latency and
+    // throughput.
+    // However, spiky CPU frames with variable length that happen to exceed
+    // the GPU budget could become a problem here. In this case, an extra
+    // frame for buffering would better hide the variable CPU cost, and
+    // now we get a GPU blast instead.
+    // Nevertheless, this problem only occurs when the CPU/GPU utilization
+    // is very close to 100%/100% and the frame costs fluctuate strongly.
+    // Normally, however, the CPU or GPU usually have a bit of headroom
+    // to hide the latency.
 
-    try
+    PrepreviousFrameFrenceIndex:=(fVulkanFrameFenceCounter+(4-2)) and 3;
 
-     if CanBeParallelProcessed and (fCountInFlightFrames>1) then begin
+    PrepreviousFrameFrenceMask:=TpvUInt32(1) shl PrepreviousFrameFrenceIndex;
 
-      fUpdateFrameCounter:=fFrameCounter;
+    PrepreviousFrameFrence:=fVulkanFrameFences[PrepreviousFrameFrenceIndex];
 
-      fDrawFrameCounter:=fFrameCounter-1;
+    DoProcess:=false;
 
-      fDrawInFlightFrameIndex:=fCurrentInFlightFrameIndex;
+    if fBlocking or
+       (((fVulkanFrameFencesReady and PrepreviousFrameFrenceMask)=0) or
+        ((not assigned(PrepreviousFrameFrence)) or
+         (PrepreviousFrameFrence.GetStatus=VK_SUCCESS))) then begin
 
-      fUpdateInFlightFrameIndex:=fDrawInFlightFrameIndex+1;
-      if fUpdateInFlightFrameIndex>=fCountInFlightFrames then begin
-       dec(fUpdateInFlightFrameIndex,fCountInFlightFrames);
-      end;
-
-      Check(fUpdateDeltaTime);
-
-      BeginFrame(fUpdateDeltaTime);
-
-{$ifdef TpvApplicationUpdateJobOnMainThread}
-      DrawJob:=fPasMPInstance.Acquire(DrawJobFunction);
-      try
-       fPasMPInstance.Run(DrawJob);
-       UpdateJobFunction(nil,fPasMPInstance.GetJobWorkerThreadIndex);
-      finally
-       fPasMPInstance.WaitRelease(DrawJob);
-      end;
-{$else}
-      Jobs[0]:=fPasMPInstance.Acquire(UpdateJobFunction);
-      Jobs[1]:=fPasMPInstance.Acquire(DrawJobFunction);
-      fPasMPInstance.Invoke(Jobs);
-{$endif}
-
-      FinishFrame(fSwapChainImageIndex,fVulkanWaitSemaphore,fVulkanWaitFence);
-
-     end else begin
-
-      fUpdateFrameCounter:=fFrameCounter;
-
-      fDrawFrameCounter:=fFrameCounter;
-
-      fDrawInFlightFrameIndex:=fCurrentInFlightFrameIndex;
-
-      fUpdateInFlightFrameIndex:=fDrawInFlightFrameIndex;
-
-      Check(fUpdateDeltaTime);
-
-      UpdateJobFunction(nil,0);
-
-      BeginFrame(fUpdateDeltaTime);
-
-      DrawJobFunction(nil,0);
-
-      FinishFrame(fSwapChainImageIndex,fVulkanWaitSemaphore,fVulkanWaitFence);
-
-     end;
-
-    finally
      try
-      PresentVulkanBackBuffer;
-     finally
-      PostPresent(fSwapChainImageIndex);
+      if (fVulkanFrameFencesReady and PrepreviousFrameFrenceMask)<>0 then begin
+       fVulkanFrameFencesReady:=fVulkanFrameFencesReady and not PrepreviousFrameFrenceMask;
+       if assigned(PrepreviousFrameFrence) then begin
+        if fBlocking then begin
+         PrepreviousFrameFrence.WaitFor;
+        end;
+        PrepreviousFrameFrence.Reset;
+       end;
+      end;
+     except
+      Log(LOG_VERBOSE,'TpvApplication.ProcessMessages','Exception at preprevious waiting');
+      raise;
      end;
+
+     DoProcess:=true;
+
     end;
 
-    inc(fFrameCounter);
+   end;
 
-    FrameRateLimiter;
+   if DoProcess then begin
+
+{$if true}
+    if true then begin
+
+     UpdateJob:=nil;
+     try
+
+      if fVulkanBackBufferState=TVulkanBackBufferState.Acquire then begin
+
+       fNowTime:=fHighResolutionTimer.GetTime;
+       if fHasLastTime then begin
+        fDeltaTime:=fNowTime-fLastTime;
+       end else begin
+        fDeltaTime:=0;
+       end;
+       fFloatDeltaTime:=fHighResolutionTimer.ToFloatSeconds(fDeltaTime);
+       fLastTime:=fNowTime;
+       fHasLastTime:=true;
+
+       UpdateFrameTimesHistory;
+
+       fUpdateDeltaTime:=Min(Max(fFloatDeltaTime,0.0),0.25);
+
+       if CanBeParallelProcessed and (fCountInFlightFrames>1) then begin
+
+        fDrawFrameCounter:=fFrameCounter-1;
+
+        fUpdateFrameCounter:=fFrameCounter;
+
+        fDrawInFlightFrameIndex:=fCurrentInFlightFrameIndex;
+
+        fUpdateInFlightFrameIndex:=fNextInFlightFrameIndex;
+
+        Check(fUpdateDeltaTime);
+
+        UpdateJob:=fPasMPInstance.Acquire(UpdateJobFunction);
+
+        fPasMPInstance.Run(UpdateJob);
+
+       end else begin
+
+        fUpdateFrameCounter:=fFrameCounter;
+
+        fDrawFrameCounter:=fFrameCounter;
+
+        fDrawInFlightFrameIndex:=fNextInFlightFrameIndex;
+
+        fUpdateInFlightFrameIndex:=fDrawInFlightFrameIndex;
+
+        Check(fUpdateDeltaTime);
+
+        UpdateJobFunction(nil,0);
+
+       end;
+
+       while not AcquireVulkanBackBuffer do begin
+        TPasMP.Yield;
+       end;
+
+      end;
+
+      if fVulkanBackBufferState=TVulkanBackBufferState.Present then begin
+       try
+        BeginFrame(fUpdateDeltaTime);
+        DrawJobFunction(nil,0);
+        FinishFrame(fSwapChainImageIndex,fVulkanWaitSemaphore,fVulkanWaitFence);
+       finally
+        try
+         PresentVulkanBackBuffer;
+        finally
+         PostPresent(fSwapChainImageIndex);
+        end;
+       end;
+       inc(fFrameCounter);
+       FrameRateLimiter;
+      end;
+
+     finally
+      if assigned(UpdateJob) then begin
+       fPasMPInstance.WaitRelease(UpdateJob);
+      end;
+     end;
+
+    end else{$ifend}begin
+
+     if AcquireVulkanBackBuffer then begin
+
+      fNowTime:=fHighResolutionTimer.GetTime;
+      if fHasLastTime then begin
+       fDeltaTime:=fNowTime-fLastTime;
+      end else begin
+       fDeltaTime:=0;
+      end;
+      fFloatDeltaTime:=fHighResolutionTimer.ToFloatSeconds(fDeltaTime);
+      fLastTime:=fNowTime;
+      fHasLastTime:=true;
+
+      UpdateFrameTimesHistory;
+
+      fUpdateDeltaTime:=Min(Max(fFloatDeltaTime,0.0),0.25);
+
+      try
+
+       if CanBeParallelProcessed and (fCountInFlightFrames>1) then begin
+
+        fDrawFrameCounter:=fFrameCounter-1;
+
+        fUpdateFrameCounter:=fFrameCounter;
+
+        fDrawInFlightFrameIndex:=fCurrentInFlightFrameIndex-1;
+        if fDrawInFlightFrameIndex<0 then begin
+         inc(fDrawInFlightFrameIndex,fCountInFlightFrames);
+        end;
+
+        fUpdateInFlightFrameIndex:=fCurrentInFlightFrameIndex;
+
+        Check(fUpdateDeltaTime);
+
+        BeginFrame(fUpdateDeltaTime);
+
+  {$if defined(TpvApplicationUpdateJobOnMainThread)}
+        DrawJob:=fPasMPInstance.Acquire(DrawJobFunction);
+        try
+         fPasMPInstance.Run(DrawJob);
+         UpdateJobFunction(nil,fPasMPInstance.GetJobWorkerThreadIndex);
+        finally
+         fPasMPInstance.WaitRelease(DrawJob);
+        end;
+  {$elseif defined(TpvApplicationDrawJobOnMainThread)}
+        UpdateJob:=fPasMPInstance.Acquire(UpdateJobFunction);
+        try
+         fPasMPInstance.Run(UpdateJob);
+         DrawJobFunction(nil,fPasMPInstance.GetJobWorkerThreadIndex);
+        finally
+         fPasMPInstance.WaitRelease(UpdateJob);
+        end;
+  {$else}
+        Jobs[0]:=fPasMPInstance.Acquire(UpdateJobFunction);
+        Jobs[1]:=fPasMPInstance.Acquire(DrawJobFunction);
+        fPasMPInstance.Invoke(Jobs);
+  {$ifend}
+
+        FinishFrame(fSwapChainImageIndex,fVulkanWaitSemaphore,fVulkanWaitFence);
+
+       end else begin
+
+        fUpdateFrameCounter:=fFrameCounter;
+
+        fDrawFrameCounter:=fFrameCounter;
+
+        fDrawInFlightFrameIndex:=fCurrentInFlightFrameIndex;
+
+        fUpdateInFlightFrameIndex:=fDrawInFlightFrameIndex;
+
+        Check(fUpdateDeltaTime);
+
+        UpdateJobFunction(nil,0);
+
+        BeginFrame(fUpdateDeltaTime);
+
+        DrawJobFunction(nil,0);
+
+        FinishFrame(fSwapChainImageIndex,fVulkanWaitSemaphore,fVulkanWaitFence);
+
+       end;
+
+      finally
+       try
+        PresentVulkanBackBuffer;
+       finally
+        PostPresent(fSwapChainImageIndex);
+       end;
+      end;
+
+      inc(fFrameCounter);
+
+      FrameRateLimiter;
+
+     end;
+
+    end;
 
    end;
 
@@ -8765,6 +9072,12 @@ begin
 
   fSkipNextDrawFrame:=false;
 
+  if fDesiredCountInFlightFrames<1 then begin
+   raise EpvApplication.Create('Internal error','DesiredCountInFlightFrames must be >= 1',LOG_ERROR);
+  end else begin
+   fCountInFlightFrames:=fDesiredCountInFlightFrames;
+  end;
+
   try
 
    CreateVulkanInstance;
@@ -9132,38 +9445,43 @@ begin
  result:=assigned(fScreen) and fScreen.IsReadyForDrawOfInFlightFrameIndex(aInFlightFrameIndex);
 end;
 
-procedure TpvApplication.Draw(const aSwapChainImageIndex:TpvInt32;var aWaitSemaphore:TpvVulkanSemaphore;const aWaitFence:TpvVulkanFence=nil);
+procedure TpvApplication.DrawBlackScreen(const aSwapChainImageIndex:TpvInt32;var aWaitSemaphore:TpvVulkanSemaphore;const aWaitFence:TpvVulkanFence=nil);
 var VulkanCommandBuffer:TpvVulkanCommandBuffer;
+begin
+ VulkanCommandBuffer:=fVulkanBlankCommandBuffers[aSwapChainImageIndex];
+
+ VulkanCommandBuffer.Reset(TVkCommandBufferResetFlags(VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT));
+
+ VulkanCommandBuffer.BeginRecording(TVkCommandBufferUsageFlags(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT));
+
+ fVulkanRenderPass.BeginRenderPass(VulkanCommandBuffer,
+                                   fVulkanFrameBuffers[aSwapChainImageIndex],
+                                   VK_SUBPASS_CONTENTS_INLINE,
+                                   0,
+                                   0,
+                                   fVulkanSwapChain.Width,
+                                   fVulkanSwapChain.Height);
+
+ fVulkanRenderPass.EndRenderPass(VulkanCommandBuffer);
+
+ VulkanCommandBuffer.EndRecording;
+
+ VulkanCommandBuffer.Execute(fVulkanDevice.GraphicsQueue,
+                             TVkPipelineStageFlags(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT),
+                             aWaitSemaphore,
+                             fVulkanBlankCommandBufferSemaphores[aSwapChainImageIndex],
+                             aWaitFence,
+                             false);
+
+ aWaitSemaphore:=fVulkanBlankCommandBufferSemaphores[aSwapChainImageIndex];
+end;
+
+procedure TpvApplication.Draw(const aSwapChainImageIndex:TpvInt32;var aWaitSemaphore:TpvVulkanSemaphore;const aWaitFence:TpvVulkanFence=nil);
 begin
  if assigned(fScreen) then begin
   fScreen.Draw(aSwapChainImageIndex,aWaitSemaphore,aWaitFence);
  end else begin
-
-  VulkanCommandBuffer:=fVulkanBlankCommandBuffers[aSwapChainImageIndex];
-
-  VulkanCommandBuffer.Reset(TVkCommandBufferResetFlags(VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT));
-
-  VulkanCommandBuffer.BeginRecording(TVkCommandBufferUsageFlags(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT));
-
-  fVulkanRenderPass.BeginRenderPass(VulkanCommandBuffer,
-                                    fVulkanFrameBuffers[aSwapChainImageIndex],
-                                    VK_SUBPASS_CONTENTS_INLINE,
-                                    0,
-                                    0,
-                                    fVulkanSwapChain.Width,
-                                    fVulkanSwapChain.Height);
-
-  fVulkanRenderPass.EndRenderPass(VulkanCommandBuffer);
-
-  VulkanCommandBuffer.Execute(fVulkanDevice.GraphicsQueue,
-                              TVkPipelineStageFlags(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT),
-                              aWaitSemaphore,
-                              fVulkanBlankCommandBufferSemaphores[aSwapChainImageIndex],
-                              aWaitFence,
-                              false);
-
-  aWaitSemaphore:=fVulkanBlankCommandBufferSemaphores[aSwapChainImageIndex];
-
+  DrawBlackScreen(aSwapChainImageIndex,aWaitSemaphore,aWaitFence);
  end;
 end;
 

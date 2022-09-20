@@ -70,7 +70,9 @@ uses {$ifdef Windows}Windows,{$endif}SysUtils,Classes,Math,Variants,TypInfo,
      PasVulkan.Types,
      PasVulkan.Math,
      PasVulkan.Base64,
-     PasVulkan.Collections;
+     PasVulkan.Collections,
+     PasVulkan.DataStructures.LinkedList,
+     PasVulkan.Value;
 
 type TpvEntityComponentSystem=class
       public
@@ -89,20 +91,27 @@ type TpvEntityComponentSystem=class
 
             TWorld=class;
 
+            TSystem=class;
+
+            TSystemList=class(TpvObjectGenericList<TSystem>)
+            end;
+
             PEntityID=^TEntityID;
             TEntityID=type TpvUInt32;
 
             TEntityIDDynamicArray=array of TEntityID;
 
+            TEntityIDList=class(TpvGenericList<TEntityID>)
+            end;
+
             TEntityIDHelper=record helper for TEntityID
-             private
+             private // first 24 bits then 8 bits, so that it is still sortable by entity index
               const IndexBits=24; // when all these bits set, then => -1
                     GenerationBits=8;
-                    InverseIndexBits=32-IndexBits;
                     IndexBitsMinusOne=TpvUInt32(IndexBits-1);
                     IndexSignBitMask=TpvUInt32(1 shl IndexBitsMinusOne);
                     IndexMask=TpvUInt32((TpvUInt32(1) shl IndexBits)-1);
-                    GenerationMask=TpvUInt32(not IndexMask);
+                    GenerationMask=TpvUInt32((TpvUInt32(1) shl GenerationBits)-1);
               function GetIndex:TpvInt32; inline;
               procedure SetIndex(const aIndex:TpvInt32); inline;
               function GetGeneration:TpvUInt8; inline;
@@ -161,7 +170,7 @@ type TpvEntityComponentSystem=class
                    PField=^TField;
                    TFields=array of TField;
              private
-              fID:TpvSizeInt;
+              fID:TComponentID;
               fName:TpvUTF8String;
               fDisplayName:TpvUTF8String;
               fPath:TPath;
@@ -193,12 +202,18 @@ type TpvEntityComponentSystem=class
               property EditorWidget:TpvPointer read fEditorWidget write fEditorWidget;
               property Path:TPath read fPath;
              published
-              property ID:TpvSizeInt read fID;
+              property ID:TComponentID read fID;
               property Size:TpvSizeInt read fSize;
               property Default:TpvUInt8DynamicArray read fDefault;
             end;
 
-            TRegisteredComponentTypeList=TpvObjectGenericList<TRegisteredComponentType>;
+            TRegisteredComponentTypeList=class(TpvObjectGenericList<TRegisteredComponentType>)
+            end;
+
+            TRegisteredComponentTypeNameHashMap=class(TpvStringHashMap<TRegisteredComponentType>)
+            end;
+
+            TComponentIDBitmap=array of TpvUInt32;
 
             TComponent=class
              public
@@ -206,6 +221,7 @@ type TpvEntityComponentSystem=class
                    TUsedBitmap=array of TpvUInt32;
                    TPointers=array of TpvPointer;
              private
+              fWorld:TWorld;
               fRegisteredComponentType:TRegisteredComponentType;
               fComponentPoolIndexToEntityIndex:TIndexMapArray;
               fEntityIndexToComponentPoolIndex:TIndexMapArray;
@@ -228,7 +244,7 @@ type TpvEntityComponentSystem=class
               function GetComponentByEntityIndex(const aEntityIndex:TpvSizeInt):TpvPointer; inline;
               procedure SetMaxEntities(const aCount:TpvSizeInt);
              public
-              constructor Create(const aRegisteredComponentType:TRegisteredComponentType); reintroduce;
+              constructor Create(const aWorld:TWorld;const aRegisteredComponentType:TRegisteredComponentType); reintroduce;
               destructor Destroy; override;
               procedure Defragment;
               procedure DefragmentIfNeeded;
@@ -249,9 +265,65 @@ type TpvEntityComponentSystem=class
               property RegisteredComponentType:TRegisteredComponentType read fRegisteredComponentType;
             end;
 
-            TComponentList=TpvObjectGenericList<TComponent>;
+            TComponentList=TpvObjectGenericList<TpvEntityComponentSystem.TComponent>;
 
-            PEntity=^TEntity;
+            TComponentIDList=class(TpvGenericList<TComponentID>)
+            end;
+
+            TEventParameter=TpvValue;
+            PEventParameter=^TEventParameter;
+
+            TEventParameters=array of TEventParameter;
+            PEventParameters=^TEventParameters;
+
+            TEvent=record
+             LinkedListHead:TpvLinkedListHead;
+             TimeStamp:TpvTime;
+             RemainingTime:TpvTime;
+             EventID:TEventID;
+             EntityID:TEntityID;
+             CountParameters:TpvInt32;
+             Parameters:TEventParameters;
+            end;
+            PEvent=^TEvent;
+
+            TEventHandler=procedure(const Event:TEvent) of object;
+
+            TEventHandlers=array of TEventHandler;
+
+            TEventRegistration=class
+             private
+              fEventID:TEventID;
+              fName:TpvUTF8String;
+              fActive:longbool;
+              fLock:TPasMPMultipleReaderSingleWriterLock;
+              fSystems:TSystemList;
+              fEventHandlers:TEventHandlers;
+              fCountEventHandlers:TpvInt32;
+             public
+              constructor Create(const aEventID:TEventID;const aName:TpvUTF8String);
+              destructor Destroy; override;
+              procedure Clear;
+              procedure AddSystem(const aSystem:TSystem);
+              procedure RemoveSystem(const aSystem:TSystem);
+              procedure AddEventHandler(const aEventHandler:TEventHandler);
+              procedure RemoveEventHandler(const aEventHandler:TEventHandler);
+              property EventID:TEventID read fEventID;
+              property Name:TpvUTF8String read fName;
+              property Active:longbool read fActive;
+              property Lock:TPasMPMultipleReaderSingleWriterLock read fLock;
+              property SystemList:TSystemList read fSystems;
+              property EventHandlers:TEventHandlers read fEventHandlers;
+              property CountEventHandlers:TpvInt32 read fCountEventHandlers;
+            end;
+
+            TEventRegistrationList=class(TpvObjectGenericList<TEventRegistration>)
+            end;
+
+            TSystemEvents=array of PEvent;
+
+            { TEntity }
+
             TEntity=record
              public
               type TFlag=
@@ -262,41 +334,286 @@ type TpvEntityComponentSystem=class
                     );
                     TFlags=set of TFlag;
              private
+              fWorld:TWorld;
               fID:TEntityID;
+              fUUID:TpvUUID;
               fFlags:TFlags;
+              fCountComponents:TpvInt32;
+              fComponentsBitmap:TComponentIDBitmap;
+              fUnknownData:TObject;
               function GetActive:boolean; inline;
               procedure SetActive(const aActive:boolean); inline;
+              procedure AddComponentToEntity(const aComponentID:TComponentID);
+              procedure RemoveComponentFromEntity(const aComponentID:TComponentID);
              public
+              procedure SynchronizeToPrefab;
+              procedure Activate; inline;
+              procedure Deactivate; inline;
+              procedure Kill; inline;
+              procedure AddComponent(const aComponentID:TComponentID); inline;
+              procedure RemoveComponent(const aComponentID:TComponentID); inline;
+              function HasComponent(const aComponentID:TComponentID):boolean; inline;
+              function GetComponent(const aComponentID:TComponentID):TpvEntityComponentSystem.TComponent; inline;
+             public
+              property World:TWorld read fWorld write fWorld;
               property ID:TEntityID read fID write fID;
+              property UUID:TpvUUID read fUUID write fUUID;
               property Flags:TFlags read fFlags write fFlags;
               property Active:boolean read GetActive write SetActive;
+              property Components[const aComponentID:TComponentID]:TpvEntityComponentSystem.TComponent read GetComponent;
             end;
 
-            TpvEntities=array of TEntity;
+            PEntity=^TEntity;
+
+            TEntities=array of TEntity;
+
+            { TSystemChoreography }
+
+            TSystemChoreography=class
+             public
+              type TSystemChoreographyStepSystems=array of TSystem;
+                   TSystemChoreographyStepJobs=array of PPasMPJob;
+                   PSystemChoreographyStep=^TSystemChoreographyStep;
+                   TSystemChoreographyStep=record
+                    Systems:TSystemChoreographyStepSystems;
+                    Jobs:TSystemChoreographyStepJobs;
+                    Count:TpvInt32;
+                   end;
+                   TSystemChoreographySteps=array of TSystemChoreographyStep;
+                   PSystemChoreographyStepProcessEventsJobData=^TSystemChoreographyStepProcessEventsJobData;
+                   TSystemChoreographyStepProcessEventsJobData=record
+                    ChoreographyStep:PSystemChoreographyStep;
+                   end;
+                   PSystemChoreographyStepUpdateEntitiesJobData=^TSystemChoreographyStepUpdateEntitiesJobData;
+                   TSystemChoreographyStepUpdateEntitiesJobData=record
+                    ChoreographyStep:PSystemChoreographyStep;
+                   end;
+             private
+              fWorld:TWorld;
+              fPasMPInstance:TPasMP;
+              fChoreographySteps:TSystemChoreographySteps;
+              fChoreographyStepJobs:TSystemChoreographyStepJobs;
+              fCountChoreographySteps:TpvInt32;
+              fSortedSystemList:TSystemList;
+              function CreateProcessEventsJob(const aSystem:TSystem;const aFirstEventIndex,aLastEventIndex:TPasMPSizeInt;const aParentJob:PPasMPJob):PPasMPJob;
+              procedure ProcessEventsJobFunction(const aJob:PPasMPJob;const aThreadIndex:TpvInt32);
+              procedure ChoreographyStepProcessEventsJobFunction(const aJob:PPasMPJob;const aThreadIndex:TpvInt32);
+              procedure ChoreographyProcessEventsJobFunction(const aJob:PPasMPJob;const aThreadIndex:TpvInt32);
+              function CreateUpdateEntitiesJob(const aSystem:TSystem;const aFirstEntityIndex,aLastEntityIndex:TPasMPSizeInt;const aParentJob:PPasMPJob):PPasMPJob;
+              procedure UpdateEntitiesJobFunction(const aJob:PPasMPJob;const aThreadIndex:TpvInt32);
+              procedure ChoreographyStepUpdateEntitiesJobFunction(const aJob:PPasMPJob;const aThreadIndex:TpvInt32);
+              procedure ChoreographyUpdateEntitiesJobFunction(const aJob:PPasMPJob;const aThreadIndex:TpvInt32);
+             public
+              constructor Create(const aWorld:TWorld);
+              destructor Destroy; override;
+              procedure Build;
+              procedure ProcessEvents;
+              procedure InitializeUpdate;
+              procedure Update;
+              procedure FinalizeUpdate;
+            end;
+
+            { TSystem }
+
+            TSystem=class
+             public
+              type TFlag=
+                    (
+                     ParallelProcessing,
+                     Secluded,
+                     OwnUpdate
+                    );
+                   TFlags=set of TFlag;
+             private
+              fWorld:TWorld;
+              fFlags:TFlags;
+              fEntities:TEntityIDList;
+              fRequiredComponents:TComponentIDList;
+              fExcludedComponents:TComponentIDList;
+              fRequiresSystems:TSystemList;
+              fConflictsWithSystems:TSystemList;
+              fNeedToSort:boolean;
+              fEventsCanBeParallelProcessed:boolean;
+              fEventGranularity:TpvInt32;
+              fEntityGranularity:TpvInt32;
+              fCountEntities:TpvInt32;
+              fEvents:TSystemEvents;
+              fCountEvents:TpvInt32;
+              fDeltaTime:TpvTime;
+             protected
+              function HaveDependencyOnSystem(const aOtherSystem:TSystem):boolean;
+              function HaveDependencyOnSystemOrViceVersa(const aOtherSystem:TSystem):boolean;
+              function HaveCircularDependencyWithSystem(const aOtherSystem:TSystem):boolean;
+              function HaveConflictWithSystem(const aOtherSystem:TSystem):boolean;
+              function HaveConflictWithSystemOrViceVersa(const aOtherSystem:TSystem):boolean;
+             public
+              constructor Create(const aWorld:TWorld); virtual;
+              destructor Destroy; override;
+              procedure Added; virtual;
+              procedure Removed; virtual;
+              procedure SubscribeToEvent(const aEventID:TEventID);
+              procedure UnsubscribeFromEvent(const aEventID:TEventID);
+              procedure RequiresSystem(const aSystem:TSystem);
+              procedure ConflictsWithSystem(const aSystem:TSystem);
+              procedure AddRequiredComponent(const aComponentID:TComponentID);
+              procedure AddExcludedComponent(const aComponentID:TComponentID);
+              function FitsEntityToSystem(const aEntityID:TEntityID):boolean; virtual;
+              function AddEntityToSystem(const aEntityID:TEntityID):boolean; virtual;
+              function RemoveEntityFromSystem(const aEntityID:TEntityID):boolean; virtual;
+              procedure SortEntities; virtual;
+              procedure Finish; virtual;
+              procedure ProcessEvent(const aEvent:TEvent); virtual;
+              procedure ProcessEvents(const aFirstEventIndex,aLastEventIndex:TpvSizeInt); virtual;
+              procedure InitializeUpdate; virtual;
+              procedure Update; virtual;
+              procedure UpdateEntities(const aFirstEntityIndex,aLastEntityIndex:TpvSizeInt); virtual;
+              procedure FinalizeUpdate; virtual;
+              property World:TWorld read fWorld;
+              property Flags:TFlags read fFlags write fFlags;
+              property Entities:TEntityIDList read fEntities;
+              property CountEntities:TpvInt32 read fCountEntities;
+              property EventsCanBeParallelProcessed:boolean read fEventsCanBeParallelProcessed write fEventsCanBeParallelProcessed;
+              property EventGranularity:TpvInt32 read fEventGranularity write fEventGranularity;
+              property EntityGranularity:TpvInt32 read fEntityGranularity write fEntityGranularity;
+              property Events:TSystemEvents read fEvents;
+              property CountEvents:TpvInt32 read fCountEvents;
+              property DeltaTime:TpvTime read fDeltaTime;
+            end;
+
+            TDelayedManagementEventType=(
+             None,
+             CreateEntity,
+             ActivateEntity,
+             DeactivateEntity,
+             KillEntity,
+             AddComponentToEntity,
+             RemoveComponentFromEntity,
+             AddSystem,
+             RemoveSystem,
+             SortSystem
+            );
+            PDelayedManagementEventType=^TDelayedManagementEventType;
+
+            TDelayedManagementEventData=array of TpvUInt8;
+
+            TDelayedManagementEvent=record
+             EventType:TDelayedManagementEventType;
+             EntityID:TEntityID;
+             ComponentID:TComponentID;
+             System:TSystem;
+             UUID:TpvUUID;
+             Data:TDelayedManagementEventData;
+             DataSize:TpvInt32;
+             DataString:TpvRawByteString;
+            end;
+            PDelayedManagementEvent=^TDelayedManagementEvent;
+
+            TDelayedManagementEvents=array of TDelayedManagementEvent;
+
+            TDelayedManagementEventQueue=TpvDynamicQueue<TDelayedManagementEvent>;
 
             TWorld=class
              public
               type TEntityIndexFreeList=TpvGenericList<TpvSizeInt>;
-                   TEntityGenerationList=TpvDynamicArraList<TpvUInt8>;
+                   TEntityGenerationList=array of TpvUInt8;
                    TUsedBitmap=array of TpvUInt32;
+                   TOnEvent=procedure(const aWorld:TWorld;const aEvent:TEvent) of object;
+                   TEventRegistrationStringIntegerPairHashMap=class(TpvStringHashMap<TpvSizeInt>);
+                   TUUIDEntityIDPairHashMap=class(TpvHashMap<TpvUUID,TpvEntityComponentSystem.TEntityID>);
+                   TSystemBooleanPairHashMap=class(TpvHashMap<TpvEntityComponentSystem.TSystem,longbool>);
              private
+              fUUID:TpvUUID;
+              fActive:longbool;
+              fPasMPInstance:TPasMP;
+              fLock:TPasMPMultipleReaderSingleWriterLock;
               fComponents:TComponentList;
-              fEntities:TpvEntities;
+              fEntities:TEntities;
+              fSystems:TSystemList;
+              fSystemUsedMap:TSystemBooleanPairHashMap;
+              fSystemChoreography:TSystemChoreography;
+              fSystemChoreographyNeedToRebuild:TPasMPInt32;
+              fEntityLock:TPasMPMultipleReaderSingleWriterLock;
               fEntityIndexFreeList:TEntityIndexFreeList;
               fEntityGenerationList:TEntityGenerationList;
               fEntityUsedBitmap:TUsedBitmap;
               fEntityIndexCounter:TpvSizeInt;
               fMaxEntityIndex:TpvSizeInt;
+              fEntityUUIDHashMap:TUUIDEntityIDPairHashMap;
+              fReservedEntityHashMapLock:TPasMPMultipleReaderSingleWriterLock;
+              fReservedEntityUUIDHashMap:TUUIDEntityIDPairHashMap;
+              fEventInProcessing:longbool;
+              fEventRegistrationLock:TPasMPMultipleReaderSingleWriterLock;
+              fEventRegistrationList:TEventRegistrationList;
+              fFreeEventRegistrationList:TEventRegistrationList;
+              fEventRegistrationStringIntegerPairHashMap:TEventRegistrationStringIntegerPairHashMap;
+              fOnEvent:TOnEvent;
+              fEventListLock:TPasMPMultipleReaderSingleWriterLock;
+              fEventList:TList;
+              fDelayedEventQueueLock:TPasMPMultipleReaderSingleWriterLock;
+              fDelayedEventQueue:TpvLinkedListHead;
+              fEventQueueLock:TPasMPMultipleReaderSingleWriterLock;
+              fEventQueue:TpvLinkedListHead;
+              fDelayedFreeEventQueue:TpvLinkedListHead;
+              fFreeEventQueueLock:TPasMPMultipleReaderSingleWriterLock;
+              fFreeEventQueue:TpvLinkedListHead;
+              fCurrentTime:TpvTime;
+              fDelayedManagementEventLock:TPasMPMultipleReaderSingleWriterLock;
+              fDelayedManagementEvents:TDelayedManagementEvents;
+              fCountDelayedManagementEvents:TpvSizeInt;
+              procedure AddDelayedManagementEvent(const aDelayedManagementEvent:TDelayedManagementEvent);
+              function GetEntityByID(const aEntityID:TEntityID):PEntity;
+              function GetEntityByUUID(const aEntityUUID:TpvUUID):PEntity;
+              function DoCreateEntity(const aEntityID:TEntityID;const aEntityUUID:TpvUUID):boolean;
+              function DoDestroyEntity(const aEntityID:TEntityID):boolean;
+              procedure ProcessEvent(const aEvent:PEvent);
+              procedure ProcessEvents;
+              procedure ProcessDelayedEvents(const aDeltaTime:TTime);
+              function CreateEntity(const aEntityID:TEntityID;const aEntityUUID:TpvUUID):TEntityID; overload;
              public
-              constructor Create; reintroduce;
+              constructor Create(const aPasMPInstance:TPasMP=nil); reintroduce;
               destructor Destroy; override;
+              procedure Kill;
+              function CreateEvent(const aName:TpvUTF8String):TEventID;
+              procedure DestroyEvent(const aEventID:TEventID);
+              function FindEvent(const aName:TpvUTF8String):TEventID;
+              procedure SubscribeToEvent(const aEventID:TEventID;const aEventHandler:TEventHandler);
+              procedure UnsubscribeFromEvent(const aEventID:TEventID;const aEventHandler:TEventHandler);
+              function CreateEntity(const aEntityUUID:TpvUUID):TEntityID; overload;
+              function CreateEntity:TEntityID; overload;
+              function HasEntity(const aEntityID:TEntityID):boolean; {$ifdef caninline}inline;{$endif}
+              function IsEntityActive(const aEntityID:TEntityID):boolean; {$ifdef caninline}inline;{$endif}
+              procedure ActivateEntity(const aEntityID:TEntityID); {$ifdef caninline}inline;{$endif}
+              procedure DeactivateEntity(const aEntityID:TEntityID); {$ifdef caninline}inline;{$endif}
+              procedure KillEntity(const aEntityID:TEntityID); {$ifdef caninline}inline;{$endif}
+              procedure AddComponentToEntity(const aEntityID:TEntityID;const aComponentID:TComponentID);
+              procedure RemoveComponentFromEntity(const aEntityID:TEntityID;const aComponentID:TComponentID);
+              function HasEntityComponent(const aEntityID:TEntityID;const aComponentID:TComponentID):boolean;
+              procedure AddSystem(const aSystem:TSystem);
+              procedure RemoveSystem(const aSystem:TSystem);
+              procedure SortSystem(const aSystem:TSystem);
+              procedure Defragment;
+              procedure Refresh;
+              procedure QueueEvent(const aEventToQueue:TEvent;const aDeltaTime:TpvTime); overload;
+              procedure QueueEvent(const aEventToQueue:TEvent); overload;
+              procedure Update(const aDeltaTime:TpvTime);
+              procedure Clear;
+              procedure ClearEntities;
+              procedure Activate;
+              procedure Deactivate;
+              procedure MementoSerialize(const aStream:TStream);
+              procedure MementoUnserialize(const aStream:TStream);
              public
+              property UUID:TpvUUID read fUUID write fUUID;
+              property Active:longbool read fActive write fActive;
               property Components:TComponentList read fComponents;
+              property CurrentTime:TpvTime read fCurrentTime;
+              property OnEvent:TOnEvent read fOnEvent write fOnEvent;
             end;
 
      end;
 
 var RegisteredComponentTypeList:TpvEntityComponentSystem.TRegisteredComponentTypeList=nil;
+    RegisteredComponentTypeNameHashMap:TpvEntityComponentSystem.TRegisteredComponentTypeNameHashMap=nil;
 
 procedure InitializeEntityComponentSystemGlobals;
 
@@ -312,23 +629,23 @@ uses PasVulkan.Components.Name,
 
 function TpvEntityComponentSystem.TEntityIDHelper.GetIndex:TpvInt32;
 begin
- result:=self and IndexMask;
+ result:=(self shr GenerationBits) and IndexMask;
  result:=result or (-(ord(result=IndexMask) and 1));
 end;
 
 procedure TpvEntityComponentSystem.TEntityIDHelper.SetIndex(const aIndex:TpvInt32);
 begin
- self:=(self and GenerationMask) or (TpvUInt32(aIndex) and IndexMask);
+ self:=(self and GenerationMask) or ((TpvUInt32(aIndex) and IndexMask) shl GenerationBits);
 end;
 
 function TpvEntityComponentSystem.TEntityIDHelper.GetGeneration:TpvUInt8;
 begin
- result:=self shr IndexBits;
+ result:=self and GenerationMask;
 end;
 
 procedure TpvEntityComponentSystem.TEntityIDHelper.SetGeneration(const aGeneration:TpvUInt8);
 begin
- self:=(self and IndexMask) or (aGeneration shl IndexBits);
+ self:=(self and not GenerationMask) or (aGeneration and GenerationMask);
 end;
 
 { TpvEntityComponentSystem.TpvRegisteredComponentType.TField.TEnumerationOrFlag }
@@ -342,7 +659,7 @@ begin
  DisplayName:=aDisplayName;
 end;
 
-{ TpvRegisteredComponentType }
+{ TpvEntityComponentSystem.TRegisteredComponent }
 
 constructor TpvEntityComponentSystem.TRegisteredComponentType.Create(const aName:TpvUTF8String;
                                                                      const aDisplayName:TpvUTF8String;
@@ -354,6 +671,7 @@ begin
  inherited Create;
  InitializeEntityComponentSystemGlobals;
  fID:=RegisteredComponentTypeList.Add(self);
+ RegisteredComponentTypeNameHashMap.Add(aName,self);
  fName:=aName;
  fDisplayName:=aDisplayName;
  SetLength(fPath,length(aPath));
@@ -409,7 +727,7 @@ begin
  Index:=fCountFields;
  inc(fCountFields);
  if length(fFields)<fCountFields then begin
-  SetLength(fFields,fCountFields*2);
+  SetLength(fFields,fCountFields+((fCountFields+1) shr 1));
  end;
  Field:=@fFields[Index];
  Field^.Name:=aName;
@@ -461,7 +779,7 @@ function TpvEntityComponentSystem.TRegisteredComponentType.SerializeToJSON(const
       raise ERegisteredComponentType.Create('Internal error 2018-09-04-23-58-0000');
      end;
     end;
-    if abs(SignedInteger)<TpvInt64($0010000000000000) then begin
+    if UnsignedInteger<TpvUInt64($0010000000000000) then begin
      result:=TPasJSONItemNumber.Create(UnsignedInteger);
     end else begin
      result:=TPasJSONItemString.Create(IntToStr(UnsignedInteger));
@@ -593,7 +911,7 @@ function TpvEntityComponentSystem.TRegisteredComponentType.SerializeToJSON(const
    TRegisteredComponentType.TField.TElementType.FloatingPoint:begin
     case aField^.ElementSize of
      2:begin
-      FloatValue:=PpvHalfFloat(Data)^;
+      FloatValue:=PpvHalfFloat(Data)^.ToFloat;
      end;
      4:begin
       FloatValue:=PpvFloat(Data)^;
@@ -856,6 +1174,8 @@ procedure TpvEntityComponentSystem.TRegisteredComponentType.UnserializeFromJSON(
     end else if aJSONItemValue is TPasJSONItemString then begin
      FloatValue:=0.0;
      Val(TPasJSONItemString(aJSONItemValue).Value,FloatValue,Code);
+     if Code<>0 then begin
+     end;
     end else if aJSONItemValue is TPasJSONItemBoolean then begin
      FloatValue:=ord(TPasJSONItemBoolean(aJSONItemValue).Value) and 1;
     end else begin
@@ -978,11 +1298,13 @@ begin
  end;
 end;
 
-{ TpvComponentType }
+{ TpvEntityComponentSystem.TComponent }
 
-constructor TpvEntityComponentSystem.TComponent.Create(const aRegisteredComponentType:TRegisteredComponentType);
+constructor TpvEntityComponentSystem.TComponent.Create(const aWorld:TWorld;const aRegisteredComponentType:TRegisteredComponentType);
 begin
  inherited Create;
+
+ fWorld:=aWorld;
 
  fRegisteredComponentType:=aRegisteredComponentType;
 
@@ -1048,7 +1370,7 @@ var OldCount:TpvSizeInt;
 begin
  OldCount:=length(fPointers);
  if OldCount<aCount then begin
-  SetLength(fPointers,aCount*2);
+  SetLength(fPointers,aCount+((aCount+1) shr 1));
   FillChar(fPointers[OldCount],(length(fPointers)-OldCount)*SizeOf(TpvPointer),#0);
   fDataPointer:=@fPointers[0];
  end;
@@ -1391,7 +1713,7 @@ begin
   OldCount:=length(fUsedBitmap);
   Count:=((fMaxEntityIndex+1)+31) shr 5;
   if OldCount<Count then begin
-   SetLength(fUsedBitmap,Count*2);
+   SetLength(fUsedBitmap,Count+((Count+1) shr 1));
    for Index:=OldCount to length(fUsedBitmap)-1 do begin
     fUsedBitmap[Index]:=0;
    end;
@@ -1400,7 +1722,7 @@ begin
   OldCount:=length(fPointers);
   Count:=fMaxEntityIndex+1;
   if OldCount<Count then begin
-   SetLength(fPointers,Count*2);
+   SetLength(fPointers,Count+((Count+1) shr 1));
    for Index:=OldCount to length(fPointers)-1 do begin
     fPointers[Index]:=nil;
    end;
@@ -1458,6 +1780,7 @@ begin
   if fCountFrees>(fPoolIndexCounter shr 2) then begin
    fNeedToDefragment:=true;
   end;
+  result:=true;
  end;
 end;
 
@@ -1479,37 +1802,871 @@ begin
  end;
 end;
 
+procedure TpvEntityComponentSystem.TEntity.AddComponentToEntity(const aComponentID:TComponentID);
+var Index,BitmapIndex,BitIndex,OldCount:TpvSizeInt;
+begin
+ BitmapIndex:=aComponentID shr 5;
+ BitIndex:=aComponentID and 31;
+ fCountComponents:=Max(fCountComponents,aComponentID+1);
+ if length(fComponentsBitmap)<=BitmapIndex then begin
+  OldCount:=length(fComponentsBitmap);
+  SetLength(fComponentsBitmap,(BitmapIndex+1)+((BitmapIndex+2) shr 1));
+  FillChar(fComponentsBitmap[OldCount],(length(fComponentsBitmap)-OldCount)*SizeOf(UInt32),#0);
+ end;
+ fComponentsBitmap[BitIndex]:=fComponentsBitmap[BitIndex] or (TpvUInt32(1) shl BitIndex);
+end;
+
+procedure TpvEntityComponentSystem.TEntity.RemoveComponentFromEntity(const aComponentID:TComponentID);
+var Index,BitmapIndex,BitIndex,OldCount:TpvSizeInt;
+begin
+ BitmapIndex:=aComponentID shr 5;
+ BitIndex:=aComponentID and 31;
+ fCountComponents:=Max(fCountComponents,aComponentID+1);
+ if length(fComponentsBitmap)<=BitmapIndex then begin
+  OldCount:=length(fComponentsBitmap);
+  SetLength(fComponentsBitmap,(BitmapIndex+1)+((BitmapIndex+2) shr 1));
+  FillChar(fComponentsBitmap[OldCount],(length(fComponentsBitmap)-OldCount)*SizeOf(UInt32),#0);
+ end;
+ fComponentsBitmap[BitIndex]:=fComponentsBitmap[BitIndex] and not (TpvUInt32(1) shl BitIndex);
+end;
+
+procedure TpvEntityComponentSystem.TEntity.SynchronizeToPrefab;
+begin
+end;
+
+procedure TpvEntityComponentSystem.TEntity.Activate;
+begin
+ if assigned(fWorld) then begin
+  fWorld.ActivateEntity(fID);
+ end;
+end;
+
+procedure TpvEntityComponentSystem.TEntity.Deactivate;
+begin
+ if assigned(fWorld) then begin
+  fWorld.DeactivateEntity(fID);
+ end;
+end;
+
+procedure TpvEntityComponentSystem.TEntity.Kill;
+begin
+ if assigned(fWorld) then begin
+  fWorld.KillEntity(fID);
+ end;
+end;
+
+procedure TpvEntityComponentSystem.TEntity.AddComponent(const aComponentID:TComponentID);
+begin
+ if assigned(fWorld) then begin
+  fWorld.AddComponentToEntity(fID,aComponentID);
+ end;
+end;
+
+procedure TpvEntityComponentSystem.TEntity.RemoveComponent(const aComponentID:TComponentID);
+begin
+ if assigned(fWorld) then begin
+  fWorld.RemoveComponentFromEntity(fID,aComponentID);
+ end;
+end;
+
+function TpvEntityComponentSystem.TEntity.HasComponent(const aComponentID:TComponentID):boolean;
+begin
+ result:=assigned(fWorld) and World.HasEntityComponent(fID,aComponentID);
+end;
+
+function TpvEntityComponentSystem.TEntity.GetComponent(const aComponentID:TComponentID):TpvEntityComponentSystem.TComponent;
+begin
+ if assigned(fWorld) and World.HasEntityComponent(fID,aComponentID) then begin
+  result:=fWorld.fComponents[aComponentID];
+ end else begin
+  result:=nil;
+ end;
+end;
+
+{ TpvEntityComponentSystem.TEventRegistration }
+
+constructor TpvEntityComponentSystem.TEventRegistration.Create(const aEventID:TpvEntityComponentSystem.TEventID;const aName:TpvUTF8String);
+begin
+ inherited Create;
+ fEventID:=aEventID;
+ fName:=aName;
+ fActive:=false;
+ fLock:=TPasMPMultipleReaderSingleWriterLock.Create;
+ fSystems:=TSystemList.Create;
+ fSystems.OwnsObjects:=false;
+ fEventHandlers:=nil;
+ fCountEventHandlers:=0;
+end;
+
+destructor TpvEntityComponentSystem.TEventRegistration.Destroy;
+begin
+ fName:='';
+ fEventHandlers:=nil;
+ FreeAndNil(fSystems);
+ FreeAndNil(fLock);
+ inherited Destroy;
+end;
+
+procedure TpvEntityComponentSystem.TEventRegistration.Clear;
+begin
+ fLock.AcquireWrite;
+ try
+  fName:='';
+  fActive:=false;
+  fSystems.Clear;
+  fEventHandlers:=nil;
+  fCountEventHandlers:=0;
+ finally
+  fLock.ReleaseWrite;
+ end;
+end;
+
+procedure TpvEntityComponentSystem.TEventRegistration.AddSystem(const aSystem:TSystem);
+begin
+ fLock.AcquireRead;
+ try
+  if fSystems.IndexOf(aSystem)<0 then begin
+   fLock.ReadToWrite;
+   try
+    fSystems.Add(aSystem);
+   finally
+    fLock.WriteToRead;
+   end;
+  end;
+ finally
+  fLock.ReleaseRead;
+ end;
+end;
+
+procedure TpvEntityComponentSystem.TEventRegistration.RemoveSystem(const aSystem:TSystem);
+var Index:TpvSizeInt;
+begin
+ fLock.AcquireRead;
+ try
+  Index:=fSystems.IndexOf(aSystem);
+  if Index>=0 then begin
+   fLock.ReadToWrite;
+   try
+    fSystems.Delete(Index);
+   finally
+    fLock.WriteToRead;
+   end;
+  end;
+ finally
+  fLock.ReleaseRead;
+ end;
+end;
+
+procedure TpvEntityComponentSystem.TEventRegistration.AddEventHandler(const aEventHandler:TEventHandler);
+var Index:TpvSizeInt;
+    Found:boolean;
+begin
+ Found:=false;
+ fLock.AcquireRead;
+ try
+  for Index:=0 to fCountEventHandlers-1 do begin
+   if (TMethod(fEventHandlers[Index]).Code=TMethod(aEventHandler).Code) and
+      (TMethod(fEventHandlers[Index]).Data=TMethod(aEventHandler).Data) then begin
+    Found:=true;
+    break;
+   end;
+  end;
+  if not Found then begin
+   fLock.ReadToWrite;
+   try
+    Index:=fCountEventHandlers;
+    inc(fCountEventHandlers);
+    if length(fEventHandlers)<fCountEventHandlers then begin
+     SetLength(fEventHandlers,fCountEventHandlers+((fCountEventHandlers+1) shr 1));
+    end;
+    fEventHandlers[Index]:=aEventHandler;
+   finally
+    fLock.WriteToRead;
+   end;
+  end;
+ finally
+  fLock.ReleaseRead;
+ end;
+end;
+
+procedure TpvEntityComponentSystem.TEventRegistration.RemoveEventHandler(const aEventHandler:TEventHandler);
+var Index:TpvSizeInt;
+begin
+ fLock.AcquireRead;
+ try
+  for Index:=0 to fCountEventHandlers-1 do begin
+   if (TMethod(fEventHandlers[Index]).Code=TMethod(aEventHandler).Code) and
+      (TMethod(fEventHandlers[Index]).Data=TMethod(aEventHandler).Data) then begin
+    fLock.ReadToWrite;
+    try
+     dec(fCountEventHandlers);
+     if fCountEventHandlers>0 then begin
+      Move(fEventHandlers[Index+1],fEventHandlers[Index],fCountEventHandlers*SizeOf(TEventHandler)); // for to be keep the ordering
+//    fEventHandlers[Index]:=fEventHandlers[fCountEventHandlers]; // for to be faster, but with changing the ordering of the last item to the deleted item position
+     end;
+    finally
+     fLock.WriteToRead;
+    end;
+    break;
+   end;
+  end;
+ finally
+  fLock.ReleaseRead;
+ end;
+end;
+
+{ TpvEntityComponentSystem.TSystemChoreography }
+
+constructor TpvEntityComponentSystem.TSystemChoreography.Create(const aWorld:TWorld);
+begin
+ inherited Create;
+ fWorld:=aWorld;
+ fPasMPInstance:=fWorld.fPasMPInstance;
+ fChoreographySteps:=nil;
+ fChoreographyStepJobs:=nil;
+ fCountChoreographySteps:=0;
+ fSortedSystemList:=TSystemList.Create;
+ fSortedSystemList.OwnsObjects:=false;
+end;
+
+destructor TpvEntityComponentSystem.TSystemChoreography.Destroy;
+begin
+ fChoreographySteps:=nil;
+ fChoreographyStepJobs:=nil;
+ FreeAndNil(fSortedSystemList);
+ inherited Destroy;
+end;
+
+procedure TpvEntityComponentSystem.TSystemChoreography.Build;
+var Systems:TSystemList;
+    Index,OtherIndex,SystemIndex:TpvInt32;
+    Done,Stop:boolean;
+    System,OtherSystem:TSystem;
+    ChoreographyStep:PSystemChoreographyStep;
+begin
+ Systems:=fSortedSystemList;
+
+ Systems.Clear;
+
+ // Fill in
+ for Index:=0 to fWorld.fSystems.Count-1 do begin
+  Systems.Add(fWorld.fSystems.Items[Index]);
+ end;
+
+ // Resolve dependencies with "stable" topological sorting a la naive bubble sort with a bad
+ // execution time (but that fact does not matter at so few systems), and not with Kahn's or
+ // Tarjan's algorithms, because the result must be in a stable sort order
+ repeat
+  Done:=true;
+  for Index:=0 to Systems.Count-1 do begin
+   System:=Systems.Items[Index];
+   for OtherIndex:=0 to Index-1 do begin
+    OtherSystem:=Systems.Items[OtherIndex];
+    if OtherSystem.HaveDependencyOnSystem(System) then begin
+     if OtherSystem.HaveCircularDependencyWithSystem(System) then begin
+      raise ESystemCircularDependency.Create(System.ClassName+' have circular dependency with '+OtherSystem.ClassName);
+     end else begin
+      Systems.Exchange(Index,OtherIndex);
+      Done:=false;
+      break;
+     end;
+    end;
+   end;
+   if not Done then begin
+    break;
+   end;
+  end;
+ until Done;
+
+ // Construct dependency conflict-free choreography
+ fCountChoreographySteps:=0;
+ Index:=0;
+ while Index<Systems.Count do begin
+  System:=Systems.Items[Index];
+  inc(Index);
+  inc(fCountChoreographySteps);
+  if fCountChoreographySteps>length(fChoreographySteps) then begin
+   SetLength(fChoreographySteps,fCountChoreographySteps*2);
+  end;
+  ChoreographyStep:=@fChoreographySteps[fCountChoreographySteps-1];
+  ChoreographyStep^.Count:=1;
+  SetLength(ChoreographyStep^.Systems,ChoreographyStep^.Count);
+  SetLength(ChoreographyStep^.Jobs,ChoreographyStep^.Count);
+  ChoreographyStep^.Systems[0]:=System;
+  while Index<Systems.Count do begin
+   OtherSystem:=Systems.Items[Index];
+   Stop:=TpvEntityComponentSystem.TSystem.TFlag.Secluded in OtherSystem.fFlags;
+   if not Stop then begin
+    for SystemIndex:=0 to ChoreographyStep^.Count-1 do begin
+     System:=ChoreographyStep^.Systems[SystemIndex];
+     if System.HaveDependencyOnSystemOrViceVersa(OtherSystem) or
+        System.HaveConflictWithSystemOrViceVersa(OtherSystem) then begin
+      Stop:=true;
+      break;
+     end;
+    end;
+   end;
+   if Stop then begin
+    break;
+   end else begin
+    inc(Index);
+    inc(ChoreographyStep^.Count);
+    if ChoreographyStep^.Count>length(ChoreographyStep^.Systems) then begin
+     SetLength(ChoreographyStep^.Systems,ChoreographyStep^.Count*2);
+    end;
+    ChoreographyStep^.Systems[ChoreographyStep^.Count-1]:=OtherSystem;
+   end;
+  end;
+ end;
+ SetLength(fChoreographyStepJobs,fCountChoreographySteps);
+
+end;
+
+type PSystemChoreographyProcessEventsJobData=^TSystemChoreographyProcessEventsJobData;
+     TSystemChoreographyProcessEventsJobData=record
+      System:TpvEntityComponentSystem.TSystem;
+      FirstEventIndex:TPasMPSizeInt;
+      LastEventIndex:TPasMPSizeInt;
+     end;
+
+function TpvEntityComponentSystem.TSystemChoreography.CreateProcessEventsJob(const aSystem:TSystem;const aFirstEventIndex,aLastEventIndex:TPasMPSizeInt;const aParentJob:PPasMPJob):PPasMPJob;
+var Data:PSystemChoreographyProcessEventsJobData;
+begin
+ result:=fPasMPInstance.Acquire(ProcessEventsJobFunction,nil,nil);
+ Data:=PSystemChoreographyProcessEventsJobData(pointer(@result^.Data));
+ Data^.System:=aSystem;
+ Data^.FirstEventIndex:=aFirstEventIndex;
+ Data^.LastEventIndex:=aFirstEventIndex;
+end;
+
+procedure TpvEntityComponentSystem.TSystemChoreography.ProcessEventsJobFunction(const aJob:PPasMPJob;const aThreadIndex:TpvInt32);
+var Data:PSystemChoreographyProcessEventsJobData;
+    MidEventIndex,Count:TpvSizeInt;
+begin
+ Data:=@aJob^.Data;
+ if Data^.FirstEventIndex<=Data^.LastEventIndex then begin
+  Count:=Data^.LastEventIndex-Data^.FirstEventIndex;
+  if (fPasMPInstance.CountJobWorkerThreads<2) or
+     (not (TpvEntityComponentSystem.TSystem.TFlag.ParallelProcessing in Data.System.fFlags)) or
+     ((Count<=Data^.System.fEventGranularity) or (Count<4)) then begin
+   Data^.System.ProcessEvents(Data^.FirstEventIndex,Data^.LastEventIndex);
+  end else begin
+   MidEventIndex:=Data^.FirstEventIndex+((Data^.LastEventIndex-Data^.FirstEventIndex) shr 1);
+   fPasMPInstance.Invoke([CreateProcessEventsJob(Data^.System,Data^.FirstEventIndex,MidEventIndex-1,aJob),
+                  CreateProcessEventsJob(Data^.System,MidEventIndex,Data^.LastEventIndex,aJob)]);
+  end;
+ end;
+end;
+
+procedure TpvEntityComponentSystem.TSystemChoreography.ChoreographyStepProcessEventsJobFunction(const aJob:PPasMPJob;const aThreadIndex:TpvInt32);
+var Data:PSystemChoreographyStepProcessEventsJobData;
+    ChoreographyStep:PSystemChoreographyStep;
+    SystemIndex:TpvSizeInt;
+    System:TpvEntityComponentSystem.TSystem;
+begin
+ Data:=@aJob^.Data;
+ ChoreographyStep:=Data^.ChoreographyStep;
+ for SystemIndex:=0 to ChoreographyStep^.Count-1 do begin
+  System:=ChoreographyStep^.Systems[SystemIndex];
+  if System.fEventsCanBeParallelProcessed then begin
+   ChoreographyStep^.Jobs[SystemIndex]:=CreateProcessEventsJob(System,0,System.fCountEvents-1,aJob);
+  end else begin
+   ChoreographyStep^.Jobs[SystemIndex]:=nil;
+  end;
+ end;
+ fPasMPInstance.Invoke(ChoreographyStep^.Jobs);
+end;
+
+procedure TpvEntityComponentSystem.TSystemChoreography.ChoreographyProcessEventsJobFunction(const aJob:PPasMPJob;const aThreadIndex:TpvInt32);
+var ChoreographyStepJob:PPasMPJob;
+    ChoreographyStepJobData:PSystemChoreographyStepProcessEventsJobData;
+    StepIndex:TpvSizeInt;
+    ChoreographyStep:PSystemChoreographyStep;
+begin
+ for StepIndex:=0 to fCountChoreographySteps-1 do begin
+  ChoreographyStep:=@fChoreographySteps[StepIndex];
+  ChoreographyStepJob:=fPasMPInstance.Acquire(ChoreographyStepProcessEventsJobFunction,nil,nil);
+  ChoreographyStepJobData:=PSystemChoreographyStepProcessEventsJobData(pointer(@ChoreographyStepJob^.Data));
+  ChoreographyStepJobData^.ChoreographyStep:=ChoreographyStep;
+  fChoreographyStepJobs[StepIndex]:=ChoreographyStepJob;
+  fPasMPInstance.Invoke(fChoreographyStepJobs[StepIndex]);
+ end;
+end;
+
+procedure TpvEntityComponentSystem.TSystemChoreography.ProcessEvents;
+begin
+ fPasMPInstance.Invoke(fPasMPInstance.Acquire(ChoreographyProcessEventsJobFunction,nil,nil));
+end;
+
+procedure TpvEntityComponentSystem.TSystemChoreography.InitializeUpdate;
+var StepIndex,SystemIndex:TpvSizeInt;
+    ChoreographyStep:PSystemChoreographyStep;
+    System:TSystem;
+begin
+ for StepIndex:=0 to fCountChoreographySteps-1 do begin
+  ChoreographyStep:=@fChoreographySteps[StepIndex];
+  for SystemIndex:=0 to ChoreographyStep^.Count-1 do begin
+   System:=ChoreographyStep^.Systems[SystemIndex];
+   System.InitializeUpdate;
+  end;
+ end;
+end;
+
+type PSystemChoreographyUpdateEntitiesJobData=^TSystemChoreographyUpdateEntitiesJobData;
+     TSystemChoreographyUpdateEntitiesJobData=record
+      System:TpvEntityComponentSystem.TSystem;
+      FirstEntityIndex:TpvSizeInt;
+      LastEntityIndex:TpvSizeInt;
+     end;
+
+function TpvEntityComponentSystem.TSystemChoreography.CreateUpdateEntitiesJob(const aSystem:TSystem;const aFirstEntityIndex,aLastEntityIndex:TPasMPSizeInt;const aParentJob:PPasMPJob):PPasMPJob;
+var Data:PSystemChoreographyUpdateEntitiesJobData;
+begin
+ result:=fPasMPInstance.Acquire(UpdateEntitiesJobFunction,nil,nil);
+ Data:=PSystemChoreographyUpdateEntitiesJobData(pointer(@result^.Data));
+ Data^.System:=aSystem;
+ Data^.FirstEntityIndex:=aFirstEntityIndex;
+ Data^.LastEntityIndex:=aLastEntityIndex;
+end;
+
+procedure TpvEntityComponentSystem.TSystemChoreography.UpdateEntitiesJobFunction(const aJob:PPasMPJob;const aThreadIndex:TpvInt32);
+var Data:PSystemChoreographyUpdateEntitiesJobData;
+    MidEntityIndex,Count:TpvSizeInt;
+begin
+ Data:=@aJob^.Data;
+ if Data^.FirstEntityIndex<=Data^.LastEntityIndex then begin
+  Count:=Data^.LastEntityIndex-Data^.FirstEntityIndex;
+  if (TpvEntityComponentSystem.TSystem.TFlag.OwnUpdate in Data.System.fFlags) or
+     (not (TpvEntityComponentSystem.TSystem.TFlag.ParallelProcessing in Data.System.fFlags)) or
+     (fPasMPInstance.CountJobWorkerThreads<2) or
+     ((Count<=Data^.System.fEntityGranularity) or (Count<4)) then begin
+   if TpvEntityComponentSystem.TSystem.TFlag.OwnUpdate in Data.System.fFlags then begin
+    Data^.System.Update;
+   end else begin
+    Data^.System.UpdateEntities(Data^.FirstEntityIndex,Data^.LastEntityIndex);
+   end;
+  end else begin
+   MidEntityIndex:=Data^.FirstEntityIndex+((Data^.LastEntityIndex-Data^.FirstEntityIndex) shr 1);
+   fPasMPInstance.Invoke([CreateUpdateEntitiesJob(Data^.System,Data^.FirstEntityIndex,MidEntityIndex-1,aJob),
+                  CreateUpdateEntitiesJob(Data^.System,MidEntityIndex,Data^.LastEntityIndex,aJob)]);
+  end;
+ end;
+end;
+
+procedure TpvEntityComponentSystem.TSystemChoreography.ChoreographyStepUpdateEntitiesJobFunction(const aJob:PPasMPJob;const aThreadIndex:TpvInt32);
+var Data:PSystemChoreographyStepUpdateEntitiesJobData;
+    ChoreographyStep:PSystemChoreographyStep;
+    SystemIndex:TpvSizeInt;
+    System:TSystem;
+begin
+ Data:=@aJob^.Data;
+ ChoreographyStep:=Data^.ChoreographyStep;
+ for SystemIndex:=0 to ChoreographyStep^.Count-1 do begin
+  System:=ChoreographyStep^.Systems[SystemIndex];
+  ChoreographyStep^.Jobs[SystemIndex]:=CreateUpdateEntitiesJob(System,0,System.fCountEntities-1,aJob);
+ end;
+ fPasMPInstance.Invoke(ChoreographyStep^.Jobs);
+end;
+
+procedure TpvEntityComponentSystem.TSystemChoreography.ChoreographyUpdateEntitiesJobFunction(const aJob:PPasMPJob;const aThreadIndex:TpvInt32);
+var ChoreographyStepJob:PPasMPJob;
+    ChoreographyStepJobData:PSystemChoreographyStepUpdateEntitiesJobData;
+    StepIndex:TpvSizeInt;
+    ChoreographyStep:PSystemChoreographyStep;
+begin
+ for StepIndex:=0 to fCountChoreographySteps-1 do begin
+  ChoreographyStep:=@fChoreographySteps[StepIndex];
+  ChoreographyStepJob:=fPasMPInstance.Acquire(ChoreographyStepUpdateEntitiesJobFunction,nil,nil);
+  ChoreographyStepJobData:=PSystemChoreographyStepUpdateEntitiesJobData(pointer(@ChoreographyStepJob^.Data));
+  ChoreographyStepJobData^.ChoreographyStep:=ChoreographyStep;
+  fChoreographyStepJobs[StepIndex]:=ChoreographyStepJob;
+  fPasMPInstance.Invoke(fChoreographyStepJobs[StepIndex]);
+ end;
+end;
+
+procedure TpvEntityComponentSystem.TSystemChoreography.Update;
+begin
+ fPasMPInstance.Invoke(fPasMPInstance.Acquire(ChoreographyUpdateEntitiesJobFunction,nil,nil));
+end;
+
+procedure TpvEntityComponentSystem.TSystemChoreography.FinalizeUpdate;
+var StepIndex,SystemIndex:TpvSizeInt;
+    ChoreographyStep:PSystemChoreographyStep;
+    System:TSystem;
+begin
+ for StepIndex:=0 to fCountChoreographySteps-1 do begin
+  ChoreographyStep:=@fChoreographySteps[StepIndex];
+  for SystemIndex:=0 to ChoreographyStep^.Count-1 do begin
+   System:=ChoreographyStep^.Systems[SystemIndex];
+   System.FinalizeUpdate;
+  end;
+ end;
+end;
+
+{ TpvEntityComponentSystem.TSystem }
+
+constructor TpvEntityComponentSystem.TSystem.Create(const aWorld:TWorld);
+begin
+ inherited Create;
+ fWorld:=aWorld;
+ fFlags:=[];
+ fEntities:=TEntityIDList.Create;
+ fRequiredComponents:=TComponentIDList.Create;
+ fExcludedComponents:=TComponentIDList.Create;
+ fRequiresSystems:=TSystemList.Create;
+ fRequiresSystems.OwnsObjects:=false;
+ fConflictsWithSystems:=TSystemList.Create;
+ fConflictsWithSystems.OwnsObjects:=false;
+ fNeedToSort:=true;
+ fEventsCanBeParallelProcessed:=false;
+ fEventGranularity:=256;
+ fEntityGranularity:=256;
+ fCountEntities:=0;
+ fEvents:=nil;
+ fCountEvents:=0;
+end;
+
+destructor TpvEntityComponentSystem.TSystem.Destroy;
+begin
+ FreeAndNil(fExcludedComponents);
+ FreeAndNil(fRequiredComponents);
+ FreeAndNil(fRequiresSystems);
+ FreeAndNil(fConflictsWithSystems);
+ FreeAndNil(fEntities);
+ fEvents:=nil;
+ inherited Destroy;
+end;
+
+procedure TpvEntityComponentSystem.TSystem.Added;
+begin
+end;
+
+procedure TpvEntityComponentSystem.TSystem.Removed;
+begin
+end;
+
+procedure TpvEntityComponentSystem.TSystem.SubscribeToEvent(const aEventID:TEventID);
+var EventRegistration:TEventRegistration;
+begin
+ fWorld.fEventRegistrationLock.AcquireWrite;
+ try
+  if (aEventID>=0) and (aEventID<fWorld.fEventRegistrationList.Count) then begin
+   EventRegistration:=fWorld.fEventRegistrationList.Items[aEventID];
+   if EventRegistration.fActive then begin
+    EventRegistration.AddSystem(self);
+   end;
+  end;
+ finally
+  fWorld.fEventRegistrationLock.ReleaseWrite;
+ end;
+end;
+
+procedure TpvEntityComponentSystem.TSystem.UnsubscribeFromEvent(const aEventID:TEventID);
+var EventRegistration:TEventRegistration;
+begin
+ fWorld.fEventRegistrationLock.AcquireWrite;
+ try
+  if (aEventID>=0) and (aEventID<fWorld.fEventRegistrationList.Count) then begin
+   EventRegistration:=fWorld.fEventRegistrationList.Items[aEventID];
+   if EventRegistration.fActive then begin
+    EventRegistration.RemoveSystem(self);
+   end;
+  end;
+ finally
+  fWorld.fEventRegistrationLock.ReleaseWrite;
+ end;
+end;
+
+function TpvEntityComponentSystem.TSystem.HaveDependencyOnSystem(const aOtherSystem:TSystem):boolean;
+begin
+ result:=assigned(aOtherSystem) and (fRequiresSystems.IndexOf(aOtherSystem)>=0);
+end;
+
+function TpvEntityComponentSystem.TSystem.HaveDependencyOnSystemOrViceVersa(const aOtherSystem:TSystem):boolean;
+begin
+ result:=assigned(aOtherSystem) and ((fRequiresSystems.IndexOf(aOtherSystem)>=0) or (aOtherSystem.fRequiresSystems.IndexOf(self)>=0));
+end;
+
+function TpvEntityComponentSystem.TSystem.HaveCircularDependencyWithSystem(const aOtherSystem:TSystem):boolean;
+var VisitedList,StackList:TList;
+    Index:TpvSizeInt;
+    System,RequiredSystem:TSystem;
+begin
+ result:=false;
+ if assigned(aOtherSystem) then begin
+  VisitedList:=TList.Create;
+  try
+   StackList:=TList.Create;
+   try
+    StackList.Add(aOtherSystem);
+    while (StackList.Count>0) and not result do begin
+     System:=StackList.Items[StackList.Count-1];
+     StackList.Delete(StackList.Count-1);
+     VisitedList.Add(System);
+     for Index:=0 to System.fRequiresSystems.Count-1 do begin
+      RequiredSystem:=System.fRequiresSystems.Items[Index];
+      if RequiredSystem=self then begin
+       result:=true;
+       break;
+      end else if VisitedList.IndexOf(RequiredSystem)<0 then begin
+       StackList.Add(RequiredSystem);
+      end;
+     end;
+    end;
+   finally
+    StackList.Free;
+   end;
+  finally
+   VisitedList.Free;
+  end;
+ end;
+end;
+
+function TpvEntityComponentSystem.TSystem.HaveConflictWithSystem(const aOtherSystem:TSystem):boolean;
+begin
+ result:=assigned(aOtherSystem) and (fConflictsWithSystems.IndexOf(aOtherSystem)>=0);
+end;
+
+function TpvEntityComponentSystem.TSystem.HaveConflictWithSystemOrViceVersa(const aOtherSystem:TSystem):boolean;
+begin
+ result:=assigned(aOtherSystem) and ((fConflictsWithSystems.IndexOf(aOtherSystem)>=0) or (aOtherSystem.fConflictsWithSystems.IndexOf(self)>=0));
+end;
+
+procedure TpvEntityComponentSystem.TSystem.RequiresSystem(const aSystem:TSystem);
+begin
+ if fRequiresSystems.IndexOf(aSystem)<0 then begin
+  fRequiresSystems.Add(aSystem);
+ end;
+end;
+
+procedure TpvEntityComponentSystem.TSystem.ConflictsWithSystem(const aSystem:TSystem);
+begin
+ if fConflictsWithSystems.IndexOf(aSystem)<0 then begin
+  fConflictsWithSystems.Add(aSystem);
+ end;
+end;
+
+procedure TpvEntityComponentSystem.TSystem.AddRequiredComponent(const aComponentID:TComponentID);
+begin
+ if fRequiredComponents.IndexOf(aComponentID)<0 then begin
+  fRequiredComponents.Add(aComponentID);
+ end;
+end;
+
+procedure TpvEntityComponentSystem.TSystem.AddExcludedComponent(const aComponentID:TComponentID);
+begin
+ if fExcludedComponents.IndexOf(aComponentID)<0 then begin
+  fExcludedComponents.Add(aComponentID);
+ end;
+end;
+
+function TpvEntityComponentSystem.TSystem.FitsEntityToSystem(const aEntityID:TEntityID):boolean;
+var Index:TpvSizeInt;
+begin
+ result:=fWorld.HasEntity(aEntityID);
+ if result then begin
+  for Index:=0 to fExcludedComponents.Count-1 do begin
+   if fWorld.HasEntityComponent(aEntityID,fExcludedComponents.Items[Index]) then begin
+    result:=false;
+    exit;
+   end;
+  end;
+  for Index:=0 to fRequiredComponents.Count-1 do begin
+   if not fWorld.HasEntityComponent(aEntityID,fRequiredComponents.Items[Index]) then begin
+    result:=false;
+    exit;
+   end;
+  end;
+ end;
+end;
+
+function TpvEntityComponentSystem.TSystem.AddEntityToSystem(const aEntityID:TEntityID):boolean;
+begin
+ if fEntities.IndexOf(aEntityID)<0 then begin
+  fEntities.Add(aEntityID);
+  inc(fCountEntities);
+  fNeedToSort:=true;
+  result:=true;
+ end else begin
+  result:=false;
+ end;
+end;
+
+function TpvEntityComponentSystem.TSystem.RemoveEntityFromSystem(const aEntityID:TEntityID):boolean;
+var Index:TpvSizeInt;
+begin
+ Index:=fEntities.IndexOf(aEntityID);
+ if Index>=0 then begin
+  fEntities.Delete(Index);
+  dec(fCountEntities);
+  result:=true;
+ end else begin
+  result:=false;
+ end;
+end;
+
+procedure TpvEntityComponentSystem.TSystem.SortEntities;
+begin
+ if fNeedToSort then begin
+  fNeedToSort:=false;
+  fEntities.Sort;
+ end;
+end;
+
+procedure TpvEntityComponentSystem.TSystem.Finish;
+begin
+end;
+
+procedure TpvEntityComponentSystem.TSystem.ProcessEvent(const aEvent:TpvEntityComponentSystem.TEvent);
+begin
+end;
+
+procedure TpvEntityComponentSystem.TSystem.ProcessEvents(const aFirstEventIndex,aLastEventIndex:TpvSizeInt);
+var EntityIndex:TpvSizeInt;
+    Event:TpvEntityComponentSystem.PEvent;
+begin
+ for EntityIndex:=aFirstEventIndex to aLastEventIndex do begin
+  Event:=fEvents[EntityIndex];
+  if assigned(Event) then begin
+   ProcessEvent(Event^);
+  end;
+ end;
+end;
+
+procedure TpvEntityComponentSystem.TSystem.InitializeUpdate;
+begin
+end;
+
+procedure TpvEntityComponentSystem.TSystem.Update;
+begin
+end;
+
+procedure TpvEntityComponentSystem.TSystem.UpdateEntities(const aFirstEntityIndex,aLastEntityIndex:TpvSizeInt);
+begin
+end;
+
+procedure TpvEntityComponentSystem.TSystem.FinalizeUpdate;
+begin
+end;
+
 { TpvEntityComponentSystem.TWorld }
 
-constructor TpvEntityComponentSystem.TWorld.Create;
+constructor TpvEntityComponentSystem.TWorld.Create(const aPasMPInstance:TPasMP);
 var Index:TpvSizeInt;
 begin
 
  inherited Create;
 
+ fUUID:=TpvUUID.Create;
+
+ if assigned(aPasMPInstance) then begin
+  fPasMPInstance:=aPasMPInstance;
+ end else begin
+  fPasMPInstance:=TPasMP.GetGlobalInstance;
+ end;
+
+ fActive:=false;
+
+ fLock:=TPasMPMultipleReaderSingleWriterLock.Create;
+
+ fEntityUUIDHashMap:=TpvEntityComponentSystem.TWorld.TUUIDEntityIDPairHashMap.Create(0);
+
+ fReservedEntityHashMapLock:=TPasMPMultipleReaderSingleWriterLock.Create;
+
+ fReservedEntityUUIDHashMap:=TpvEntityComponentSystem.TWorld.TUUIDEntityIDPairHashMap.Create(0);
+
  fComponents:=TComponentList.Create;
  fComponents.OwnsObjects:=true;
 
  for Index:=0 to RegisteredComponentTypeList.Count-1 do begin
-  fComponents.Add(TpvEntityComponentSystem.TComponent.Create(RegisteredComponentTypeList.Items[Index]));
+  fComponents.Add(TpvEntityComponentSystem.TComponent.Create(self,RegisteredComponentTypeList.Items[Index]));
  end;
 
  fEntities:=nil;
 
+ fEntityLock:=TPasMPMultipleReaderSingleWriterLock.Create;
+
  fEntityIndexFreeList:=TEntityIndexFreeList.Create;
 
- fEntityGenerationList:=TEntityGenerationList.Create;
+ fEntityGenerationList:=nil;
 
  fEntityUsedBitmap:=nil;
 
- fEntityIndexCounter:=0;
+ fEntityIndexCounter:=1;
 
  fMaxEntityIndex:=-1;
+
+ fEventListLock:=TPasMPMultipleReaderSingleWriterLock.Create;
+
+ fEventList:=TList.Create;
+
+ fDelayedEventQueueLock:=TPasMPMultipleReaderSingleWriterLock.Create;
+
+ LinkedListInitialize(@fDelayedEventQueue);
+
+ fEventQueueLock:=TPasMPMultipleReaderSingleWriterLock.Create;
+
+ LinkedListInitialize(@fEventQueue);
+
+ LinkedListInitialize(@fDelayedFreeEventQueue);
+
+ fFreeEventQueueLock:=TPasMPMultipleReaderSingleWriterLock.Create;
+
+ LinkedListInitialize(@fFreeEventQueue);
+
+ fCurrentTime:=0.0;
+
+ fSystems:=TSystemList.Create;
+ fSystems.OwnsObjects:=false;
+
+ fSystemUsedMap:=TSystemBooleanPairHashMap.Create(false);
+
+ fSystemChoreography:=TSystemChoreography.Create(self);
+
+ fSystemChoreographyNeedToRebuild:=0;
+
+ fEventInProcessing:=false;
+
+ fEventRegistrationLock:=TPasMPMultipleReaderSingleWriterLock.Create;
+
+ fEventRegistrationList:=TEventRegistrationList.Create;
+ fEventRegistrationList.OwnsObjects:=false;
+
+ fFreeEventRegistrationList:=TEventRegistrationList.Create;
+ fFreeEventRegistrationList.OwnsObjects:=false;
+
+ fEventRegistrationStringIntegerPairHashMap:=TEventRegistrationStringIntegerPairHashMap.Create(-1);
+
+ fOnEvent:=nil;
+
+ fDelayedManagementEventLock:=TPasMPMultipleReaderSingleWriterLock.Create;
+
+ fDelayedManagementEvents:=nil;
+
+ fCountDelayedManagementEvents:=0;
 
 end;
 
 destructor TpvEntityComponentSystem.TWorld.Destroy;
+var Index:TpvSizeInt;
+    Event:TpvEntityComponentSystem.PEvent;
 begin
+
+ fEventRegistrationList.OwnsObjects:=true;
+ FreeAndNil(fEventRegistrationList);
+
+ fFreeEventRegistrationList.OwnsObjects:=true;
+ FreeAndNil(fFreeEventRegistrationList);
+
+ FreeAndNil(fEventRegistrationLock);
+
+ FreeAndNil(fEventRegistrationStringIntegerPairHashMap);
+
+ FreeAndNil(fSystemChoreography);
+
+ FreeAndNil(fSystemUsedMap);
+
+ FreeAndNil(fSystems);
 
  FreeAndNil(fComponents);
 
@@ -1517,12 +2674,1198 @@ begin
 
  FreeAndNil(fEntityIndexFreeList);
 
- FreeAndNil(fEntityGenerationList);
+ fEntityGenerationList:=nil;
 
  fEntityUsedBitmap:=nil;
 
+ FreeAndNil(fDelayedManagementEventLock);
+
+ fDelayedManagementEvents:=nil;
+
+ for Index:=0 to fEventList.Count-1 do begin
+  Event:=fEventList.Items[Index];
+  if assigned(Event) then begin
+   Finalize(Event^);
+   FreeMem(Event);
+  end;
+ end;
+ fEventList.Free;
+
+ fEventListLock.Free;
+
+ fDelayedEventQueueLock.Free;
+
+ fEventQueueLock.Free;
+
+ fFreeEventQueueLock.Free;
+
+ FreeAndNil(fEntityUUIDHashMap);
+
+ FreeAndNil(fReservedEntityUUIDHashMap);
+
+ FreeAndNil(fReservedEntityHashMapLock);
+
+ FreeAndNil(fEntityLock);
+
+ FreeAndNil(fLock);
+
  inherited Destroy;
 
+end;
+
+procedure TpvEntityComponentSystem.TWorld.AddDelayedManagementEvent(const aDelayedManagementEvent:TDelayedManagementEvent);
+var DelayedManagementEventIndex:TpvSizeInt;
+begin
+ fDelayedManagementEventLock.AcquireWrite;
+ try
+  DelayedManagementEventIndex:=fCountDelayedManagementEvents;
+  inc(fCountDelayedManagementEvents);
+  if length(fDelayedManagementEvents)<fCountDelayedManagementEvents then begin
+   SetLength(fDelayedManagementEvents,fCountDelayedManagementEvents+((fCountDelayedManagementEvents+1) shr 1));
+  end;
+  fDelayedManagementEvents[DelayedManagementEventIndex]:=aDelayedManagementEvent;
+ finally
+  fDelayedManagementEventLock.ReleaseWrite;
+ end;
+end;
+
+function TpvEntityComponentSystem.TWorld.GetEntityByID(const aEntityID:TpvEntityComponentSystem.TEntityID):TpvEntityComponentSystem.PEntity;
+var EntityIndex:TpvInt32;
+begin
+ EntityIndex:=aEntityID.Index;
+ if (EntityIndex>=0) and
+    (EntityIndex<=fMaxEntityIndex) and
+    ((fEntityUsedBitmap[EntityIndex shr 5] and TpvUInt32(TpvUInt32(1) shl TpvUInt32(EntityIndex and 31)))<>0) then begin
+  result:=@fEntities[EntityIndex];
+  if result^.fID<>aEntityID then begin
+   result:=nil;
+  end;
+ end else begin
+  result:=nil;
+ end;
+end;
+
+function TpvEntityComponentSystem.TWorld.GetEntityByUUID(const aEntityUUID:TpvUUID):TpvEntityComponentSystem.PEntity;
+begin
+ result:=nil;
+end;
+
+function TpvEntityComponentSystem.TWorld.DoCreateEntity(const aEntityID:TEntityID;const aEntityUUID:TpvUUID):boolean;
+var EntityIndex,Index,OldCount,Count:TpvInt32;
+    Bitmap:PpvInt32;
+    Entity:PEntity;
+begin
+
+ result:=false;
+
+ fLock.AcquireRead;
+ try
+
+  fLock.ReadToWrite;
+  try
+
+   EntityIndex:=aEntityID.Index;
+
+   if fMaxEntityIndex<EntityIndex then begin
+
+    fMaxEntityIndex:=EntityIndex;
+
+    for Index:=0 to fComponents.Count-1 do begin
+     fComponents[Index].SetMaxEntities(fMaxEntityIndex);
+    end;
+
+    OldCount:=length(fEntities);
+    Count:=fEntityIndexCounter;
+    if OldCount<Count then begin
+     SetLength(fEntities,Count+((Count+1) shr 1));
+     for Index:=OldCount to length(fEntities)-1 do begin
+      Entity:=@fEntities[Index];
+      Entity^.fWorld:=self;
+      Entity^.fID:=0;
+      Entity^.fFlags:=[];
+      Entity^.fUUID:=TpvUUID.Null;
+      Entity^.fUnknownData:=nil;
+      Entity^.fCountComponents:=0;
+      Entity^.fComponentsBitmap:=nil;
+     end;
+    end;
+
+    OldCount:=length(fEntityGenerationList);
+    Count:=fEntityIndexCounter;
+    if OldCount<Count then begin
+     SetLength(fEntityGenerationList,Count+((Count+1) shr 1));
+     for Index:=OldCount to length(fEntityGenerationList)-1 do begin
+      fEntityGenerationList[Index]:=0;
+     end;
+    end;
+
+    OldCount:=length(fEntityUsedBitmap);
+    Count:=(fEntityIndexCounter+31) shr 5;
+    if OldCount<Count then begin
+     SetLength(fEntityUsedBitmap,Count+((Count+1) shr 1));
+     for Index:=OldCount to length(fEntityUsedBitmap)-1 do begin
+      fEntityUsedBitmap[Index]:=0;
+     end;
+    end;
+
+   end;
+
+   Bitmap:=@fEntityUsedBitmap[EntityIndex shr 5];
+   Bitmap^:=Bitmap^ or TpvUInt32(TpvUInt32(1) shl TpvUInt32(EntityIndex and 31));
+
+   Entity:=@fEntities[EntityIndex];
+   Entity^.fWorld:=self;
+   Entity^.fID:=aEntityID;
+   Entity^.fFlags:=[TEntity.TFlag.Used];
+   Entity^.fUUID:=aEntityUUID;
+   Entity^.fUnknownData:=nil;
+   Entity^.fCountComponents:=0;
+   Entity^.fComponentsBitmap:=nil;
+
+   fEntityUUIDHashMap.Add(aEntityUUID,aEntityID);
+
+   result:=true;
+
+  finally
+   fLock.WriteToRead;
+  end;
+
+ finally
+  fLock.ReleaseRead;
+ end;
+
+end;
+
+function TpvEntityComponentSystem.TWorld.DoDestroyEntity(const aEntityID:TEntityID):boolean;
+var EntityIndex:TpvInt32;
+    Index:TpvSizeInt;
+    Bitmap:PpvUInt32;
+    Mask:TpvUInt32;
+    Entity:PEntity;
+begin
+ fLock.AcquireRead;
+ try
+  EntityIndex:=aEntityID.Index;
+  Bitmap:=@fEntityUsedBitmap[EntityIndex shr 5];
+  Mask:=TpvUInt32(TpvUInt32(1) shl TpvUInt32(EntityIndex and 31));
+  if (EntityIndex>=0) and (EntityIndex<fEntityIndexCounter) and ((Bitmap^ and Mask)<>0) then begin
+   fLock.ReadToWrite;
+   try
+    Bitmap:=@fEntityUsedBitmap[EntityIndex shr 5]; // the pointer of fEntityIDUsedBitmap could be changed already here by an another CPU thread, so reload it
+    Bitmap^:=Bitmap^ and not Mask;
+    for Index:=0 to fComponents.Count-1 do begin
+     fComponents[Index].FreeComponentFromEntityIndex(EntityIndex);
+    end;
+    Entity:=@fEntities[EntityIndex];
+    fEntityUUIDHashMap.Delete(Entity^.UUID);
+    fReservedEntityHashMapLock.AcquireWrite;
+    try
+     fReservedEntityUUIDHashMap.Delete(Entity^.UUID);
+    finally
+     fReservedEntityHashMapLock.ReleaseWrite;
+    end;
+    Entity^.Flags:=[];
+    FreeAndNil(Entity^.fUnknownData);
+    Entity^.fCountComponents:=0;
+    Entity^.fComponentsBitmap:=nil;
+    fEntityLock.AcquireWrite;
+    try
+     fEntityIndexFreeList.Add(EntityIndex);
+     inc(fEntityGenerationList[EntityIndex]);
+    finally
+     fEntityLock.ReleaseWrite;
+    end;
+   finally
+    fLock.WriteToRead;
+   end;
+   result:=true;
+  end else begin
+   result:=false;
+  end;
+ finally
+  fLock.ReleaseRead;
+ end;
+end;
+
+procedure TpvEntityComponentSystem.TWorld.ProcessEvent(const aEvent:PEvent);
+begin
+end;
+
+procedure TpvEntityComponentSystem.TWorld.ProcessEvents;
+begin
+end;
+
+procedure TpvEntityComponentSystem.TWorld.ProcessDelayedEvents(const aDeltaTime:TTime);
+begin
+end;
+
+procedure TpvEntityComponentSystem.TWorld.Kill;
+begin
+end;
+
+function TpvEntityComponentSystem.TWorld.CreateEvent(const aName:TpvUTF8String):TEventID;
+var EventRegistration:TEventRegistration;
+begin
+ fEventRegistrationLock.AcquireWrite;
+ try
+  result:=fEventRegistrationStringIntegerPairHashMap.Values[aName];
+  if result<0 then begin
+   if fFreeEventRegistrationList.Count>0 then begin
+    EventRegistration:=fFreeEventRegistrationList[fFreeEventRegistrationList.Count-1];
+    fFreeEventRegistrationList.Delete(fFreeEventRegistrationList.Count-1);
+    EventRegistration.Clear;
+    EventRegistration.fName:=aName;
+   end else begin
+    EventRegistration:=TEventRegistration.Create(fEventRegistrationList.Count,aName);
+    fEventRegistrationList.Add(EventRegistration);
+   end;
+   EventRegistration.fActive:=true;
+   result:=EventRegistration.fEventID;
+   fEventRegistrationStringIntegerPairHashMap.Add(aName,result);
+  end;
+ finally
+  fEventRegistrationLock.ReleaseWrite;
+ end;
+end;
+
+procedure TpvEntityComponentSystem.TWorld.DestroyEvent(const aEventID:TEventID);
+var EventRegistration:TEventRegistration;
+begin
+ fEventRegistrationLock.AcquireWrite;
+ try
+  if (aEventID>=0) and (aEventID<fEventRegistrationList.Count) then begin
+   EventRegistration:=fEventRegistrationList.Items[aEventID];
+   if EventRegistration.fActive then begin
+    fEventRegistrationStringIntegerPairHashMap.Delete(EventRegistration.fName);
+    EventRegistration.fActive:=false;
+    EventRegistration.fName:='';
+    EventRegistration.Clear;
+    fFreeEventRegistrationList.Add(EventRegistration);
+   end;
+  end;
+ finally
+  fEventRegistrationLock.ReleaseWrite;
+ end;
+end;
+
+function TpvEntityComponentSystem.TWorld.FindEvent(const aName:TpvUTF8String):TEventID;
+begin
+ fEventRegistrationLock.AcquireRead;
+ try
+  result:=fEventRegistrationStringIntegerPairHashMap.Values[aName];
+ finally
+  fEventRegistrationLock.ReleaseRead;
+ end;
+end;
+
+procedure TpvEntityComponentSystem.TWorld.SubscribeToEvent(const aEventID:TEventID;const aEventHandler:TEventHandler);
+var EventRegistration:TEventRegistration;
+begin
+ fEventRegistrationLock.AcquireWrite;
+ try
+  if (aEventID>=0) and (aEventID<fEventRegistrationList.Count) then begin
+   EventRegistration:=fEventRegistrationList.Items[aEventID];
+   if EventRegistration.fActive then begin
+    EventRegistration.AddEventHandler(aEventHandler);
+   end;
+  end;
+ finally
+  fEventRegistrationLock.ReleaseWrite;
+ end;
+end;
+
+procedure TpvEntityComponentSystem.TWorld.UnsubscribeFromEvent(const aEventID:TEventID;const aEventHandler:TEventHandler);
+var EventRegistration:TEventRegistration;
+begin
+ fEventRegistrationLock.AcquireWrite;
+ try
+  if (aEventID>=0) and (aEventID<fEventRegistrationList.Count) then begin
+   EventRegistration:=fEventRegistrationList.Items[aEventID];
+   if EventRegistration.fActive then begin
+    EventRegistration.RemoveEventHandler(aEventHandler);
+   end;
+  end;
+ finally
+  fEventRegistrationLock.ReleaseWrite;
+ end;
+end;
+
+function TpvEntityComponentSystem.TWorld.CreateEntity(const aEntityID:TpvEntityComponentSystem.TEntityID;const aEntityUUID:TpvUUID):TpvEntityComponentSystem.TEntityID;
+var DelayedManagementEvent:TDelayedManagementEvent;
+    Index,OldCount,Count:TpvSizeInt;
+    EntityUUID:PpvUUID;
+    AutoGeneratedUUID:TpvUUID;
+    UUIDIsUnused:boolean;
+begin
+ result:=0;
+ fReservedEntityHashMapLock.AcquireRead;
+ try
+  if UUID=TpvUUID.Null then begin
+   repeat
+    AutoGeneratedUUID:=TpvUUID.Create;
+   until not fReservedEntityUUIDHashMap.ExistKey(AutoGeneratedUUID);
+   EntityUUID:=@AutoGeneratedUUID;
+   UUIDIsUnused:=true;
+  end else begin
+   EntityUUID:=@UUID;
+   UUIDIsUnused:=not fReservedEntityUUIDHashMap.ExistKey(EntityUUID^);
+  end;
+  if UUIDIsUnused then begin
+   result:=aEntityID;
+   if aEntityID.Index<=0 then begin
+    fReservedEntityHashMapLock.ReadToWrite;
+    try
+     fEntityLock.AcquireWrite;
+     try
+      if fEntityIndexFreeList.Count>0 then begin
+       result.Index:=fEntityIndexFreeList.Items[fEntityIndexFreeList.Count-1];
+       fEntityIndexFreeList.Delete(fEntityIndexFreeList.Count-1);
+      end else begin
+       result.Index:=fEntityIndexCounter;
+       inc(fEntityIndexCounter);
+      end;
+      OldCount:=length(fEntityGenerationList);
+      Count:=fEntityIndexCounter;
+      if OldCount<Count then begin
+       SetLength(fEntityGenerationList,Count+((Count+1) shr 1));
+       for Index:=OldCount to length(fEntityGenerationList)-1 do begin
+        fEntityGenerationList[Index]:=0;
+       end;
+      end;
+      result.Generation:=fEntityGenerationList[Index] and $ff;
+     finally
+      fEntityLock.ReleaseWrite;
+     end;
+     fReservedEntityUUIDHashMap.Add(EntityUUID^,result);
+    finally
+     fReservedEntityHashMapLock.WriteToRead;
+    end;
+   end else begin
+    fReservedEntityHashMapLock.ReadToWrite;
+    try
+     fEntityLock.AcquireWrite;
+     try
+      if fEntityIndexFreeList.IndexOf(result.Index)>=0 then begin
+       fEntityIndexFreeList.Remove(result.Index);
+      end;
+      fEntityIndexCounter:=Max(fEntityIndexCounter,result.Index+1);
+     finally
+      fEntityLock.ReleaseWrite;
+     end;
+     fReservedEntityUUIDHashMap.Add(EntityUUID^,result);
+    finally
+     fReservedEntityHashMapLock.WriteToRead;
+    end;
+   end;
+  end;
+ finally
+  fReservedEntityHashMapLock.ReleaseRead;
+ end;
+ if result.Index>=0 then begin
+  DelayedManagementEvent.EventType:=TpvEntityComponentSystem.TDelayedManagementEventType.CreateEntity;
+  DelayedManagementEvent.EntityID:=result;
+  DelayedManagementEvent.UUID:=EntityUUID^;
+  AddDelayedManagementEvent(DelayedManagementEvent);
+ end;
+end;
+
+function TpvEntityComponentSystem.TWorld.CreateEntity(const aEntityUUID:TpvUUID):TpvEntityComponentSystem.TEntityID;
+var DelayedManagementEvent:TDelayedManagementEvent;
+    Index,OldCount,Count:TpvSizeInt;
+    EntityUUID:PpvUUID;
+    UUID,AutoGeneratedUUID:TpvUUID;
+    UUIDIsUnused:boolean;
+begin
+ result:=0;
+ fReservedEntityHashMapLock.AcquireRead;
+ try
+  UUID:=aEntityUUID;
+  if UUID=TpvUUID.Null then begin
+   repeat
+    AutoGeneratedUUID:=TpvUUID.Create;
+   until not fReservedEntityUUIDHashMap.ExistKey(AutoGeneratedUUID);
+   EntityUUID:=@AutoGeneratedUUID;
+   UUIDIsUnused:=true;
+  end else begin
+   EntityUUID:=@UUID;
+   UUIDIsUnused:=not fReservedEntityUUIDHashMap.ExistKey(EntityUUID^);
+  end;
+  if UUIDIsUnused then begin
+   fReservedEntityHashMapLock.ReadToWrite;
+   try
+    fEntityLock.AcquireWrite;
+    try
+     if fEntityIndexFreeList.Count>0 then begin
+      result.Index:=fEntityIndexFreeList.Items[fEntityIndexFreeList.Count-1];
+      fEntityIndexFreeList.Delete(fEntityIndexFreeList.Count-1);
+     end else begin
+      result.Index:=fEntityIndexCounter;
+      inc(fEntityIndexCounter);
+     end;
+     OldCount:=length(fEntityGenerationList);
+     Count:=fEntityIndexCounter;
+     if OldCount<Count then begin
+      SetLength(fEntityGenerationList,Count+((Count+1) shr 1));
+      for Index:=OldCount to length(fEntityGenerationList)-1 do begin
+       fEntityGenerationList[Index]:=0;
+      end;
+     end;
+     result.Generation:=fEntityGenerationList[Index] and $ff;
+    finally
+     fEntityLock.ReleaseWrite;
+    end;
+    fReservedEntityUUIDHashMap.Add(EntityUUID^,result);
+   finally
+    fReservedEntityHashMapLock.WriteToRead;
+   end;
+  end;
+ finally
+  fReservedEntityHashMapLock.ReleaseRead;
+ end;
+ if result<>0 then begin
+  DelayedManagementEvent.EventType:=TpvEntityComponentSystem.TDelayedManagementEventType.CreateEntity;
+  DelayedManagementEvent.EntityID:=result;
+  DelayedManagementEvent.UUID:=EntityUUID^;
+  AddDelayedManagementEvent(DelayedManagementEvent);
+ end;
+end;
+
+function TpvEntityComponentSystem.TWorld.CreateEntity:TEntityID; overload;
+begin
+ result:=CreateEntity(TpvUUID.Null);
+end;
+
+function TpvEntityComponentSystem.TWorld.HasEntity(const aEntityID:TpvEntityComponentSystem.TEntityID):boolean;
+var EntityIndex:TpvInt32;
+begin
+ EntityIndex:=aEntityID.Index;
+ fLock.AcquireRead;
+ try
+  result:=(EntityIndex>=0) and
+          (EntityIndex<=fMaxEntityIndex) and
+          ((fEntityUsedBitmap[EntityIndex shr 5] and TpvUInt32(TpvUInt32(1) shl TpvUInt32(EntityIndex and 31)))<>0) and
+          (fEntities[EntityIndex].fID=aEntityID);
+ finally
+  fLock.ReleaseRead;
+ end;
+end;
+
+function TpvEntityComponentSystem.TWorld.IsEntityActive(const aEntityID:TpvEntityComponentSystem.TEntityID):boolean;
+var EntityIndex:TpvInt32;
+begin
+ EntityIndex:=aEntityID.Index;
+ fLock.AcquireRead;
+ try
+  result:=(EntityIndex>=0) and
+          (EntityIndex<=fMaxEntityIndex) and
+          ((fEntityUsedBitmap[EntityIndex shr 5] and TpvUInt32(TpvUInt32(1) shl TpvUInt32(EntityIndex and 31)))<>0) and
+          (fEntities[EntityIndex].fID=aEntityID) and
+          (TpvEntityComponentSystem.TEntity.TFlag.Active in fEntities[EntityIndex].fFlags);
+ finally
+  fLock.ReleaseRead;
+ end;
+end;
+
+procedure TpvEntityComponentSystem.TWorld.ActivateEntity(const aEntityID:TEntityID);
+var DelayedManagementEvent:TDelayedManagementEvent;
+begin
+ DelayedManagementEvent.EventType:=TpvEntityComponentSystem.TDelayedManagementEventType.ActivateEntity;
+ DelayedManagementEvent.EntityID:=aEntityID;
+ AddDelayedManagementEvent(DelayedManagementEvent);
+end;
+
+procedure TpvEntityComponentSystem.TWorld.DeactivateEntity(const aEntityID:TEntityID);
+var DelayedManagementEvent:TDelayedManagementEvent;
+begin
+ DelayedManagementEvent.EventType:=TpvEntityComponentSystem.TDelayedManagementEventType.DeactivateEntity;
+ DelayedManagementEvent.EntityID:=aEntityID;
+ AddDelayedManagementEvent(DelayedManagementEvent);
+end;
+
+procedure TpvEntityComponentSystem.TWorld.KillEntity(const aEntityID:TEntityID);
+var DelayedManagementEvent:TDelayedManagementEvent;
+begin
+ DelayedManagementEvent.EventType:=TpvEntityComponentSystem.TDelayedManagementEventType.DeactivateEntity;
+ DelayedManagementEvent.EntityID:=aEntityID;
+ AddDelayedManagementEvent(DelayedManagementEvent);
+ DelayedManagementEvent.EventType:=TpvEntityComponentSystem.TDelayedManagementEventType.KillEntity;
+ AddDelayedManagementEvent(DelayedManagementEvent);
+end;
+
+procedure TpvEntityComponentSystem.TWorld.AddComponentToEntity(const aEntityID:TEntityID;const aComponentID:TComponentID);
+var DelayedManagementEvent:TDelayedManagementEvent;
+begin
+ DelayedManagementEvent.EventType:=TpvEntityComponentSystem.TDelayedManagementEventType.AddComponentToEntity;
+ DelayedManagementEvent.EntityID:=aEntityID;
+ DelayedManagementEvent.ComponentID:=aComponentID;
+ AddDelayedManagementEvent(DelayedManagementEvent);
+end;
+
+procedure TpvEntityComponentSystem.TWorld.RemoveComponentFromEntity(const aEntityID:TEntityID;const aComponentID:TComponentID);
+var DelayedManagementEvent:TDelayedManagementEvent;
+begin
+ DelayedManagementEvent.EventType:=TpvEntityComponentSystem.TDelayedManagementEventType.RemoveComponentFromEntity;
+ DelayedManagementEvent.EntityID:=aEntityID;
+ DelayedManagementEvent.ComponentID:=aComponentID;
+ AddDelayedManagementEvent(DelayedManagementEvent);
+end;
+
+function TpvEntityComponentSystem.TWorld.HasEntityComponent(const aEntityID:TEntityID;const aComponentID:TComponentID):boolean;
+var EntityIndex:TpvInt32;
+begin
+ EntityIndex:=aEntityID.Index;
+ fLock.AcquireRead;
+ try
+  result:=(EntityIndex>=0) and
+          (EntityIndex<=fMaxEntityIndex) and
+          ((fEntityUsedBitmap[EntityIndex shr 5] and TpvUInt32(TpvUInt32(1) shl TpvUInt32(EntityIndex and 31)))<>0) and
+          (fEntities[EntityIndex].fID=aEntityID) and
+          fComponents[aComponentID].IsComponentInEntityIndex(EntityIndex);
+ finally
+  fLock.ReleaseRead;
+ end;
+end;
+
+procedure TpvEntityComponentSystem.TWorld.AddSystem(const aSystem:TSystem);
+var DelayedManagementEvent:TDelayedManagementEvent;
+begin
+ DelayedManagementEvent.EventType:=TpvEntityComponentSystem.TDelayedManagementEventType.AddSystem;
+ DelayedManagementEvent.System:=aSystem;
+ AddDelayedManagementEvent(DelayedManagementEvent);
+end;
+
+procedure TpvEntityComponentSystem.TWorld.RemoveSystem(const aSystem:TSystem);
+var DelayedManagementEvent:TDelayedManagementEvent;
+begin
+ DelayedManagementEvent.EventType:=TpvEntityComponentSystem.TDelayedManagementEventType.RemoveSystem;
+ DelayedManagementEvent.System:=aSystem;
+ AddDelayedManagementEvent(DelayedManagementEvent);
+end;
+
+procedure TpvEntityComponentSystem.TWorld.SortSystem(const aSystem:TSystem);
+var DelayedManagementEvent:TDelayedManagementEvent;
+begin
+ DelayedManagementEvent.EventType:=TpvEntityComponentSystem.TDelayedManagementEventType.SortSystem;
+ DelayedManagementEvent.System:=aSystem;
+ AddDelayedManagementEvent(DelayedManagementEvent);
+end;
+
+procedure TpvEntityComponentSystem.TWorld.Defragment;
+begin
+end;
+
+procedure TpvEntityComponentSystem.TWorld.Refresh;
+var DelayedManagementEventIndex,Index,EntityIndex:TpvSizeInt;
+    DelayedManagementEvent:PDelayedManagementEvent;
+    EntityID:TEntityID;
+    Entity:PEntity;
+    Component:TpvEntityComponentSystem.TComponent;
+    System:TpvEntityComponentSystem.TSystem;
+    EntitiesWereAdded,EntitiesWereRemoved,WasActive:boolean;
+begin
+
+ EntitiesWereAdded:=false;
+ EntitiesWereRemoved:=false;
+
+ fDelayedManagementEventLock.AcquireRead;
+ try
+
+  DelayedManagementEventIndex:=0;
+  while DelayedManagementEventIndex<fCountDelayedManagementEvents do begin
+   DelayedManagementEvent:=@fDelayedManagementEvents[DelayedManagementEventIndex];
+   inc(DelayedManagementEventIndex);
+   case DelayedManagementEvent^.EventType of
+    TpvEntityComponentSystem.TDelayedManagementEventType.CreateEntity:begin
+     EntityID:=DelayedManagementEvent^.EntityID;
+     EntityIndex:=EntityID.Index;
+     if (EntityIndex>=0) and (EntityIndex<fEntityIndexCounter) then begin
+      DoCreateEntity(EntityID,DelayedManagementEvent^.UUID);
+     end;
+    end;
+    TpvEntityComponentSystem.TDelayedManagementEventType.ActivateEntity:begin
+     EntityID:=DelayedManagementEvent^.EntityID;
+     EntityIndex:=EntityID.Index;
+     if (EntityIndex>=0) and
+        (EntityIndex<fEntityIndexCounter) and
+        ((fEntityUsedBitmap[EntityIndex shr 5] and TpvUInt32(TpvUInt32(1) shl TpvUInt32(EntityIndex and 31)))<>0) and
+        not (TpvEntityComponentSystem.TEntity.TFlag.Active in fEntities[EntityIndex].Flags) then begin
+      for Index:=0 to fSystems.Count-1 do begin
+       System:=fSystems.Items[Index];
+       if System.FitsEntityToSystem(EntityID) then begin
+        System.AddEntityToSystem(EntityID);
+        EntitiesWereAdded:=true;
+       end;
+      end;
+      Include(fEntities[EntityID].fFlags,TpvEntityComponentSystem.TEntity.TFlag.Active);
+     end;
+    end;
+    TpvEntityComponentSystem.TDelayedManagementEventType.DeactivateEntity:begin
+     EntityID:=DelayedManagementEvent^.EntityID;
+     EntityIndex:=EntityID.Index;
+     if (EntityIndex>=0) and
+        (EntityIndex<fEntityIndexCounter) and
+        ((fEntityUsedBitmap[EntityIndex shr 5] and TpvUInt32(TpvUInt32(1) shl TpvUInt32(EntityIndex and 31)))<>0) and
+        (TpvEntityComponentSystem.TEntity.TFlag.Active in fEntities[EntityIndex].Flags) then begin
+      Exclude(fEntities[EntityID].fFlags,TpvEntityComponentSystem.TEntity.TFlag.Active);
+      for Index:=0 to fSystems.Count-1 do begin
+       System:=fSystems.Items[Index];
+       System.RemoveEntityFromSystem(EntityID);
+       EntitiesWereRemoved:=true;
+      end;
+     end;
+    end;
+    TpvEntityComponentSystem.TDelayedManagementEventType.KillEntity:begin
+     EntityID:=DelayedManagementEvent^.EntityID;
+     EntityIndex:=EntityID.Index;
+     if (EntityIndex>=0) and
+        (EntityIndex<fEntityIndexCounter) and
+        ((fEntityUsedBitmap[EntityIndex shr 5] and TpvUInt32(TpvUInt32(1) shl TpvUInt32(EntityIndex and 31)))<>0) then begin
+      for Index:=0 to fSystems.Count-1 do begin
+       System:=fSystems.Items[Index];
+       System.RemoveEntityFromSystem(EntityID);
+       EntitiesWereRemoved:=true;
+      end;
+      fDelayedManagementEventLock.ReleaseRead;
+      try
+       DoDestroyEntity(EntityID);
+      finally
+       fDelayedManagementEventLock.AcquireRead;
+      end;
+     end;
+    end;
+    TpvEntityComponentSystem.TDelayedManagementEventType.AddComponentToEntity:begin
+     EntityID:=DelayedManagementEvent^.EntityID;
+     EntityIndex:=EntityID.Index;
+     if (EntityIndex>=0) and
+        (EntityIndex<fEntityIndexCounter) and
+        ((fEntityUsedBitmap[EntityIndex shr 5] and TpvUInt32(TpvUInt32(1) shl TpvUInt32(EntityIndex and 31)))<>0) then begin
+      if{(DelayedManagementEvent^.ComponentID>=0) and}(DelayedManagementEvent^.ComponentID<fComponents.Count) then begin
+       Component:=fComponents[DelayedManagementEvent^.ComponentID];
+      end else begin
+       Component:=nil;
+      end;
+      if assigned(Component) and (not Component.IsComponentInEntityIndex(EntityIndex)) and Component.AllocateComponentForEntityIndex(EntityIndex) then begin
+       WasActive:=TpvEntityComponentSystem.TEntity.TFlag.Active in fEntities[EntityIndex].Flags;
+       if WasActive then begin
+        for Index:=0 to fSystems.Count-1 do begin
+         System:=fSystems.Items[Index];
+         System.RemoveEntityFromSystem(EntityID);
+         EntitiesWereRemoved:=true;
+        end;
+       end;
+       Entity:=@fEntities[EntityIndex];
+       Entity^.AddComponentToEntity(DelayedManagementEvent^.ComponentID);
+       if WasActive then begin
+        for Index:=0 to fSystems.Count-1 do begin
+         System:=TSystem(fSystems.Items[Index]);
+         if System.FitsEntityToSystem(EntityID) then begin
+          System.AddEntityToSystem(EntityID);
+          EntitiesWereAdded:=true;
+         end;
+        end;
+       end;
+      end;
+     end;
+    end;
+    TpvEntityComponentSystem.TDelayedManagementEventType.RemoveComponentFromEntity:begin
+     EntityID:=DelayedManagementEvent^.EntityID;
+     EntityIndex:=EntityID.Index;
+     if (EntityIndex>=0) and
+        (EntityIndex<fEntityIndexCounter) and
+        ((fEntityUsedBitmap[EntityIndex shr 5] and TpvUInt32(TpvUInt32(1) shl TpvUInt32(EntityIndex and 31)))<>0) then begin
+      if{(DelayedManagementEvent^.ComponentID>=0) and}(DelayedManagementEvent^.ComponentID<fComponents.Count) then begin
+       Component:=fComponents[DelayedManagementEvent^.ComponentID];
+      end else begin
+       Component:=nil;
+      end;
+      if assigned(Component) and Component.IsComponentInEntityIndex(EntityIndex) and Component.FreeComponentFromEntityIndex(EntityIndex) then begin
+       WasActive:=TpvEntityComponentSystem.TEntity.TFlag.Active in fEntities[EntityIndex].Flags;
+       if WasActive then begin
+        for Index:=0 to fSystems.Count-1 do begin
+         System:=fSystems.Items[Index];
+         System.RemoveEntityFromSystem(EntityID);
+         EntitiesWereRemoved:=true;
+        end;
+       end;
+       Entity:=@fEntities[EntityIndex];
+       Entity^.RemoveComponentFromEntity(DelayedManagementEvent^.ComponentID);
+       if WasActive then begin
+        for Index:=0 to fSystems.Count-1 do begin
+         System:=TSystem(fSystems.Items[Index]);
+         if System.FitsEntityToSystem(EntityID) then begin
+          System.AddEntityToSystem(EntityID);
+          EntitiesWereAdded:=true;
+         end;
+        end;
+       end;
+      end;
+     end;
+    end;
+    TpvEntityComponentSystem.TDelayedManagementEventType.AddSystem:begin
+     System:=DelayedManagementEvent^.System;
+     if not fSystemUsedMap.Values[System] then begin
+      fSystemUsedMap.Add(System,true);
+      fSystems.Add(System);
+      InterlockedExchange(fSystemChoreographyNeedToRebuild,-1);
+      for EntityIndex:=0 to fEntityIndexCounter-1 do begin
+       if (EntityIndex>=0) and
+           (EntityIndex<fEntityIndexCounter) and
+           ((fEntityUsedBitmap[EntityIndex shr 5] and TpvUInt32(TpvUInt32(1) shl longword(EntityIndex and 31)))<>0) and
+           (TpvEntityComponentSystem.TEntity.TFlag.Active in fEntities[EntityIndex].Flags) and
+           System.FitsEntityToSystem(fEntities[EntityIndex].fID) then begin
+        System.AddEntityToSystem(fEntities[EntityIndex].fID);
+        EntitiesWereAdded:=true;
+       end;
+      end;
+      System.Added;
+     end;
+    end;
+    TpvEntityComponentSystem.TDelayedManagementEventType.RemoveSystem:begin
+     System:=DelayedManagementEvent^.System;
+     if fSystemUsedMap.Values[System] then begin
+      System.Removed;
+      fSystemUsedMap.Delete(System);
+      fSystems.Remove(System);
+      InterlockedExchange(fSystemChoreographyNeedToRebuild,-1);
+     end;
+    end;
+    TpvEntityComponentSystem.TDelayedManagementEventType.SortSystem:begin
+     System:=DelayedManagementEvent^.System;
+     if fSystemUsedMap.Values[System] then begin
+      System.SortEntities;
+     end;
+    end;
+   end;
+  end;
+  fDelayedManagementEventLock.ReadToWrite;
+  try
+   fCountDelayedManagementEvents:=0;
+  finally
+   fDelayedManagementEventLock.WriteToRead;
+  end;
+ finally
+  fDelayedManagementEventLock.ReleaseRead;
+ end;
+
+ if EntitiesWereAdded then begin
+ end;
+
+ if EntitiesWereRemoved then begin
+ end;
+
+end;
+
+procedure TpvEntityComponentSystem.TWorld.QueueEvent(const aEventToQueue:TpvEntityComponentSystem.TEvent;const aDeltaTime:TpvTime);
+var ParameterIndex:TpvSizeInt;
+    Event:TpvEntityComponentSystem.PEvent;
+begin
+ fFreeEventQueueLock.AcquireWrite;
+ try
+  Event:=LinkedListPopFront(@fFreeEventQueue);
+ finally
+  fFreeEventQueueLock.ReleaseWrite;
+ end;
+ if not assigned(Event) then begin
+  GetMem(Event,SizeOf(TEvent));
+  FillChar(Event^,SizeOf(TEvent),#0);
+  fEventListLock.AcquireWrite;
+  try
+   fEventList.Add(Event);
+  finally
+   fEventListLock.ReleaseWrite;
+  end;
+ end;
+ LinkedListInitialize(pointer(Event));
+ if aDeltaTime>0 then begin
+  fDelayedEventQueueLock.AcquireWrite;
+  try
+   LinkedListPushBack(@fDelayedEventQueue,pointer(Event));
+  finally
+   fDelayedEventQueueLock.ReleaseWrite;
+  end;
+ end else begin
+  fEventQueueLock.AcquireWrite;
+  try
+   LinkedListPushBack(@fEventQueue,pointer(Event));
+  finally
+   fEventQueueLock.ReleaseWrite;
+  end;
+ end;
+ Event^.TimeStamp:=fCurrentTime+aDeltaTime;
+ Event^.RemainingTime:=aDeltaTime;
+ Event^.EventID:=aEventToQueue.EventID;
+ Event^.EntityID:=aEventToQueue.EntityID;
+ Event^.CountParameters:=aEventToQueue.CountParameters;
+ if length(Event^.Parameters)<Event^.CountParameters then begin
+  SetLength(Event^.Parameters,Event^.CountParameters*2);
+ end;
+ for ParameterIndex:=0 to Event^.CountParameters-1 do begin
+  Event^.Parameters[ParameterIndex]:=aEventToQueue.Parameters[ParameterIndex];
+ end;
+ if assigned(fOnEvent) then begin
+  fOnEvent(self,Event^);
+ end;
+end;
+
+procedure TpvEntityComponentSystem.TWorld.QueueEvent(const aEventToQueue:TpvEntityComponentSystem.TEvent);
+begin
+ QueueEvent(aEventToQueue,1.0e-18); // one femtosecond
+end;
+
+procedure TpvEntityComponentSystem.TWorld.Update(const aDeltaTime:TpvTime);
+var SystemIndex:TpvSizeInt;
+    System:TSystem;
+begin
+ for SystemIndex:=0 to fSystems.Count-1 do begin
+  System:=fSystems.Items[SystemIndex];
+  System.fCountEvents:=0;
+  System.fDeltaTime:=aDeltaTime;
+ end;
+ ProcessEvents;
+ if InterlockedCompareExchange(fSystemChoreographyNeedToRebuild,0,-1)<0 then begin
+  fSystemChoreography.Build;
+ end;
+ fSystemChoreography.ProcessEvents;
+ fSystemChoreography.InitializeUpdate;
+ fSystemChoreography.Update;
+ fSystemChoreography.FinalizeUpdate;
+ fCurrentTime:=fCurrentTime+aDeltaTime;
+ ProcessDelayedEvents(aDeltaTime);
+ Refresh;
+end;
+
+procedure TpvEntityComponentSystem.TWorld.Clear;
+var EntityIndex,SystemIndex:TpvSizeInt;
+begin
+ fLock.AcquireRead;
+ try
+  if fEntityIndexCounter>0 then begin
+   fLock.ReleaseRead;
+   try
+    for EntityIndex:=0 to fEntityIndexCounter-1 do begin
+     if (fEntityUsedBitmap[EntityIndex shr 5] and TpvUInt32(TpvUInt32(1) shl TpvUInt32(EntityIndex and 31)))<>0 then begin
+      KillEntity(fEntities[EntityIndex].fID);
+     end;
+    end;
+    Refresh;
+   finally
+    fLock.AcquireRead;
+   end;
+  end;
+  if fSystems.Count>0 then begin
+   fLock.ReleaseRead;
+   try
+    for SystemIndex:=0 to fSystems.Count-1 do begin
+     RemoveSystem(fSystems.Items[SystemIndex]);
+    end;
+    Refresh;
+   finally
+    fLock.AcquireRead;
+   end;
+  end;
+ finally
+  fLock.ReleaseRead;
+ end;
+ fEntityIndexCounter:=0;
+ fEntityUUIDHashMap.Clear;
+ fReservedEntityUUIDHashMap.Clear;
+ fEntityIndexFreeList.Clear;
+end;
+
+procedure TpvEntityComponentSystem.TWorld.ClearEntities;
+var EntityIndex:TpvSizeInt;
+begin
+ fLock.AcquireRead;
+ try
+  if fEntityIndexCounter>0 then begin
+   fLock.ReleaseRead;
+   try
+    for EntityIndex:=0 to fEntityIndexCounter-1 do begin
+     if (fEntityUsedBitmap[EntityIndex shr 5] and TpvUInt32(TpvUInt32(1) shl TpvUInt32(EntityIndex and 31)))<>0 then begin
+      KillEntity(fEntities[EntityIndex].fID);
+     end;
+    end;
+    Refresh;
+   finally
+    fLock.AcquireRead;
+   end;
+  end;
+ finally
+  fLock.ReleaseRead;
+ end;
+ fEntityIndexCounter:=0;
+ fEntityUUIDHashMap.Clear;
+ fReservedEntityUUIDHashMap.Clear;
+ fEntityIndexFreeList.Clear;
+end;
+
+procedure TpvEntityComponentSystem.TWorld.Activate;
+begin
+ fActive:=true;
+end;
+
+procedure TpvEntityComponentSystem.TWorld.Deactivate;
+begin
+ fActive:=false;
+end;
+
+procedure TpvEntityComponentSystem.TWorld.MementoSerialize(const aStream:TStream);
+var EntityIndex,ComponentIndex:TpvInt32;
+    ComponentID:TComponentID;
+    BitCounter:TpvInt32;
+    BitTag:TpvUInt8;
+    BitPosition:TpvInt64;
+    EntityID:TEntityID;
+    Entity:PEntity;
+    Component:TpvEntityComponentSystem.TComponent;
+    BufferedStream:TStream;
+ procedure WriteBit(const aValue:boolean);
+ var OldPosition:TpvInt64;
+ begin
+  if BitCounter>=8 then begin
+   if BitPosition>=0 then begin
+    OldPosition:=BufferedStream.Position;
+    if BufferedStream.Seek(BitPosition,soBeginning)<>BitPosition then begin
+     raise EInOutError.Create('Stream seek error');
+    end;
+    if BufferedStream.Write(BitTag,SizeOf(TpvUInt8))<>SizeOf(TpvUInt8) then begin
+     raise EInOutError.Create('Stream write error');
+    end;
+    if BufferedStream.Seek(OldPosition,soBeginning)<>OldPosition then begin
+     raise EInOutError.Create('Stream seek error');
+    end;
+   end;
+   BitTag:=0;
+   BitCounter:=0;
+   BitPosition:=BufferedStream.Position;
+   if BufferedStream.Write(BitTag,SizeOf(TpvUInt8))<>SizeOf(TpvUInt8) then begin
+    raise EInOutError.Create('Stream write error');
+   end;
+  end;
+  if aValue then begin
+   BitTag:=BitTag or (TpvUInt8(1) shl BitCounter);
+  end else begin
+   BitTag:=BitTag and not (TpvUInt8(1) shl BitCounter);
+  end;
+  inc(BitCounter);
+ end;
+ procedure FlushBits;
+ var OldPosition:TpvInt64;
+ begin
+  if BitPosition>=0 then begin
+   OldPosition:=BufferedStream.Position;
+   if BufferedStream.Seek(BitPosition,soBeginning)<>BitPosition then begin
+    raise EInOutError.Create('Stream seek error');
+   end;
+   if BufferedStream.Write(BitTag,SizeOf(TpvUInt8))<>SizeOf(TpvUInt8) then begin
+    raise EInOutError.Create('Stream write error');
+   end;
+   if BufferedStream.Seek(OldPosition,soBeginning)<>OldPosition then begin
+    raise EInOutError.Create('Stream seek error');
+   end;
+  end;
+ end;
+ procedure WriteUInt8(const aValue:TpvUInt8);
+ begin
+  if BufferedStream.Write(aValue,SizeOf(TpvUInt8))<>SizeOf(TpvUInt8) then begin
+   raise EInOutError.Create('Stream write error');
+  end;
+ end;
+ procedure WriteInt32(const aValue:TpvInt32);
+ begin
+  if BufferedStream.Write(aValue,SizeOf(TpvInt32))<>SizeOf(TpvInt32) then begin
+   raise EInOutError.Create('Stream write error');
+  end;
+ end;
+begin
+ Refresh;
+ BufferedStream:=TMemoryStream.Create;
+ try
+  BitTag:=0;
+  BitCounter:=8;
+  BitPosition:=-1;
+  if BufferedStream.Write(fUUID,SizeOf(TpvUUID))<>SizeOf(TpvUUID) then begin
+   raise EInOutError.Create('Stream write error');
+  end;
+  WriteInt32(fEntityIndexCounter);
+  for EntityIndex:=0 to fEntityIndexCounter-1 do begin
+   if (EntityIndex>=0) and
+      (EntityIndex<=fMaxEntityIndex) and
+      ((fEntityUsedBitmap[EntityIndex shr 5] and TpvUInt32(TpvUInt32(1) shl TpvUInt32(EntityIndex and 31)))<>0) then begin
+    EntityID:=fEntities[EntityIndex].fID;
+    WriteBit(true);
+    Entity:=@fEntities[EntityID];
+    WriteUInt8(EntityID.Generation);
+    WriteBit(Entity^.Active);
+    BufferedStream.Write(Entity^.fUUID,SizeOf(TpvUUID));
+    WriteInt32(Entity^.fCountComponents);
+    for ComponentIndex:=0 to Entity^.fCountComponents-1 do begin
+     ComponentID:=ComponentIndex;
+     if{(DelayedManagementEvent^.ComponentID>=0) and}(ComponentID<fComponents.Count) then begin
+      Component:=fComponents[ComponentID];
+     end else begin
+      Component:=nil;
+     end;
+     if assigned(Component) then begin
+      WriteBit(true);
+      BufferedStream.Write(Component.ComponentByEntityIndex[EntityIndex]^,Component.fSize);
+     end else begin
+      WriteBit(false);
+     end;
+    end;
+   end else begin
+    WriteBit(false);
+   end;
+  end;
+  FlushBits;
+  BufferedStream.Seek(0,soBeginning);
+  aStream.CopyFrom(BufferedStream,BufferedStream.Size);
+ finally
+  BufferedStream.Free;
+ end;
+end;
+
+procedure TpvEntityComponentSystem.TWorld.MementoUnserialize(const aStream:TStream);
+var ComponentID:TComponentID;
+    EntityIndex,LocalEntityCounter,CountEntityComponents,
+    EntityComponentIndex,BitCounter:TpvInt32;
+    BitTag,Generation:TpvUInt8;
+    EntityID:TEntityID;
+    Entity:PEntity;
+    Component:TpvEntityComponentSystem.TComponent;
+    BufferedStream:TStream;
+    TempUUID:TpvUUID;
+    HasNewEntity,IsActive,HasNewComponent:boolean;
+ function ReadBit:boolean;
+ begin
+  if BitCounter>=8 then begin
+   BitTag:=0;
+   BitCounter:=0;
+   if BufferedStream.Read(BitTag,SizeOf(TpvUInt8))<>SizeOf(TpvUInt8) then begin
+    raise EInOutError.Create('Stream write error');
+   end;
+  end;
+  result:=(BitTag and (TpvUInt8(1) shl BitCounter))<>0;
+  inc(BitCounter);
+ end;
+ function ReadUInt8:TpvUInt8;
+ begin
+  if BufferedStream.Read(result,SizeOf(TpvUInt8))<>SizeOf(TpvUInt8) then begin
+   raise EInOutError.Create('Stream read error');
+  end;
+ end;
+ function ReadInt32:TpvInt32;
+ begin
+  if BufferedStream.Read(result,SizeOf(TpvInt32))<>SizeOf(TpvInt32) then begin
+   raise EInOutError.Create('Stream read error');
+  end;
+ end;
+begin
+ Refresh;
+ aStream.Seek(0,soBeginning);
+ BufferedStream:=TMemoryStream.Create;
+ try
+  BufferedStream.CopyFrom(aStream,aStream.Size);
+  BufferedStream.Seek(0,soBeginning);
+  BitTag:=0;
+  BitCounter:=8;
+  if BufferedStream.Read(TempUUID,SizeOf(TpvUUID))<>SizeOf(TpvUUID) then begin
+   raise EInOutError.Create('Stream read error');
+  end;
+  LocalEntityCounter:=ReadInt32;
+  for EntityIndex:=0 to Max(LocalEntityCounter,fEntityIndexCounter)-1 do begin
+   if EntityIndex<LocalEntityCounter then begin
+    HasNewEntity:=ReadBit;
+   end else begin
+    HasNewEntity:=false;
+   end;
+   if HasNewEntity then begin
+    Generation:=ReadUInt8;
+    IsActive:=ReadBit;
+    if BufferedStream.Read(TempUUID,SizeOf(TpvUUID))<>SizeOf(TpvUUID) then begin
+     raise EInOutError.Create('Stream read error');
+    end;
+    if (EntityIndex>=0) and
+       (EntityIndex<=fMaxEntityIndex) and
+       ((fEntityUsedBitmap[EntityIndex shr 5] and TpvUInt32(TpvUInt32(1) shl TpvUInt32(EntityIndex and 31)))<>0) then begin
+     Entity:=@fEntities[EntityIndex];
+     EntityID:=Entity^.ID;
+     if Generation<>EntityID.Generation then begin
+      fEntityUUIDHashMap.Delete(Entity.fUUID);
+      Entity.fUUID:=TempUUID;
+      fEntityUUIDHashMap.Add(Entity.fUUID,EntityID);
+      Entity^.ID.Generation:=Generation;
+      EntityID:=Entity^.ID;
+     end;
+     if TempUUID<>Entity.fUUID then begin
+      fEntityUUIDHashMap.Delete(Entity.fUUID);
+      Entity.fUUID:=TempUUID;
+      fEntityUUIDHashMap.Add(Entity.fUUID,EntityID);
+     end;
+    end else begin
+     EntityID.Index:=EntityIndex;
+     EntityID.Generation:=Generation;
+     EntityID:=CreateEntity(EntityID,TempUUID);
+     Refresh;
+     Entity:=@fEntities[EntityIndex];
+    end;
+    CountEntityComponents:=ReadInt32;
+    for EntityComponentIndex:=0 to Max(CountEntityComponents,Entity.fCountComponents)-1 do begin
+     if EntityComponentIndex<CountEntityComponents then begin
+      HasNewComponent:=ReadBit;
+     end else begin
+      HasNewComponent:=false;
+     end;
+     if HasNewComponent then begin
+      ComponentID:=EntityComponentIndex;
+      if{(ComponentID>=0) and}(ComponentID<fComponents.Count) then begin
+       Component:=fComponents[ComponentID];
+      end else begin
+       Component:=nil;
+      end;
+      if assigned(Component) then begin
+       if not Component.IsComponentInEntityIndex(EntityIndex) then begin
+        AddComponentToEntity(EntityID,ComponentID);
+        Refresh;
+       end;
+       BufferedStream.Read(Component.ComponentByEntityIndex[EntityIndex]^,Component.fSize);
+      end;
+     end else if EntityComponentIndex<Entity.fCountComponents then begin
+      ComponentID:=EntityComponentIndex;
+      if{(ComponentID>=0) and}(ComponentID<fComponents.Count) then begin
+       Component:=fComponents[ComponentID];
+      end else begin
+       Component:=nil;
+      end;
+      if assigned(Component) then begin
+       if Component.IsComponentInEntityIndex(EntityIndex) then begin
+        RemoveComponentFromEntity(EntityID,ComponentID);
+        Refresh;
+       end;
+      end;
+     end;
+    end;
+    if IsActive then begin
+     ActivateEntity(EntityID);
+    end else begin
+     DeactivateEntity(EntityID);
+    end;
+    Refresh;
+   end else begin
+    if (EntityIndex>=0) and
+       (EntityIndex<=fMaxEntityIndex) and
+       ((fEntityUsedBitmap[EntityIndex shr 5] and TpvUInt32(TpvUInt32(1) shl TpvUInt32(EntityIndex and 31)))<>0) then begin
+     Entity:=@fEntities[EntityIndex];
+     EntityID:=Entity^.ID;
+     KillEntity(EntityID);
+     Refresh;
+    end;
+   end;
+  end;
+  Refresh;
+ finally
+  BufferedStream.Free;
+ end;
 end;
 
 procedure InitializeEntityComponentSystemGlobals;
@@ -1531,11 +3874,15 @@ begin
   RegisteredComponentTypeList:=TpvEntityComponentSystem.TRegisteredComponentTypeList.Create;
   RegisteredComponentTypeList.OwnsObjects:=true;
  end;
+ if not assigned(RegisteredComponentTypeNameHashMap) then begin
+  RegisteredComponentTypeNameHashMap:=TpvEntityComponentSystem.TRegisteredComponentTypeNameHashMap.Create(nil);
+ end;
 end;
 
 initialization
  InitializeEntityComponentSystemGlobals;
 finalization
  FreeAndNil(RegisteredComponentTypeList);
+ FreeAndNil(RegisteredComponentTypeNameHashMap);
 end.
 

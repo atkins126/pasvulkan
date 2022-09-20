@@ -961,10 +961,10 @@ type EpvScene3D=class(Exception);
                    end;
              public
               case Type_:TCameraData.TType of
-               TCameraData.TType.Orthographic:(
+               TType.Orthographic:(
                 Orthographic:TOrthographic;
                );
-               TCameraData.TType.Perspective:(
+               TType.Perspective:(
                 Perspective:TPerspective;
                );
             end;
@@ -1032,6 +1032,7 @@ type EpvScene3D=class(Exception);
               fUploaded:TPasMPBool32;
               fLightItems:TLightItems;
               fLightAABBTreeGeneration:TpvUInt64;
+              fNewLightAABBTreeGeneration:TpvUInt64;
               fLightTree:TpvBVHDynamicAABBTree.TSkipListNodeArray;
               fLightMetaInfos:TLightMetaInfos;
               fLightItemsVulkanBuffer:TpvVulkanBuffer;
@@ -1042,7 +1043,8 @@ type EpvScene3D=class(Exception);
               destructor Destroy; override;
               procedure Upload;
               procedure Unload;
-              procedure Update;
+              procedure PrepareGPUUpdate;
+              procedure ExecuteGPUUpdate;
              public
               property LightItems:TLightItems read fLightItems;
               property LightMetaInfoVulkanBuffer:TpvVulkanBuffer read fLightMetaInfoVulkanBuffer;
@@ -1822,12 +1824,15 @@ type EpvScene3D=class(Exception);
                             fInstance:TInstance;
                             fNodeMatricesBuffer:TpvVulkanBuffer;
                             fMorphTargetVertexWeightsBuffer:TpvVulkanBuffer;
+                            fNodeMatrices:TNodeMatrices;
+                            fMorphTargetVertexWeights:TMorphTargetVertexWeights;
                            public
                             constructor Create(const aInstance:TInstance); reintroduce;
                             destructor Destroy; override;
                             procedure Upload;
                             procedure Unload;
-                            procedure Update(const aInFlightFrameIndex:TpvSizeInt);
+                            procedure PrepareGPUUpdate(const aInFlightFrameIndex:TpvSizeInt);
+                            procedure ExecuteGPUUpdate(const aInFlightFrameIndex:TpvSizeInt);
                            published
                             property NodeMatricesBuffer:TpvVulkanBuffer read fNodeMatricesBuffer;
                             property MorphTargetVertexWeightsBuffer:TpvVulkanBuffer read fMorphTargetVertexWeightsBuffer;
@@ -1901,7 +1906,10 @@ type EpvScene3D=class(Exception);
                      procedure Upload; override;
                      procedure Unload; override;
                      procedure UpdateInvisible;
+                     procedure Check(const aInFlightFrameIndex:TpvSizeInt);
                      procedure Update(const aInFlightFrameIndex:TpvSizeInt);
+                     procedure PrepareGPUUpdate(const aInFlightFrameIndex:TpvSizeInt);
+                     procedure ExecuteGPUUpdate(const aInFlightFrameIndex:TpvSizeInt);
                      function GetBakedMesh(const aRelative:boolean=false;
                                            const aWithDynamicMeshs:boolean=false;
                                            const aRootNodeIndex:TpvSizeInt=-1;
@@ -2026,7 +2034,10 @@ type EpvScene3D=class(Exception);
               procedure Remove; override;
               procedure Upload; override;
               procedure Unload; override;
+              procedure Check(const aInFlightFrameIndex:TpvSizeInt);
               procedure Update(const aInFlightFrameIndex:TpvSizeInt);
+              procedure PrepareGPUUpdate(const aInFlightFrameIndex:TpvSizeInt);
+              procedure ExecuteGPUUpdate(const aInFlightFrameIndex:TpvSizeInt);
               procedure AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument);
               function BeginLoad(const aStream:TStream):boolean; override;
               function EndLoad:boolean; override;
@@ -2053,6 +2064,7 @@ type EpvScene3D=class(Exception);
             TSamplerIDHashMap=TpvHashMap<TID,TSampler>;
             TTextureIDHashMap=TpvHashMap<TID,TTexture>;
             TMaterialIDHashMap=TpvHashMap<TID,TMaterial>;
+            TMaterialIDDirtyMap=array[0..(($10000+31) shr 5)-1] of TPasMPUint32;
             TMaterialIDMap=array[0..$ffff] of TMaterial;
             TMaterialGenerations=array[0..$ffff] of TpvUInt64;
             TImageHashMap=TpvHashMap<TImage.THashData,TImage>;
@@ -2062,6 +2074,7 @@ type EpvScene3D=class(Exception);
             TBufferMemoryBarriers=TpvDynamicArray<TVkBufferMemoryBarrier>;
             TInFlightFrameBufferMemoryBarriers=array[0..MaxInFlightFrames-1] of TBufferMemoryBarriers;
             TMaterialBufferData=array[0..65535] of TMaterial.TShaderData;
+            TImageInfos=array[0..65535] of TVkDescriptorImageInfo;
       private
        fLock:TPasMPSpinLock;
        fVulkanDevice:TpvVulkanDevice;
@@ -2080,8 +2093,9 @@ type EpvScene3D=class(Exception);
        fVulkanStagingCommandBuffer:TpvVulkanCommandBuffer;
        fVulkanStagingFence:TpvVulkanFence;
        fImageDescriptorGenerationLock:TPasMPSpinLock;
-       fImageDescriptorGenerations:array[0..MaxInFlightFrames-1] of TpvUInt64;
+       fImageDescriptorProcessedGenerations:array[0..MaxInFlightFrames-1] of TpvUInt64;
        fImageDescriptorGeneration:TpvUInt64;
+       fImageDescriptorProcessedGeneration:TpvUInt64;
        fGlobalVulkanViews:array[0..MaxInFlightFrames-1] of TGlobalViewUniformBuffer;
        fGlobalVulkanViewUniformStagingBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
        fGlobalVulkanViewUniformBuffers:TGlobalVulkanViewUniformBuffers;
@@ -2092,36 +2106,45 @@ type EpvScene3D=class(Exception);
        fVulkanLightTreeStagingBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
        fVulkanLightMetaInfoStagingBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
        fMaterialBufferData:TMaterialBufferData;
+       fInFlightFrameMaterialBufferData:array[0..MaxInFlightFrames-1] of TMaterialBufferData;
+       fInFlightFrameMaterialBufferDataOffsets:array[0..MaxInFlightFrames-1] of TpvUInt64;
+       fInFlightFrameMaterialBufferDataSizes:array[0..MaxInFlightFrames-1] of TpvUInt64;
+       fInFlightFrameMaterialBufferDataMinMaterialID:array[0..MaxInFlightFrames-1] of TpvUInt32;
+       fInFlightFrameMaterialBufferDataGeneration:array[0..MaxInFlightFrames-1] of TpvUInt64;
+       fInFlightFrameMaterialBufferDataUploadedGeneration:array[0..MaxInFlightFrames-1] of TpvUInt64;
        fVulkanMaterialDataStagingBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
        fVulkanMaterialDataBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
        fVulkanMaterialUniformBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
        fTechniques:TpvTechniques;
-       fImageListLock:TPasMPSlimReaderWriterLock;
+       fImageListLock:TPasMPCriticalSection;
        fImages:TImages;
        fImageIDManager:TIDManager;
        fImageIDHashMap:TImageIDHashMap;
        fImageHashMap:TImageHashMap;
-       fSamplerListLock:TPasMPSlimReaderWriterLock;
+       fSamplerListLock:TPasMPCriticalSection;
        fSamplers:TSamplers;
        fSamplerIDManager:TIDManager;
        fSamplerIDHashMap:TSamplerIDHashMap;
        fSamplerHashMap:TSamplerHashMap;
-       fTextureListLock:TPasMPSlimReaderWriterLock;
+       fTextureListLock:TPasMPCriticalSection;
        fTextures:TTextures;
        fTextureIDManager:TIDManager;
        fTextureIDHashMap:TTextureIDHashMap;
        fTextureHashMap:TTextureHashMap;
-       fMaterialListLock:TPasMPSlimReaderWriterLock;
+       fMaterialListLock:TPasMPCriticalSection;
        fMaterials:TMaterials;
        fMaterialIDManager:TIDManager;
        fMaterialIDHashMap:TMaterialIDHashMap;
+       fMaterialIDDirtyMap:TMaterialIDDirtyMap;
        fMaterialIDMap:TMaterialIDMap;
        fMaterialHashMap:TMaterialHashMap;
        fEmptyMaterial:TpvScene3D.TMaterial;
-       fMaterialDataGenerationMaterials:array[0..MaxInFlightFrames-1] of TMaterialIDMap;
-       fMaterialDataGenerationMaterialGenerations:array[0..MaxInFlightFrames-1] of TMaterialGenerations;
-       fMaterialDataGenerations:array[0..MaxInFlightFrames-1] of TpvUInt64;
+       fMaterialDataMaterialGenerations:TMaterialGenerations;
+       fMaterialDataProcessedGenerations:array[0..MaxInFlightFrames-1] of TpvUInt64;
+       fMaterialDataProcessedMinChangedID:array[0..MaxInFlightFrames-1] of TpvUInt32;
+       fMaterialDataProcessedMaxChangedID:array[0..MaxInFlightFrames-1] of TpvUInt32;
        fMaterialDataGeneration:TpvUInt64;
+       fMaterialDataProcessedGeneration:TpvUInt64;
        fMaterialDataGenerationLock:TPasMPSpinLock;
        fLights:array[0..MaxInFlightFrames-1] of TpvScene3D.TLights;
        fCountLights:array[0..MaxInFlightFrames-1] of TpvSizeInt;
@@ -2148,8 +2171,11 @@ type EpvScene3D=class(Exception);
        fUseBufferDeviceAddress:boolean;
        fHasTransmission:boolean;
        fVulkanBufferCopyBatchItemArrays:array[0..MaxInFlightFrames-1] of TpvVulkanBufferCopyBatchItemArray;
-       fImageInfos:array[0..65535] of TVkDescriptorImageInfo;
-       fRenderPassIndexCounter:TpvSizeInt;
+       fImageInfos:TpvScene3D.TImageInfos;
+       fInFlightFrameImageInfos:array[0..MaxInFlightFrames-1] of TpvScene3D.TImageInfos;
+       fInFlightFrameImageInfoImageDescriptorGenerations:array[0..MaxInFlightFrames-1] of TpvUInt64;
+       fInFlightFrameImageInfoImageDescriptorUploadedGenerations:array[0..MaxInFlightFrames-1] of TpvUInt64;
+       fRenderPassIndexCounter:TPasMPInt32;
        fPrimaryLightDirection:TpvVector3;
        procedure NewImageDescriptorGeneration;
        procedure NewMaterialDataGeneration;
@@ -2179,7 +2205,10 @@ type EpvScene3D=class(Exception);
        procedure Unload;
        procedure ResetRenderPasses;
        function AcquireRenderPassIndex:TpvSizeInt;
+       procedure Check(const aInFlightFrameIndex:TpvSizeInt);
        procedure Update(const aInFlightFrameIndex:TpvSizeInt);
+       procedure PrepareGPUUpdate(const aInFlightFrameIndex:TpvSizeInt);
+       procedure ExecuteGPUUpdate(const aInFlightFrameIndex:TpvSizeInt);
        procedure TransferViewsToPreviousViews;
        procedure ClearViews;
        function AddView(const aView:TpvScene3D.TView):TpvSizeInt;
@@ -2548,11 +2577,12 @@ begin
   fSceneInstance:=nil;
  end;
 
- if assigned(fSceneInstance) then begin
+{if assigned(fSceneInstance) then begin
   ReleaseFrameDelay:=Max(MaxInFlightFrames+1,fSceneInstance.fCountInFlightFrames+1);
  end else begin
   ReleaseFrameDelay:=MaxInFlightFrames+1;
- end;
+ end;}
+ ReleaseFrameDelay:=(MaxInFlightFrames*2)+1;
 
  fUploaded:=false;
 
@@ -3886,7 +3916,14 @@ begin
 
  if assigned(fImage) then begin
   try
-   fImage.DecRef;
+   if assigned(fSceneInstance) then begin
+    fSceneInstance.fImageListLock.Acquire;
+    try
+     fImage.DecRef;
+    finally
+     fSceneInstance.fImageListLock.Release;
+    end;
+   end;
   finally
    fImage:=nil;
   end;
@@ -3894,7 +3931,14 @@ begin
 
  if assigned(fSampler) then begin
   try
-   fSampler.DecRef;
+   if assigned(fSceneInstance) then begin
+    fSceneInstance.fSamplerListLock.Acquire;
+    try
+     fSampler.DecRef;
+    finally
+     fSceneInstance.fSamplerListLock.Release;
+    end;
+   end;
   finally
    fSampler:=nil;
   end;
@@ -3948,14 +3992,28 @@ begin
     fSceneInstance.NewImageDescriptorGeneration;
     if assigned(fImage) then begin
      try
-      fImage.DecRef;
+      if assigned(fSceneInstance) then begin
+       fSceneInstance.fImageListLock.Acquire;
+       try
+        fImage.DecRef;
+       finally
+        fSceneInstance.fImageListLock.Release;
+       end;
+      end;
      finally
       fImage:=nil;
      end;
     end;
     if assigned(fSampler) then begin
      try
-      fSampler.DecRef;
+      if assigned(fSceneInstance) then begin
+       fSceneInstance.fSamplerListLock.Acquire;
+       try
+        fSampler.DecRef;
+       finally
+        fSceneInstance.fSamplerListLock.Release;
+       end;
+      end;
      finally
       fSampler:=nil;
      end;
@@ -4031,11 +4089,28 @@ procedure TpvScene3D.TTexture.AssignFromWhiteTexture;
 begin
  fName:=#0+'WhiteTexture';
 
- fImage:=fSceneInstance.fWhiteImage;
- fImage.IncRef;
+ fSceneInstance.fTextureListLock.Acquire;
+ try
 
- fSampler:=fSceneInstance.fDefaultSampler;
- fSampler.IncRef;
+  fSceneInstance.fImageListLock.Acquire;
+  try
+   fImage:=fSceneInstance.fWhiteImage;
+   fImage.IncRef;
+  finally
+   fSceneInstance.fImageListLock.Release;
+  end;
+
+  fSceneInstance.fSamplerListLock.Acquire;
+  try
+   fSampler:=fSceneInstance.fDefaultSampler;
+   fSampler.IncRef;
+  finally
+   fSceneInstance.fSamplerListLock.Release;
+  end;
+
+ finally
+  fSceneInstance.fTextureListLock.Release;
+ end;
 
 end;
 
@@ -4044,11 +4119,28 @@ begin
 
  fName:=#0+'DefaultNormalMapTexture';
 
- fImage:=fSceneInstance.fDefaultNormalMapImage;
- fImage.IncRef;
+ fSceneInstance.fTextureListLock.Acquire;
+ try
 
- fSampler:=fSceneInstance.fDefaultSampler;
- fSampler.IncRef;
+  fSceneInstance.fImageListLock.Acquire;
+  try
+   fImage:=fSceneInstance.fDefaultNormalMapImage;
+   fImage.IncRef;
+  finally
+   fSceneInstance.fImageListLock.Release;
+  end;
+
+  fSceneInstance.fSamplerListLock.Acquire;
+  try
+   fSampler:=fSceneInstance.fDefaultSampler;
+   fSampler.IncRef;
+  finally
+   fSceneInstance.fSamplerListLock.Release;
+  end;
+
+ finally
+  fSceneInstance.fTextureListLock.Release;
+ end;
 
 end;
 
@@ -4057,24 +4149,42 @@ begin
 
  fName:=aSourceTexture.Name;
 
- if (aSourceTexture.Source>=0) and (aSourceTexture.Source<aImageMap.Count) then begin
-  fImage:=aImageMap[aSourceTexture.Source];
- end else begin
-  fImage:=nil;
-//raise EPasGLTFInvalidDocument.Create('Image index out of range');
- end;
- if assigned(fImage) then begin
-  fImage.IncRef;
- end;
+ fSceneInstance.fTextureListLock.Acquire;
+ try
 
- if (aSourceTexture.Sampler>=0) and (aSourceTexture.Sampler<aSamplerMap.Count) then begin
-  fSampler:=aSamplerMap[aSourceTexture.Sampler];
- end else begin
-  fSampler:=SceneInstance.fDefaultSampler;
-//raise EPasGLTFInvalidDocument.Create('Sampler index out of range');
- end;
- if assigned(fSampler) then begin
-  fSampler.IncRef;
+  fSceneInstance.fImageListLock.Acquire;
+  try
+   if (aSourceTexture.Source>=0) and (aSourceTexture.Source<aImageMap.Count) then begin
+    fImage:=aImageMap[aSourceTexture.Source];
+   end else begin
+    fImage:=nil;
+  //raise EPasGLTFInvalidDocument.Create('Image index out of range');
+   end;
+   if assigned(fImage) then begin
+    fImage.IncRef;
+   end;
+  finally
+   fSceneInstance.fImageListLock.Release;
+  end;
+
+  fSceneInstance.fSamplerListLock.Acquire;
+  try
+   if (aSourceTexture.Sampler>=0) and (aSourceTexture.Sampler<aSamplerMap.Count) then begin
+    fSampler:=aSamplerMap[aSourceTexture.Sampler];
+   end else begin
+    fSampler:=SceneInstance.fDefaultSampler;
+  //raise EPasGLTFInvalidDocument.Create('Sampler index out of range');
+   end;
+   if assigned(fSampler) then begin
+    fSampler.IncRef;
+   end;
+  finally
+   fSceneInstance.fSamplerListLock.Release;
+  end;
+
+
+ finally
+  fSceneInstance.fTextureListLock.Release;
  end;
 
 end;
@@ -4359,6 +4469,7 @@ begin
    fSceneInstance.fMaterialIDHashMap.Add(fID,self);
    if (fID>0) and (fID<$10000) then begin
     fSceneInstance.fMaterialIDMap[fID]:=self;
+    TPasMPInterlocked.BitwiseOr(fSceneInstance.fMaterialIDDirtyMap[fID shr 5],TPasMPUInt32(1) shl (fID and 31));
    end;
   finally
    fSceneInstance.fMaterialListLock.Release;
@@ -4387,6 +4498,7 @@ begin
     if fID>0 then begin
      if fID<$10000 then begin
       fSceneInstance.fMaterialIDMap[fID]:=nil;
+      TPasMPInterlocked.BitwiseOr(fSceneInstance.fMaterialIDDirtyMap[fID shr 5],TPasMPUInt32(1) shl (fID and 31));
      end;
      if fSceneInstance.fMaterialIDHashMap[fID]=self then begin
       fSceneInstance.fMaterialIDHashMap.Delete(fID);
@@ -4712,9 +4824,70 @@ end;
 
 procedure TpvScene3D.TMaterial.Assign(const aFrom:TMaterial);
 begin
- fName:=aFrom.fName;
- fData:=aFrom.fData;
- fShaderData:=aFrom.fShaderData;
+ fSceneInstance.fTextureListLock.Acquire;
+ try
+  fName:=aFrom.fName;
+  fData:=aFrom.fData;
+  fShaderData:=aFrom.fShaderData;
+  begin
+   if assigned(fData.EmissiveTexture.Texture) then begin
+    fData.EmissiveTexture.Texture.IncRef;
+   end;
+   if assigned(fData.NormalTexture.Texture) then begin
+    fData.NormalTexture.Texture.IncRef;
+   end;
+   if assigned(fData.OcclusionTexture.Texture) then begin
+    fData.OcclusionTexture.Texture.IncRef;
+   end;
+   if assigned(fData.PBRMetallicRoughness.BaseColorTexture.Texture) then begin
+    fData.PBRMetallicRoughness.BaseColorTexture.Texture.IncRef;
+   end;
+   if assigned(fData.PBRMetallicRoughness.MetallicRoughnessTexture.Texture) then begin
+    fData.PBRMetallicRoughness.MetallicRoughnessTexture.Texture.IncRef;
+   end;
+   if assigned(fData.PBRMetallicRoughness.SpecularTexture.Texture) then begin
+    fData.PBRMetallicRoughness.SpecularTexture.Texture.IncRef;
+   end;
+   if assigned(fData.PBRMetallicRoughness.SpecularColorTexture.Texture) then begin
+    fData.PBRMetallicRoughness.SpecularColorTexture.Texture.IncRef;
+   end;
+   if assigned(fData.PBRSpecularGlossiness.DiffuseTexture.Texture) then begin
+    fData.PBRSpecularGlossiness.DiffuseTexture.Texture.IncRef;
+   end;
+   if assigned(fData.PBRSpecularGlossiness.SpecularGlossinessTexture.Texture) then begin
+    fData.PBRSpecularGlossiness.SpecularGlossinessTexture.Texture.IncRef;
+   end;
+   if assigned(fData.PBRSheen.ColorTexture.Texture) then begin
+    fData.PBRSheen.ColorTexture.Texture.IncRef;
+   end;
+   if assigned(fData.PBRSheen.RoughnessTexture.Texture) then begin
+    fData.PBRSheen.RoughnessTexture.Texture.IncRef;
+   end;
+   if assigned(fData.PBRClearCoat.Texture.Texture) then begin
+    fData.PBRClearCoat.Texture.Texture.IncRef;
+   end;
+   if assigned(fData.PBRClearCoat.RoughnessTexture.Texture) then begin
+    fData.PBRClearCoat.RoughnessTexture.Texture.IncRef;
+   end;
+   if assigned(fData.PBRClearCoat.NormalTexture.Texture) then begin
+    fData.PBRClearCoat.NormalTexture.Texture.IncRef;
+   end;
+   if assigned(fData.Iridescence.Texture.Texture) then begin
+    fData.Iridescence.Texture.Texture.IncRef;
+   end;
+   if assigned(fData.Iridescence.ThicknessTexture.Texture) then begin
+    fData.Iridescence.ThicknessTexture.Texture.IncRef;
+   end;
+   if assigned(fData.Transmission.Texture.Texture) then begin
+    fData.Transmission.Texture.Texture.IncRef;
+   end;
+   if assigned(fData.Volume.ThicknessTexture.Texture) then begin
+    fData.Volume.ThicknessTexture.Texture.IncRef;
+   end;
+  end;
+ finally
+  fSceneInstance.fTextureListLock.Release;
+ end;
 end;
 
 procedure TpvScene3D.TMaterial.AssignFromEmpty;
@@ -4738,403 +4911,410 @@ begin
 
  fVisible:=true;
 
- begin
-  fData.AlphaCutOff:=aSourceMaterial.AlphaCutOff;
-  case aSourceMaterial.AlphaMode of
-   TPasGLTF.TMaterial.TAlphaMode.Opaque:begin
-    fData.AlphaMode:=TpvScene3D.TMaterial.TAlphaMode.Opaque;
-   end;
-   TPasGLTF.TMaterial.TAlphaMode.Mask:begin
-    fData.AlphaMode:=TpvScene3D.TMaterial.TAlphaMode.Mask;
-   end;
-   TPasGLTF.TMaterial.TAlphaMode.Blend:begin
-    fData.AlphaMode:=TpvScene3D.TMaterial.TAlphaMode.Blend;
-   end;
-  end;
-  fData.DoubleSided:=aSourceMaterial.DoubleSided;
-  fData.EmissiveFactor:=TpvVector4.InlineableCreate(aSourceMaterial.EmissiveFactor[0],aSourceMaterial.EmissiveFactor[1],aSourceMaterial.EmissiveFactor[2],1.0);
-  if (aSourceMaterial.EmissiveTexture.Index>=0) and (aSourceMaterial.EmissiveTexture.Index<aTextureMap.Count) then begin
-   fData.EmissiveTexture.Texture:=aTextureMap[aSourceMaterial.EmissiveTexture.Index];
-   if assigned(fData.EmissiveTexture.Texture) then begin
-    fData.EmissiveTexture.Texture.IncRef;
-   end;
-  end else begin
-   fData.EmissiveTexture.Texture:=nil;
-  end;
-  fData.EmissiveTexture.TexCoord:=aSourceMaterial.EmissiveTexture.TexCoord;
-  fData.EmissiveTexture.Transform.AssignFromGLTF(fData.EmissiveTexture,aSourceMaterial.EmissiveTexture.Extensions);
-  if (aSourceMaterial.NormalTexture.Index>=0) and (aSourceMaterial.NormalTexture.Index<aTextureMap.Count) then begin
-   fData.NormalTexture.Texture:=aTextureMap[aSourceMaterial.NormalTexture.Index];
-   if assigned(fData.NormalTexture.Texture) then begin
-    fData.NormalTexture.Texture.IncRef;
-   end;
-  end else begin
-   fData.NormalTexture.Texture:=nil;
-  end;
-  fData.NormalTexture.TexCoord:=aSourceMaterial.NormalTexture.TexCoord;
-  fData.NormalTexture.Transform.AssignFromGLTF(fData.NormalTexture,aSourceMaterial.NormalTexture.Extensions);
-  fData.NormalTextureScale:=aSourceMaterial.NormalTexture.Scale;
-  if (aSourceMaterial.OcclusionTexture.Index>=0) and (aSourceMaterial.OcclusionTexture.Index<aTextureMap.Count) then begin
-   fData.OcclusionTexture.Texture:=aTextureMap[aSourceMaterial.OcclusionTexture.Index];
-   if assigned(fData.OcclusionTexture.Texture) then begin
-    fData.OcclusionTexture.Texture.IncRef;
-   end;
-  end else begin
-   fData.OcclusionTexture.Texture:=nil;
-  end;
-  fData.OcclusionTexture.TexCoord:=aSourceMaterial.OcclusionTexture.TexCoord;
-  fData.OcclusionTexture.Transform.AssignFromGLTF(fData.OcclusionTexture,aSourceMaterial.OcclusionTexture.Extensions);
-  fData.OcclusionTextureStrength:=aSourceMaterial.OcclusionTexture.Strength;
- end;
+ fSceneInstance.fTextureListLock.Acquire;
+ try
 
- begin
-  fData.PBRMetallicRoughness.BaseColorFactor:=TpvVector4.InlineableCreate(aSourceMaterial.PBRMetallicRoughness.BaseColorFactor[0],aSourceMaterial.PBRMetallicRoughness.BaseColorFactor[1],aSourceMaterial.PBRMetallicRoughness.BaseColorFactor[2],aSourceMaterial.PBRMetallicRoughness.BaseColorFactor[3]);
-  if (aSourceMaterial.PBRMetallicRoughness.BaseColorTexture.Index>=0) and (aSourceMaterial.PBRMetallicRoughness.BaseColorTexture.Index<aTextureMap.Count) then begin
-   fData.PBRMetallicRoughness.BaseColorTexture.Texture:=aTextureMap[aSourceMaterial.PBRMetallicRoughness.BaseColorTexture.Index];
-   if assigned(fData.PBRMetallicRoughness.BaseColorTexture.Texture) then begin
-    fData.PBRMetallicRoughness.BaseColorTexture.Texture.IncRef;
+  begin
+   fData.AlphaCutOff:=aSourceMaterial.AlphaCutOff;
+   case aSourceMaterial.AlphaMode of
+    TPasGLTF.TMaterial.TAlphaMode.Opaque:begin
+     fData.AlphaMode:=TpvScene3D.TMaterial.TAlphaMode.Opaque;
+    end;
+    TPasGLTF.TMaterial.TAlphaMode.Mask:begin
+     fData.AlphaMode:=TpvScene3D.TMaterial.TAlphaMode.Mask;
+    end;
+    TPasGLTF.TMaterial.TAlphaMode.Blend:begin
+     fData.AlphaMode:=TpvScene3D.TMaterial.TAlphaMode.Blend;
+    end;
    end;
-  end else begin
-   fData.PBRMetallicRoughness.BaseColorTexture.Texture:=nil;
-  end;
-  fData.PBRMetallicRoughness.BaseColorTexture.TexCoord:=aSourceMaterial.PBRMetallicRoughness.BaseColorTexture.TexCoord;
-  fData.PBRMetallicRoughness.BaseColorTexture.Transform.AssignFromGLTF(fData.PBRMetallicRoughness.BaseColorTexture,aSourceMaterial.PBRMetallicRoughness.BaseColorTexture.Extensions);
-  fData.PBRMetallicRoughness.RoughnessFactor:=aSourceMaterial.PBRMetallicRoughness.RoughnessFactor;
-  fData.PBRMetallicRoughness.MetallicFactor:=aSourceMaterial.PBRMetallicRoughness.MetallicFactor;
-  if (aSourceMaterial.PBRMetallicRoughness.MetallicRoughnessTexture.Index>=0) and (aSourceMaterial.PBRMetallicRoughness.MetallicRoughnessTexture.Index<aTextureMap.Count) then begin
-   fData.PBRMetallicRoughness.MetallicRoughnessTexture.Texture:=aTextureMap[aSourceMaterial.PBRMetallicRoughness.MetallicRoughnessTexture.Index];
-   if assigned(fData.PBRMetallicRoughness.MetallicRoughnessTexture.Texture) then begin
-    fData.PBRMetallicRoughness.MetallicRoughnessTexture.Texture.IncRef;
+   fData.DoubleSided:=aSourceMaterial.DoubleSided;
+   fData.EmissiveFactor:=TpvVector4.InlineableCreate(aSourceMaterial.EmissiveFactor[0],aSourceMaterial.EmissiveFactor[1],aSourceMaterial.EmissiveFactor[2],1.0);
+   if (aSourceMaterial.EmissiveTexture.Index>=0) and (aSourceMaterial.EmissiveTexture.Index<aTextureMap.Count) then begin
+    fData.EmissiveTexture.Texture:=aTextureMap[aSourceMaterial.EmissiveTexture.Index];
+    if assigned(fData.EmissiveTexture.Texture) then begin
+     fData.EmissiveTexture.Texture.IncRef;
+    end;
+   end else begin
+    fData.EmissiveTexture.Texture:=nil;
    end;
-  end else begin
-   fData.PBRMetallicRoughness.MetallicRoughnessTexture.Texture:=nil;
+   fData.EmissiveTexture.TexCoord:=aSourceMaterial.EmissiveTexture.TexCoord;
+   fData.EmissiveTexture.Transform.AssignFromGLTF(fData.EmissiveTexture,aSourceMaterial.EmissiveTexture.Extensions);
+   if (aSourceMaterial.NormalTexture.Index>=0) and (aSourceMaterial.NormalTexture.Index<aTextureMap.Count) then begin
+    fData.NormalTexture.Texture:=aTextureMap[aSourceMaterial.NormalTexture.Index];
+    if assigned(fData.NormalTexture.Texture) then begin
+     fData.NormalTexture.Texture.IncRef;
+    end;
+   end else begin
+    fData.NormalTexture.Texture:=nil;
+   end;
+   fData.NormalTexture.TexCoord:=aSourceMaterial.NormalTexture.TexCoord;
+   fData.NormalTexture.Transform.AssignFromGLTF(fData.NormalTexture,aSourceMaterial.NormalTexture.Extensions);
+   fData.NormalTextureScale:=aSourceMaterial.NormalTexture.Scale;
+   if (aSourceMaterial.OcclusionTexture.Index>=0) and (aSourceMaterial.OcclusionTexture.Index<aTextureMap.Count) then begin
+    fData.OcclusionTexture.Texture:=aTextureMap[aSourceMaterial.OcclusionTexture.Index];
+    if assigned(fData.OcclusionTexture.Texture) then begin
+     fData.OcclusionTexture.Texture.IncRef;
+    end;
+   end else begin
+    fData.OcclusionTexture.Texture:=nil;
+   end;
+   fData.OcclusionTexture.TexCoord:=aSourceMaterial.OcclusionTexture.TexCoord;
+   fData.OcclusionTexture.Transform.AssignFromGLTF(fData.OcclusionTexture,aSourceMaterial.OcclusionTexture.Extensions);
+   fData.OcclusionTextureStrength:=aSourceMaterial.OcclusionTexture.Strength;
   end;
-  fData.PBRMetallicRoughness.MetallicRoughnessTexture.TexCoord:=aSourceMaterial.PBRMetallicRoughness.MetallicRoughnessTexture.TexCoord;
-  fData.PBRMetallicRoughness.MetallicRoughnessTexture.Transform.AssignFromGLTF(fData.PBRMetallicRoughness.MetallicRoughnessTexture,aSourceMaterial.PBRMetallicRoughness.MetallicRoughnessTexture.Extensions);
-  JSONItem:=aSourceMaterial.Extensions.Properties['KHR_materials_specular'];
-  if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
-   JSONObject:=TPasJSONItemObject(JSONItem);
-   fData.PBRMetallicRoughness.SpecularFactor:=TPasJSON.GetNumber(JSONObject.Properties['specularFactor'],1.0);
-   JSONItem:=JSONObject.Properties['specularTexture'];
+
+  begin
+   fData.PBRMetallicRoughness.BaseColorFactor:=TpvVector4.InlineableCreate(aSourceMaterial.PBRMetallicRoughness.BaseColorFactor[0],aSourceMaterial.PBRMetallicRoughness.BaseColorFactor[1],aSourceMaterial.PBRMetallicRoughness.BaseColorFactor[2],aSourceMaterial.PBRMetallicRoughness.BaseColorFactor[3]);
+   if (aSourceMaterial.PBRMetallicRoughness.BaseColorTexture.Index>=0) and (aSourceMaterial.PBRMetallicRoughness.BaseColorTexture.Index<aTextureMap.Count) then begin
+    fData.PBRMetallicRoughness.BaseColorTexture.Texture:=aTextureMap[aSourceMaterial.PBRMetallicRoughness.BaseColorTexture.Index];
+    if assigned(fData.PBRMetallicRoughness.BaseColorTexture.Texture) then begin
+     fData.PBRMetallicRoughness.BaseColorTexture.Texture.IncRef;
+    end;
+   end else begin
+    fData.PBRMetallicRoughness.BaseColorTexture.Texture:=nil;
+   end;
+   fData.PBRMetallicRoughness.BaseColorTexture.TexCoord:=aSourceMaterial.PBRMetallicRoughness.BaseColorTexture.TexCoord;
+   fData.PBRMetallicRoughness.BaseColorTexture.Transform.AssignFromGLTF(fData.PBRMetallicRoughness.BaseColorTexture,aSourceMaterial.PBRMetallicRoughness.BaseColorTexture.Extensions);
+   fData.PBRMetallicRoughness.RoughnessFactor:=aSourceMaterial.PBRMetallicRoughness.RoughnessFactor;
+   fData.PBRMetallicRoughness.MetallicFactor:=aSourceMaterial.PBRMetallicRoughness.MetallicFactor;
+   if (aSourceMaterial.PBRMetallicRoughness.MetallicRoughnessTexture.Index>=0) and (aSourceMaterial.PBRMetallicRoughness.MetallicRoughnessTexture.Index<aTextureMap.Count) then begin
+    fData.PBRMetallicRoughness.MetallicRoughnessTexture.Texture:=aTextureMap[aSourceMaterial.PBRMetallicRoughness.MetallicRoughnessTexture.Index];
+    if assigned(fData.PBRMetallicRoughness.MetallicRoughnessTexture.Texture) then begin
+     fData.PBRMetallicRoughness.MetallicRoughnessTexture.Texture.IncRef;
+    end;
+   end else begin
+    fData.PBRMetallicRoughness.MetallicRoughnessTexture.Texture:=nil;
+   end;
+   fData.PBRMetallicRoughness.MetallicRoughnessTexture.TexCoord:=aSourceMaterial.PBRMetallicRoughness.MetallicRoughnessTexture.TexCoord;
+   fData.PBRMetallicRoughness.MetallicRoughnessTexture.Transform.AssignFromGLTF(fData.PBRMetallicRoughness.MetallicRoughnessTexture,aSourceMaterial.PBRMetallicRoughness.MetallicRoughnessTexture.Extensions);
+   JSONItem:=aSourceMaterial.Extensions.Properties['KHR_materials_specular'];
    if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
-    Index:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['index'],-1);
-    if (Index>=0) and (Index<aTextureMap.Count) then begin
-     fData.PBRMetallicRoughness.SpecularTexture.Texture:=aTextureMap[Index];
-     if assigned(fData.PBRMetallicRoughness.SpecularTexture.Texture) then begin
-      fData.PBRMetallicRoughness.SpecularTexture.Texture.IncRef;
-     end;
-    end else begin
-     fData.PBRMetallicRoughness.SpecularTexture.Texture:=nil;
-    end;
-    fData.PBRMetallicRoughness.SpecularTexture.TexCoord:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['texCoord'],fData.PBRMetallicRoughness.SpecularTexture.TexCoord);
-    fData.PBRMetallicRoughness.SpecularTexture.Transform.AssignFromGLTF(fData.PBRMetallicRoughness.SpecularTexture,TPasJSONItemObject(JSONItem).Properties['extensions']);
-   end;
-   JSONItem:=JSONObject.Properties['specularColorFactor'];
-   if assigned(JSONItem) and (JSONItem is TPasJSONItemArray) and (TPasJSONItemArray(JSONItem).Count=3) then begin
-    fData.PBRMetallicRoughness.SpecularColorFactor[0]:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[0],fData.PBRSpecularGlossiness.DiffuseFactor[0]);
-    fData.PBRMetallicRoughness.SpecularColorFactor[1]:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[1],fData.PBRSpecularGlossiness.DiffuseFactor[1]);
-    fData.PBRMetallicRoughness.SpecularColorFactor[2]:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[2],fData.PBRSpecularGlossiness.DiffuseFactor[2]);
-   end;
-   JSONItem:=JSONObject.Properties['specularColorTexture'];
-   if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
-    Index:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['index'],-1);
-    if (Index>=0) and (Index<aTextureMap.Count) then begin
-     fData.PBRMetallicRoughness.SpecularColorTexture.Texture:=aTextureMap[Index];
-     if assigned(fData.PBRMetallicRoughness.SpecularColorTexture.Texture) then begin
-      fData.PBRMetallicRoughness.SpecularColorTexture.Texture.IncRef;
-     end;
-    end else begin
-     fData.PBRMetallicRoughness.SpecularColorTexture.Texture:=nil;
-    end;
-    fData.PBRMetallicRoughness.SpecularColorTexture.TexCoord:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['texCoord'],fData.PBRMetallicRoughness.SpecularColorTexture.TexCoord);
-    fData.PBRMetallicRoughness.SpecularColorTexture.Transform.AssignFromGLTF(fData.PBRMetallicRoughness.SpecularColorTexture,TPasJSONItemObject(JSONItem).Properties['extensions']);
-   end;
-  end;
- end;
- JSONItem:=aSourceMaterial.Extensions.Properties['KHR_materials_unlit'];
- if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
-  fData.ShadingModel:=TMaterial.TShadingModel.Unlit;
-  if IsZero(fData.PBRMetallicRoughness.BaseColorFactor.w) and (fData.AlphaMode=TpvScene3D.TMaterial.TAlphaMode.Blend) then begin
-   fVisible:=false;
-  end;
- end else begin
-  JSONItem:=aSourceMaterial.Extensions.Properties['KHR_materials_pbrSpecularGlossiness'];
-  if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
-   JSONObject:=TPasJSONItemObject(JSONItem);
-   fData.ShadingModel:=TMaterial.TShadingModel.PBRSpecularGlossiness;
-   fData.PBRSpecularGlossiness.DiffuseFactor:=TpvVector4.InlineableCreate(TPasGLTF.TDefaults.IdentityVector4[0],TPasGLTF.TDefaults.IdentityVector4[1],TPasGLTF.TDefaults.IdentityVector4[2],TPasGLTF.TDefaults.IdentityVector4[3]);
-   fData.PBRSpecularGlossiness.DiffuseTexture.Texture:=nil;
-   fData.PBRSpecularGlossiness.DiffuseTexture.TexCoord:=0;
-   fData.PBRSpecularGlossiness.GlossinessFactor:=TPasGLTF.TDefaults.IdentityScalar;
-   fData.PBRSpecularGlossiness.SpecularFactor:=TpvVector3.InlineableCreate(TPasGLTF.TDefaults.IdentityVector3[0],TPasGLTF.TDefaults.IdentityVector3[1],TPasGLTF.TDefaults.IdentityVector3[2]);
-   fData.PBRSpecularGlossiness.SpecularGlossinessTexture.Texture:=nil;
-   fData.PBRSpecularGlossiness.SpecularGlossinessTexture.TexCoord:=0;
-   begin
-    JSONItem:=JSONObject.Properties['diffuseFactor'];
-    if assigned(JSONItem) and (JSONItem is TPasJSONItemArray) and (TPasJSONItemArray(JSONItem).Count=4) then begin
-     fData.PBRSpecularGlossiness.DiffuseFactor[0]:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[0],fData.PBRSpecularGlossiness.DiffuseFactor[0]);
-     fData.PBRSpecularGlossiness.DiffuseFactor[1]:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[1],fData.PBRSpecularGlossiness.DiffuseFactor[1]);
-     fData.PBRSpecularGlossiness.DiffuseFactor[2]:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[2],fData.PBRSpecularGlossiness.DiffuseFactor[2]);
-     fData.PBRSpecularGlossiness.DiffuseFactor[3]:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[3],fData.PBRSpecularGlossiness.DiffuseFactor[3]);
-    end;
-    JSONItem:=JSONObject.Properties['diffuseTexture'];
+    JSONObject:=TPasJSONItemObject(JSONItem);
+    fData.PBRMetallicRoughness.SpecularFactor:=TPasJSON.GetNumber(JSONObject.Properties['specularFactor'],1.0);
+    JSONItem:=JSONObject.Properties['specularTexture'];
     if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
      Index:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['index'],-1);
      if (Index>=0) and (Index<aTextureMap.Count) then begin
-      fData.PBRSpecularGlossiness.DiffuseTexture.Texture:=aTextureMap[Index];
-      if assigned(fData.PBRSpecularGlossiness.DiffuseTexture.Texture) then begin
-       fData.PBRSpecularGlossiness.DiffuseTexture.Texture.IncRef;
+      fData.PBRMetallicRoughness.SpecularTexture.Texture:=aTextureMap[Index];
+      if assigned(fData.PBRMetallicRoughness.SpecularTexture.Texture) then begin
+       fData.PBRMetallicRoughness.SpecularTexture.Texture.IncRef;
       end;
      end else begin
-      fData.PBRSpecularGlossiness.DiffuseTexture.Texture:=nil;
+      fData.PBRMetallicRoughness.SpecularTexture.Texture:=nil;
      end;
-     fData.PBRSpecularGlossiness.DiffuseTexture.TexCoord:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['texCoord'],fData.PBRSpecularGlossiness.DiffuseTexture.TexCoord);
-     fData.PBRSpecularGlossiness.DiffuseTexture.Transform.AssignFromGLTF(fData.PBRSpecularGlossiness.DiffuseTexture,TPasJSONItemObject(JSONItem).Properties['extensions']);
+     fData.PBRMetallicRoughness.SpecularTexture.TexCoord:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['texCoord'],fData.PBRMetallicRoughness.SpecularTexture.TexCoord);
+     fData.PBRMetallicRoughness.SpecularTexture.Transform.AssignFromGLTF(fData.PBRMetallicRoughness.SpecularTexture,TPasJSONItemObject(JSONItem).Properties['extensions']);
     end;
-    fData.PBRSpecularGlossiness.GlossinessFactor:=TPasJSON.GetNumber(JSONObject.Properties['glossinessFactor'],fData.PBRSpecularGlossiness.GlossinessFactor);
-    JSONItem:=JSONObject.Properties['specularFactor'];
+    JSONItem:=JSONObject.Properties['specularColorFactor'];
     if assigned(JSONItem) and (JSONItem is TPasJSONItemArray) and (TPasJSONItemArray(JSONItem).Count=3) then begin
-     fData.PBRSpecularGlossiness.SpecularFactor[0]:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[0],fData.PBRSpecularGlossiness.SpecularFactor[0]);
-     fData.PBRSpecularGlossiness.SpecularFactor[1]:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[1],fData.PBRSpecularGlossiness.SpecularFactor[1]);
-     fData.PBRSpecularGlossiness.SpecularFactor[2]:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[2],fData.PBRSpecularGlossiness.SpecularFactor[2]);
+     fData.PBRMetallicRoughness.SpecularColorFactor[0]:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[0],fData.PBRSpecularGlossiness.DiffuseFactor[0]);
+     fData.PBRMetallicRoughness.SpecularColorFactor[1]:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[1],fData.PBRSpecularGlossiness.DiffuseFactor[1]);
+     fData.PBRMetallicRoughness.SpecularColorFactor[2]:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[2],fData.PBRSpecularGlossiness.DiffuseFactor[2]);
     end;
-    JSONItem:=JSONObject.Properties['specularGlossinessTexture'];
+    JSONItem:=JSONObject.Properties['specularColorTexture'];
     if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
      Index:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['index'],-1);
      if (Index>=0) and (Index<aTextureMap.Count) then begin
-      fData.PBRSpecularGlossiness.SpecularGlossinessTexture.Texture:=aTextureMap[Index];
-      if assigned(fData.PBRSpecularGlossiness.SpecularGlossinessTexture.Texture) then begin
-       fData.PBRSpecularGlossiness.SpecularGlossinessTexture.Texture.IncRef;
+      fData.PBRMetallicRoughness.SpecularColorTexture.Texture:=aTextureMap[Index];
+      if assigned(fData.PBRMetallicRoughness.SpecularColorTexture.Texture) then begin
+       fData.PBRMetallicRoughness.SpecularColorTexture.Texture.IncRef;
       end;
      end else begin
-      fData.PBRSpecularGlossiness.SpecularGlossinessTexture.Texture:=nil;
+      fData.PBRMetallicRoughness.SpecularColorTexture.Texture:=nil;
      end;
-     fData.PBRSpecularGlossiness.SpecularGlossinessTexture.TexCoord:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['texCoord'],fData.PBRSpecularGlossiness.SpecularGlossinessTexture.TexCoord);
-     fData.PBRSpecularGlossiness.SpecularGlossinessTexture.Transform.AssignFromGLTF(fData.PBRSpecularGlossiness.SpecularGlossinessTexture,TPasJSONItemObject(JSONItem).Properties['extensions']);
+     fData.PBRMetallicRoughness.SpecularColorTexture.TexCoord:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['texCoord'],fData.PBRMetallicRoughness.SpecularColorTexture.TexCoord);
+     fData.PBRMetallicRoughness.SpecularColorTexture.Transform.AssignFromGLTF(fData.PBRMetallicRoughness.SpecularColorTexture,TPasJSONItemObject(JSONItem).Properties['extensions']);
     end;
    end;
-   if IsZero(fData.PBRSpecularGlossiness.DiffuseFactor.w) and (fData.AlphaMode=TpvScene3D.TMaterial.TAlphaMode.Blend) then begin
-    fVisible:=false;
-   end;
-  end else begin
-   fData.ShadingModel:=TMaterial.TShadingModel.PBRMetallicRoughness;
+  end;
+  JSONItem:=aSourceMaterial.Extensions.Properties['KHR_materials_unlit'];
+  if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
+   fData.ShadingModel:=TMaterial.TShadingModel.Unlit;
    if IsZero(fData.PBRMetallicRoughness.BaseColorFactor.w) and (fData.AlphaMode=TpvScene3D.TMaterial.TAlphaMode.Blend) then begin
     fVisible:=false;
    end;
+  end else begin
+   JSONItem:=aSourceMaterial.Extensions.Properties['KHR_materials_pbrSpecularGlossiness'];
+   if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
+    JSONObject:=TPasJSONItemObject(JSONItem);
+    fData.ShadingModel:=TMaterial.TShadingModel.PBRSpecularGlossiness;
+    fData.PBRSpecularGlossiness.DiffuseFactor:=TpvVector4.InlineableCreate(TPasGLTF.TDefaults.IdentityVector4[0],TPasGLTF.TDefaults.IdentityVector4[1],TPasGLTF.TDefaults.IdentityVector4[2],TPasGLTF.TDefaults.IdentityVector4[3]);
+    fData.PBRSpecularGlossiness.DiffuseTexture.Texture:=nil;
+    fData.PBRSpecularGlossiness.DiffuseTexture.TexCoord:=0;
+    fData.PBRSpecularGlossiness.GlossinessFactor:=TPasGLTF.TDefaults.IdentityScalar;
+    fData.PBRSpecularGlossiness.SpecularFactor:=TpvVector3.InlineableCreate(TPasGLTF.TDefaults.IdentityVector3[0],TPasGLTF.TDefaults.IdentityVector3[1],TPasGLTF.TDefaults.IdentityVector3[2]);
+    fData.PBRSpecularGlossiness.SpecularGlossinessTexture.Texture:=nil;
+    fData.PBRSpecularGlossiness.SpecularGlossinessTexture.TexCoord:=0;
+    begin
+     JSONItem:=JSONObject.Properties['diffuseFactor'];
+     if assigned(JSONItem) and (JSONItem is TPasJSONItemArray) and (TPasJSONItemArray(JSONItem).Count=4) then begin
+      fData.PBRSpecularGlossiness.DiffuseFactor[0]:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[0],fData.PBRSpecularGlossiness.DiffuseFactor[0]);
+      fData.PBRSpecularGlossiness.DiffuseFactor[1]:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[1],fData.PBRSpecularGlossiness.DiffuseFactor[1]);
+      fData.PBRSpecularGlossiness.DiffuseFactor[2]:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[2],fData.PBRSpecularGlossiness.DiffuseFactor[2]);
+      fData.PBRSpecularGlossiness.DiffuseFactor[3]:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[3],fData.PBRSpecularGlossiness.DiffuseFactor[3]);
+     end;
+     JSONItem:=JSONObject.Properties['diffuseTexture'];
+     if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
+      Index:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['index'],-1);
+      if (Index>=0) and (Index<aTextureMap.Count) then begin
+       fData.PBRSpecularGlossiness.DiffuseTexture.Texture:=aTextureMap[Index];
+       if assigned(fData.PBRSpecularGlossiness.DiffuseTexture.Texture) then begin
+        fData.PBRSpecularGlossiness.DiffuseTexture.Texture.IncRef;
+       end;
+      end else begin
+       fData.PBRSpecularGlossiness.DiffuseTexture.Texture:=nil;
+      end;
+      fData.PBRSpecularGlossiness.DiffuseTexture.TexCoord:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['texCoord'],fData.PBRSpecularGlossiness.DiffuseTexture.TexCoord);
+      fData.PBRSpecularGlossiness.DiffuseTexture.Transform.AssignFromGLTF(fData.PBRSpecularGlossiness.DiffuseTexture,TPasJSONItemObject(JSONItem).Properties['extensions']);
+     end;
+     fData.PBRSpecularGlossiness.GlossinessFactor:=TPasJSON.GetNumber(JSONObject.Properties['glossinessFactor'],fData.PBRSpecularGlossiness.GlossinessFactor);
+     JSONItem:=JSONObject.Properties['specularFactor'];
+     if assigned(JSONItem) and (JSONItem is TPasJSONItemArray) and (TPasJSONItemArray(JSONItem).Count=3) then begin
+      fData.PBRSpecularGlossiness.SpecularFactor[0]:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[0],fData.PBRSpecularGlossiness.SpecularFactor[0]);
+      fData.PBRSpecularGlossiness.SpecularFactor[1]:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[1],fData.PBRSpecularGlossiness.SpecularFactor[1]);
+      fData.PBRSpecularGlossiness.SpecularFactor[2]:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[2],fData.PBRSpecularGlossiness.SpecularFactor[2]);
+     end;
+     JSONItem:=JSONObject.Properties['specularGlossinessTexture'];
+     if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
+      Index:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['index'],-1);
+      if (Index>=0) and (Index<aTextureMap.Count) then begin
+       fData.PBRSpecularGlossiness.SpecularGlossinessTexture.Texture:=aTextureMap[Index];
+       if assigned(fData.PBRSpecularGlossiness.SpecularGlossinessTexture.Texture) then begin
+        fData.PBRSpecularGlossiness.SpecularGlossinessTexture.Texture.IncRef;
+       end;
+      end else begin
+       fData.PBRSpecularGlossiness.SpecularGlossinessTexture.Texture:=nil;
+      end;
+      fData.PBRSpecularGlossiness.SpecularGlossinessTexture.TexCoord:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['texCoord'],fData.PBRSpecularGlossiness.SpecularGlossinessTexture.TexCoord);
+      fData.PBRSpecularGlossiness.SpecularGlossinessTexture.Transform.AssignFromGLTF(fData.PBRSpecularGlossiness.SpecularGlossinessTexture,TPasJSONItemObject(JSONItem).Properties['extensions']);
+     end;
+    end;
+    if IsZero(fData.PBRSpecularGlossiness.DiffuseFactor.w) and (fData.AlphaMode=TpvScene3D.TMaterial.TAlphaMode.Blend) then begin
+     fVisible:=false;
+    end;
+   end else begin
+    fData.ShadingModel:=TMaterial.TShadingModel.PBRMetallicRoughness;
+    if IsZero(fData.PBRMetallicRoughness.BaseColorFactor.w) and (fData.AlphaMode=TpvScene3D.TMaterial.TAlphaMode.Blend) then begin
+     fVisible:=false;
+    end;
+   end;
   end;
- end;
 
- begin
-  JSONItem:=aSourceMaterial.Extensions.Properties['KHR_materials_emissive_strength'];
-  if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
-   JSONObject:=TPasJSONItemObject(JSONItem);
-   fData.EmissiveFactor.w:=TPasJSON.GetNumber(JSONObject.Properties['emissiveStrength'],1.0);
+  begin
+   JSONItem:=aSourceMaterial.Extensions.Properties['KHR_materials_emissive_strength'];
+   if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
+    JSONObject:=TPasJSONItemObject(JSONItem);
+    fData.EmissiveFactor.w:=TPasJSON.GetNumber(JSONObject.Properties['emissiveStrength'],1.0);
+   end;
   end;
- end;
 
- begin
-  JSONItem:=aSourceMaterial.Extensions.Properties['KHR_materials_sheen'];
-  if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
-   JSONObject:=TPasJSONItemObject(JSONItem);
-   fVisible:=true;
-   fData.PBRSheen.Active:=true;
-   fData.PBRSheen.RoughnessFactor:=TPasJSON.GetNumber(JSONObject.Properties['sheenRoughnessFactor'],TPasJSON.GetNumber(JSONObject.Properties['intensityFactor'],TPasJSON.GetNumber(JSONObject.Properties['sheenFactor'],0.0)));
-   JSONItem:=JSONObject.Properties['sheenColorFactor'];
-   if not assigned(JSONItem) then begin
-    JSONItem:=JSONObject.Properties['sheenColor'];
-   end;
-   if assigned(JSONItem) and (JSONItem is TPasJSONItemArray) and (TPasJSONItemArray(JSONItem).Count=3) then begin
-    fData.PBRSheen.ColorFactor[0]:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[0],0.0);
-    fData.PBRSheen.ColorFactor[1]:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[1],0.0);
-    fData.PBRSheen.ColorFactor[2]:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[2],0.0);
-   end;
-   JSONItem:=JSONObject.Properties['sheenColorTexture'];
+  begin
+   JSONItem:=aSourceMaterial.Extensions.Properties['KHR_materials_sheen'];
    if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
-    Index:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['index'],-1);
-    if (Index>=0) and (Index<aTextureMap.Count) then begin
-     fData.PBRSheen.ColorTexture.Texture:=aTextureMap[Index];
-     if assigned(fData.PBRSheen.ColorTexture.Texture) then begin
-      fData.PBRSheen.ColorTexture.Texture.IncRef;
-     end;
-    end else begin
-     fData.PBRSheen.ColorTexture.Texture:=nil;
+    JSONObject:=TPasJSONItemObject(JSONItem);
+    fVisible:=true;
+    fData.PBRSheen.Active:=true;
+    fData.PBRSheen.RoughnessFactor:=TPasJSON.GetNumber(JSONObject.Properties['sheenRoughnessFactor'],TPasJSON.GetNumber(JSONObject.Properties['intensityFactor'],TPasJSON.GetNumber(JSONObject.Properties['sheenFactor'],0.0)));
+    JSONItem:=JSONObject.Properties['sheenColorFactor'];
+    if not assigned(JSONItem) then begin
+     JSONItem:=JSONObject.Properties['sheenColor'];
     end;
-    fData.PBRSheen.ColorTexture.TexCoord:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['texCoord'],0);
-    fData.PBRSheen.ColorTexture.Transform.AssignFromGLTF(fData.PBRSheen.ColorTexture,TPasJSONItemObject(JSONItem).Properties['extensions']);
-   end;
-   JSONItem:=JSONObject.Properties['sheenRoughnessTexture'];
-   if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
-    Index:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['index'],-1);
-    if (Index>=0) and (Index<aTextureMap.Count) then begin
-     fData.PBRSheen.RoughnessTexture.Texture:=aTextureMap[Index];
-     if assigned(fData.PBRSheen.RoughnessTexture.Texture) then begin
-      fData.PBRSheen.RoughnessTexture.Texture.IncRef;
-     end;
-    end else begin
-     fData.PBRSheen.RoughnessTexture.Texture:=nil;
+    if assigned(JSONItem) and (JSONItem is TPasJSONItemArray) and (TPasJSONItemArray(JSONItem).Count=3) then begin
+     fData.PBRSheen.ColorFactor[0]:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[0],0.0);
+     fData.PBRSheen.ColorFactor[1]:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[1],0.0);
+     fData.PBRSheen.ColorFactor[2]:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[2],0.0);
     end;
-    fData.PBRSheen.RoughnessTexture.TexCoord:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['texCoord'],0);
-    fData.PBRSheen.RoughnessTexture.Transform.AssignFromGLTF(fData.PBRSheen.RoughnessTexture,TPasJSONItemObject(JSONItem).Properties['extensions']);
+    JSONItem:=JSONObject.Properties['sheenColorTexture'];
+    if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
+     Index:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['index'],-1);
+     if (Index>=0) and (Index<aTextureMap.Count) then begin
+      fData.PBRSheen.ColorTexture.Texture:=aTextureMap[Index];
+      if assigned(fData.PBRSheen.ColorTexture.Texture) then begin
+       fData.PBRSheen.ColorTexture.Texture.IncRef;
+      end;
+     end else begin
+      fData.PBRSheen.ColorTexture.Texture:=nil;
+     end;
+     fData.PBRSheen.ColorTexture.TexCoord:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['texCoord'],0);
+     fData.PBRSheen.ColorTexture.Transform.AssignFromGLTF(fData.PBRSheen.ColorTexture,TPasJSONItemObject(JSONItem).Properties['extensions']);
+    end;
+    JSONItem:=JSONObject.Properties['sheenRoughnessTexture'];
+    if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
+     Index:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['index'],-1);
+     if (Index>=0) and (Index<aTextureMap.Count) then begin
+      fData.PBRSheen.RoughnessTexture.Texture:=aTextureMap[Index];
+      if assigned(fData.PBRSheen.RoughnessTexture.Texture) then begin
+       fData.PBRSheen.RoughnessTexture.Texture.IncRef;
+      end;
+     end else begin
+      fData.PBRSheen.RoughnessTexture.Texture:=nil;
+     end;
+     fData.PBRSheen.RoughnessTexture.TexCoord:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['texCoord'],0);
+     fData.PBRSheen.RoughnessTexture.Transform.AssignFromGLTF(fData.PBRSheen.RoughnessTexture,TPasJSONItemObject(JSONItem).Properties['extensions']);
+    end;
    end;
   end;
- end;
 
- begin
-  JSONItem:=aSourceMaterial.Extensions.Properties['KHR_materials_clearcoat'];
-  if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
-   JSONObject:=TPasJSONItemObject(JSONItem);
-   fVisible:=true;
-   fData.PBRClearCoat.Active:=true;
-   fData.PBRClearCoat.Factor:=TPasJSON.GetNumber(JSONObject.Properties['intensityFactor'],TPasJSON.GetNumber(JSONObject.Properties['clearcoatFactor'],fData.PBRClearCoat.Factor));
-   JSONItem:=JSONObject.Properties['clearcoatTexture'];
+  begin
+   JSONItem:=aSourceMaterial.Extensions.Properties['KHR_materials_clearcoat'];
    if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
-    Index:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['index'],-1);
-    if (Index>=0) and (Index<aTextureMap.Count) then begin
-     fData.PBRClearCoat.Texture.Texture:=aTextureMap[Index];
-     if assigned(fData.PBRClearCoat.Texture.Texture) then begin
-      fData.PBRClearCoat.Texture.Texture.IncRef;
+    JSONObject:=TPasJSONItemObject(JSONItem);
+    fVisible:=true;
+    fData.PBRClearCoat.Active:=true;
+    fData.PBRClearCoat.Factor:=TPasJSON.GetNumber(JSONObject.Properties['intensityFactor'],TPasJSON.GetNumber(JSONObject.Properties['clearcoatFactor'],fData.PBRClearCoat.Factor));
+    JSONItem:=JSONObject.Properties['clearcoatTexture'];
+    if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
+     Index:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['index'],-1);
+     if (Index>=0) and (Index<aTextureMap.Count) then begin
+      fData.PBRClearCoat.Texture.Texture:=aTextureMap[Index];
+      if assigned(fData.PBRClearCoat.Texture.Texture) then begin
+       fData.PBRClearCoat.Texture.Texture.IncRef;
+      end;
+     end else begin
+      fData.PBRClearCoat.Texture.Texture:=nil;
      end;
-    end else begin
-     fData.PBRClearCoat.Texture.Texture:=nil;
+     fData.PBRClearCoat.Texture.TexCoord:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['texCoord'],0);
+     fData.PBRClearCoat.Texture.Transform.AssignFromGLTF(fData.PBRClearCoat.Texture,TPasJSONItemObject(JSONItem).Properties['extensions']);
     end;
-    fData.PBRClearCoat.Texture.TexCoord:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['texCoord'],0);
-    fData.PBRClearCoat.Texture.Transform.AssignFromGLTF(fData.PBRClearCoat.Texture,TPasJSONItemObject(JSONItem).Properties['extensions']);
-   end;
-   fData.PBRClearCoat.RoughnessFactor:=TPasJSON.GetNumber(JSONObject.Properties['intensityFactor'],TPasJSON.GetNumber(JSONObject.Properties['clearcoatRoughnessFactor'],fData.PBRClearCoat.RoughnessFactor));
-   JSONItem:=JSONObject.Properties['clearcoatRoughnessTexture'];
-   if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
-    Index:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['index'],-1);
-    if (Index>=0) and (Index<aTextureMap.Count) then begin
-     fData.PBRClearCoat.RoughnessTexture.Texture:=aTextureMap[Index];
-     if assigned(fData.PBRClearCoat.RoughnessTexture.Texture) then begin
-      fData.PBRClearCoat.RoughnessTexture.Texture.IncRef;
+    fData.PBRClearCoat.RoughnessFactor:=TPasJSON.GetNumber(JSONObject.Properties['intensityFactor'],TPasJSON.GetNumber(JSONObject.Properties['clearcoatRoughnessFactor'],fData.PBRClearCoat.RoughnessFactor));
+    JSONItem:=JSONObject.Properties['clearcoatRoughnessTexture'];
+    if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
+     Index:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['index'],-1);
+     if (Index>=0) and (Index<aTextureMap.Count) then begin
+      fData.PBRClearCoat.RoughnessTexture.Texture:=aTextureMap[Index];
+      if assigned(fData.PBRClearCoat.RoughnessTexture.Texture) then begin
+       fData.PBRClearCoat.RoughnessTexture.Texture.IncRef;
+      end;
+     end else begin
+      fData.PBRClearCoat.RoughnessTexture.Texture:=nil;
      end;
-    end else begin
-     fData.PBRClearCoat.RoughnessTexture.Texture:=nil;
+     fData.PBRClearCoat.RoughnessTexture.TexCoord:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['texCoord'],0);
+     fData.PBRClearCoat.RoughnessTexture.Transform.AssignFromGLTF(fData.PBRClearCoat.RoughnessTexture,TPasJSONItemObject(JSONItem).Properties['extensions']);
     end;
-    fData.PBRClearCoat.RoughnessTexture.TexCoord:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['texCoord'],0);
-    fData.PBRClearCoat.RoughnessTexture.Transform.AssignFromGLTF(fData.PBRClearCoat.RoughnessTexture,TPasJSONItemObject(JSONItem).Properties['extensions']);
-   end;
-   JSONItem:=JSONObject.Properties['clearcoatNormalTexture'];
-   if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
-    Index:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['index'],-1);
-    if (Index>=0) and (Index<aTextureMap.Count) then begin
-     fData.PBRClearCoat.NormalTexture.Texture:=aTextureMap[Index];
-     if assigned(fData.PBRClearCoat.NormalTexture.Texture) then begin
-      fData.PBRClearCoat.NormalTexture.Texture.IncRef;
+    JSONItem:=JSONObject.Properties['clearcoatNormalTexture'];
+    if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
+     Index:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['index'],-1);
+     if (Index>=0) and (Index<aTextureMap.Count) then begin
+      fData.PBRClearCoat.NormalTexture.Texture:=aTextureMap[Index];
+      if assigned(fData.PBRClearCoat.NormalTexture.Texture) then begin
+       fData.PBRClearCoat.NormalTexture.Texture.IncRef;
+      end;
+     end else begin
+      fData.PBRClearCoat.NormalTexture.Texture:=nil;
      end;
-    end else begin
-     fData.PBRClearCoat.NormalTexture.Texture:=nil;
+     fData.PBRClearCoat.NormalTexture.TexCoord:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['texCoord'],0);
+     fData.PBRClearCoat.NormalTexture.Transform.AssignFromGLTF(fData.PBRClearCoat.NormalTexture,TPasJSONItemObject(JSONItem).Properties['extensions']);
     end;
-    fData.PBRClearCoat.NormalTexture.TexCoord:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['texCoord'],0);
-    fData.PBRClearCoat.NormalTexture.Transform.AssignFromGLTF(fData.PBRClearCoat.NormalTexture,TPasJSONItemObject(JSONItem).Properties['extensions']);
    end;
   end;
- end;
 
- begin
-  JSONItem:=aSourceMaterial.Extensions.Properties['KHR_materials_ior'];
-  if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
-   fData.IOR:=TPasJSON.GetNumber(TPasJSONItemObject(JSONItem).Properties['ior'],1.5);
+  begin
+   JSONItem:=aSourceMaterial.Extensions.Properties['KHR_materials_ior'];
+   if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
+    fData.IOR:=TPasJSON.GetNumber(TPasJSONItemObject(JSONItem).Properties['ior'],1.5);
+   end;
   end;
- end;
 
- begin
-  JSONItem:=aSourceMaterial.Extensions.Properties['KHR_materials_iridescence'];
-  if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
-   JSONObject:=TPasJSONItemObject(JSONItem);
-   fData.Iridescence.Active:=true;
-   fData.Iridescence.Factor:=TPasJSON.GetNumber(JSONObject.Properties['iridescenceFactor'],0.0);
-   JSONItem:=JSONObject.Properties['iridescenceTexture'];
+  begin
+   JSONItem:=aSourceMaterial.Extensions.Properties['KHR_materials_iridescence'];
    if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
-    Index:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['index'],-1);
-    if (Index>=0) and (Index<aTextureMap.Count) then begin
-     fData.Iridescence.Texture.Texture:=aTextureMap[Index];
-     if assigned(fData.Iridescence.Texture.Texture) then begin
-      fData.Iridescence.Texture.Texture.IncRef;
+    JSONObject:=TPasJSONItemObject(JSONItem);
+    fData.Iridescence.Active:=true;
+    fData.Iridescence.Factor:=TPasJSON.GetNumber(JSONObject.Properties['iridescenceFactor'],0.0);
+    JSONItem:=JSONObject.Properties['iridescenceTexture'];
+    if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
+     Index:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['index'],-1);
+     if (Index>=0) and (Index<aTextureMap.Count) then begin
+      fData.Iridescence.Texture.Texture:=aTextureMap[Index];
+      if assigned(fData.Iridescence.Texture.Texture) then begin
+       fData.Iridescence.Texture.Texture.IncRef;
+      end;
+     end else begin
+      fData.Iridescence.Texture.Texture:=nil;
      end;
-    end else begin
-     fData.Iridescence.Texture.Texture:=nil;
+     fData.Iridescence.Texture.TexCoord:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['texCoord'],0);
+     fData.Iridescence.Texture.Transform.AssignFromGLTF(fData.Iridescence.Texture,TPasJSONItemObject(JSONItem).Properties['extensions']);
     end;
-    fData.Iridescence.Texture.TexCoord:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['texCoord'],0);
-    fData.Iridescence.Texture.Transform.AssignFromGLTF(fData.Iridescence.Texture,TPasJSONItemObject(JSONItem).Properties['extensions']);
-   end;
-   fData.Iridescence.Ior:=TPasJSON.GetNumber(JSONObject.Properties['iridescenceIor'],1.3);
-   fData.Iridescence.ThicknessMinimum:=TPasJSON.GetNumber(JSONObject.Properties['iridescenceThicknessMinimum'],100.0);
-   fData.Iridescence.ThicknessMaximum:=TPasJSON.GetNumber(JSONObject.Properties['iridescenceThicknessMaximum'],400.0);
-   JSONItem:=JSONObject.Properties['iridescenceThicknessTexture'];
-   if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
-    Index:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['index'],-1);
-    if (Index>=0) and (Index<aTextureMap.Count) then begin
-     fData.Iridescence.ThicknessTexture.Texture:=aTextureMap[Index];
-     if assigned(fData.Iridescence.ThicknessTexture.Texture) then begin
-      fData.Iridescence.ThicknessTexture.Texture.IncRef;
+    fData.Iridescence.Ior:=TPasJSON.GetNumber(JSONObject.Properties['iridescenceIor'],1.3);
+    fData.Iridescence.ThicknessMinimum:=TPasJSON.GetNumber(JSONObject.Properties['iridescenceThicknessMinimum'],100.0);
+    fData.Iridescence.ThicknessMaximum:=TPasJSON.GetNumber(JSONObject.Properties['iridescenceThicknessMaximum'],400.0);
+    JSONItem:=JSONObject.Properties['iridescenceThicknessTexture'];
+    if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
+     Index:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['index'],-1);
+     if (Index>=0) and (Index<aTextureMap.Count) then begin
+      fData.Iridescence.ThicknessTexture.Texture:=aTextureMap[Index];
+      if assigned(fData.Iridescence.ThicknessTexture.Texture) then begin
+       fData.Iridescence.ThicknessTexture.Texture.IncRef;
+      end;
+     end else begin
+      fData.Iridescence.ThicknessTexture.Texture:=nil;
      end;
-    end else begin
-     fData.Iridescence.ThicknessTexture.Texture:=nil;
+     fData.Iridescence.ThicknessTexture.TexCoord:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['texCoord'],0);
+     fData.Iridescence.ThicknessTexture.Transform.AssignFromGLTF(fData.Iridescence.ThicknessTexture,TPasJSONItemObject(JSONItem).Properties['extensions']);
     end;
-    fData.Iridescence.ThicknessTexture.TexCoord:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['texCoord'],0);
-    fData.Iridescence.ThicknessTexture.Transform.AssignFromGLTF(fData.Iridescence.ThicknessTexture,TPasJSONItemObject(JSONItem).Properties['extensions']);
    end;
   end;
- end;
 
- begin
-  JSONItem:=aSourceMaterial.Extensions.Properties['KHR_materials_transmission'];
-  if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
-   JSONObject:=TPasJSONItemObject(JSONItem);
-   fSceneInstance.fHasTransmission:=true;
-   fData.Transmission.Active:=true;
-   if fData.AlphaMode=TpvScene3D.TMaterial.TAlphaMode.Opaque then begin
-    fData.AlphaMode:=TpvScene3D.TMaterial.TAlphaMode.Mask;
-    fData.AlphaCutOff:=-1e-4;
-   end;
-   fData.Transmission.Factor:=TPasJSON.GetNumber(JSONObject.Properties['transmissionFactor'],0.0);
-   JSONItem:=JSONObject.Properties['transmissionTexture'];
+  begin
+   JSONItem:=aSourceMaterial.Extensions.Properties['KHR_materials_transmission'];
    if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
-    Index:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['index'],-1);
-    if (Index>=0) and (Index<aTextureMap.Count) then begin
-     fData.Transmission.Texture.Texture:=aTextureMap[Index];
-     if assigned(fData.Transmission.Texture.Texture) then begin
-      fData.Transmission.Texture.Texture.IncRef;
-     end;
-    end else begin
-     fData.Transmission.Texture.Texture:=nil;
+    JSONObject:=TPasJSONItemObject(JSONItem);
+    fSceneInstance.fHasTransmission:=true;
+    fData.Transmission.Active:=true;
+    if fData.AlphaMode=TpvScene3D.TMaterial.TAlphaMode.Opaque then begin
+     fData.AlphaMode:=TpvScene3D.TMaterial.TAlphaMode.Mask;
+     fData.AlphaCutOff:=-1e-4;
     end;
-    fData.Transmission.Texture.TexCoord:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['texCoord'],0);
-    fData.Transmission.Texture.Transform.AssignFromGLTF(fData.Transmission.Texture,TPasJSONItemObject(JSONItem).Properties['extensions']);
+    fData.Transmission.Factor:=TPasJSON.GetNumber(JSONObject.Properties['transmissionFactor'],0.0);
+    JSONItem:=JSONObject.Properties['transmissionTexture'];
+    if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
+     Index:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['index'],-1);
+     if (Index>=0) and (Index<aTextureMap.Count) then begin
+      fData.Transmission.Texture.Texture:=aTextureMap[Index];
+      if assigned(fData.Transmission.Texture.Texture) then begin
+       fData.Transmission.Texture.Texture.IncRef;
+      end;
+     end else begin
+      fData.Transmission.Texture.Texture:=nil;
+     end;
+     fData.Transmission.Texture.TexCoord:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['texCoord'],0);
+     fData.Transmission.Texture.Transform.AssignFromGLTF(fData.Transmission.Texture,TPasJSONItemObject(JSONItem).Properties['extensions']);
+    end;
    end;
   end;
- end;
 
- begin
-  JSONItem:=aSourceMaterial.Extensions.Properties['KHR_materials_volume'];
-  if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
-   JSONObject:=TPasJSONItemObject(JSONItem);
-   fData.Volume.Active:=true;
-   fData.Volume.ThicknessFactor:=TPasJSON.GetNumber(JSONObject.Properties['thicknessFactor'],0.0);
-   JSONItem:=JSONObject.Properties['thicknessTexture'];
+  begin
+   JSONItem:=aSourceMaterial.Extensions.Properties['KHR_materials_volume'];
    if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
-    Index:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['index'],-1);
-    if (Index>=0) and (Index<aTextureMap.Count) then begin
-     fData.Volume.ThicknessTexture.Texture:=aTextureMap[Index];
-     if assigned(fData.Volume.ThicknessTexture.Texture) then begin
-      fData.Volume.ThicknessTexture.Texture.IncRef;
+    JSONObject:=TPasJSONItemObject(JSONItem);
+    fData.Volume.Active:=true;
+    fData.Volume.ThicknessFactor:=TPasJSON.GetNumber(JSONObject.Properties['thicknessFactor'],0.0);
+    JSONItem:=JSONObject.Properties['thicknessTexture'];
+    if assigned(JSONItem) and (JSONItem is TPasJSONItemObject) then begin
+     Index:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['index'],-1);
+     if (Index>=0) and (Index<aTextureMap.Count) then begin
+      fData.Volume.ThicknessTexture.Texture:=aTextureMap[Index];
+      if assigned(fData.Volume.ThicknessTexture.Texture) then begin
+       fData.Volume.ThicknessTexture.Texture.IncRef;
+      end;
+     end else begin
+      fData.Volume.ThicknessTexture.Texture:=nil;
      end;
-    end else begin
-     fData.Volume.ThicknessTexture.Texture:=nil;
+     fData.Volume.ThicknessTexture.TexCoord:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['texCoord'],0);
+     fData.Volume.ThicknessTexture.Transform.AssignFromGLTF(fData.Volume.ThicknessTexture,TPasJSONItemObject(JSONItem).Properties['extensions']);
     end;
-    fData.Volume.ThicknessTexture.TexCoord:=TPasJSON.GetInt64(TPasJSONItemObject(JSONItem).Properties['texCoord'],0);
-    fData.Volume.ThicknessTexture.Transform.AssignFromGLTF(fData.Volume.ThicknessTexture,TPasJSONItemObject(JSONItem).Properties['extensions']);
-   end;
-   fData.Volume.AttenuationDistance:=TPasJSON.GetNumber(JSONObject.Properties['attenuationDistance'],Infinity);
-   JSONItem:=JSONObject.Properties['attenuationColor'];
-   if assigned(JSONItem) and (JSONItem is TPasJSONItemArray) and (TPasJSONItemArray(JSONItem).Count=3) then begin
-    fData.Volume.AttenuationColor[0]:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[0],1.0);
-    fData.Volume.AttenuationColor[1]:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[1],1.0);
-    fData.Volume.AttenuationColor[2]:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[2],1.0);
+    fData.Volume.AttenuationDistance:=TPasJSON.GetNumber(JSONObject.Properties['attenuationDistance'],Infinity);
+    JSONItem:=JSONObject.Properties['attenuationColor'];
+    if assigned(JSONItem) and (JSONItem is TPasJSONItemArray) and (TPasJSONItemArray(JSONItem).Count=3) then begin
+     fData.Volume.AttenuationColor[0]:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[0],1.0);
+     fData.Volume.AttenuationColor[1]:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[1],1.0);
+     fData.Volume.AttenuationColor[2]:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[2],1.0);
+    end;
    end;
   end;
+
+ finally
+  fSceneInstance.fTextureListLock.Release;
  end;
 
  FillShaderData;
@@ -5143,8 +5323,6 @@ end;
 
 procedure TpvScene3D.TMaterial.FillShaderData;
 begin
-
- inc(fGeneration);
 
  fShaderData:=DefaultShaderData;
 
@@ -5342,7 +5520,13 @@ begin
   end;
  end;
 
-end;
+ TPasMPInterlocked.Increment(fGeneration);
+
+ if assigned(fSceneInstance) and (fID>0) and (fID<$10000) then begin
+  TPasMPInterlocked.BitwiseOr(fSceneInstance.fMaterialIDDirtyMap[fID shr 5],TPasMPUInt32(1) shl (fID and 31));
+ end;
+
+ end;
 
 { TpvScene3D.TLight }
 
@@ -5478,7 +5662,8 @@ begin
  fInFlightFrameIndex:=aInFlightFrameIndex;
  fUploaded:=false;
  fLightTree.Initialize;
- fLightAABBTreeGeneration:=fSceneInstance.fLightAABBTreeGeneration-2;
+ fLightAABBTreeGeneration:=fSceneInstance.fLightAABBTreeGeneration-3;
+ fNewLightAABBTreeGeneration:=fSceneInstance.fLightAABBTreeGeneration-2;
 end;
 
 destructor TpvScene3D.TLightBuffer.Destroy;
@@ -5492,9 +5677,12 @@ procedure TpvScene3D.TLightBuffer.Upload;
 begin
  if not fUploaded then begin
   try
+
    FreeAndNil(fLightItemsVulkanBuffer);
+
    FreeAndNil(fLightTreeVulkanBuffer);
-   FreeAndNil(fLightMetaInfos);
+
+// fLightMetaInfos:=nil;
 
    case fSceneInstance.fBufferStreamingMode of
 
@@ -5619,7 +5807,11 @@ begin
  end;
 end;
 
-procedure TpvScene3D.TLightBuffer.Update;
+procedure TpvScene3D.TLightBuffer.PrepareGPUUpdate;
+begin
+end;
+
+procedure TpvScene3D.TLightBuffer.ExecuteGPUUpdate;
 const EmptyGPUSkipListNode:TpvBVHDynamicAABBTree.TSkipListNode=
        (AABBMin:(x:0.0;y:0.0;z:0.0);
         SkipCount:0;
@@ -5629,9 +5821,9 @@ const EmptyGPUSkipListNode:TpvBVHDynamicAABBTree.TSkipListNode=
 begin
  if fUploaded then begin
 
-  if fLightAABBTreeGeneration<>fSceneInstance.fLightAABBTreeGeneration then begin
+  if fLightAABBTreeGeneration<>fNewLightAABBTreeGeneration then begin
 
-   fLightAABBTreeGeneration:=fSceneInstance.fLightAABBTreeGeneration;
+   fLightAABBTreeGeneration:=fNewLightAABBTreeGeneration;
 
    case fSceneInstance.fBufferStreamingMode of
 
@@ -6279,7 +6471,12 @@ begin
   if assigned(Primitive^.Material) then begin
    try
     if Primitive^.Material<>EmptyMaterial then begin
-     Primitive^.Material.DecRef;
+     fGroup.fSceneInstance.fMaterialListLock.Acquire;
+     try
+      Primitive^.Material.DecRef;
+     finally
+      fGroup.fSceneInstance.fMaterialListLock.Release;
+     end;
     end;
    finally
     Primitive^.Material:=nil;
@@ -6529,15 +6726,20 @@ begin
 
       DestinationMeshPrimitive:=@fPrimitives[PrimitiveIndex];
 
-      if (SourceMeshPrimitive.Material>=0) and (SourceMeshPrimitive.Material<aMaterialMap.Count) then begin
-       DestinationMeshPrimitive^.MaterialID:=SourceMeshPrimitive.Material;
-       DestinationMeshPrimitive^.Material:=aMaterialMap[SourceMeshPrimitive.Material];
-       if assigned(DestinationMeshPrimitive^.Material) then begin
-        DestinationMeshPrimitive^.Material.IncRef;
+      fGroup.fSceneInstance.fMaterialListLock.Acquire;
+      try
+       if (SourceMeshPrimitive.Material>=0) and (SourceMeshPrimitive.Material<aMaterialMap.Count) then begin
+        DestinationMeshPrimitive^.MaterialID:=SourceMeshPrimitive.Material;
+        DestinationMeshPrimitive^.Material:=aMaterialMap[SourceMeshPrimitive.Material];
+        if assigned(DestinationMeshPrimitive^.Material) then begin
+         DestinationMeshPrimitive^.Material.IncRef;
+        end;
+       end else begin
+        DestinationMeshPrimitive^.MaterialID:=-1;
+        DestinationMeshPrimitive^.Material:=fGroup.fSceneInstance.fEmptyMaterial;
        end;
-      end else begin
-       DestinationMeshPrimitive^.MaterialID:=-1;
-       DestinationMeshPrimitive^.Material:=fGroup.fSceneInstance.fEmptyMaterial;
+      finally
+       fGroup.fSceneInstance.fMaterialListLock.Release;
       end;
 
       HasJoints:=false;
@@ -7539,11 +7741,11 @@ var Left,Right,Depth,i,j,Middle,Size,Parent,Child,Pivot,iA,iB,iC:TpvSizeInt;
     StackItem:PStackItem;
     Stack:array[0..31] of TStackItem;
 begin
- if fCount>1 then begin
+ if Count>1 then begin
   StackItem:=@Stack[0];
   StackItem^.Left:=0;
-  StackItem^.Right:=fCount-1;
-  StackItem^.Depth:=IntLog2(fCount) shl 1;
+  StackItem^.Right:=Count-1;
+  StackItem^.Depth:=IntLog2(Count) shl 1;
   inc(StackItem);
   while TpvPtrUInt(TpvPointer(StackItem))>TpvPtrUInt(TpvPointer(@Stack[0])) do begin
    dec(StackItem);
@@ -7811,8 +8013,17 @@ begin
 
  FreeAndNil(fObjects);
 
- for Material in fMaterials do begin
-  Material.DecRef;
+ if assigned(fSceneInstance) then begin
+  fSceneInstance.fMaterialListLock.Acquire;
+ end;
+ try
+  for Material in fMaterials do begin
+   Material.DecRef;
+  end;
+ finally
+  if assigned(fSceneInstance) then begin
+   fSceneInstance.fMaterialListLock.Release;
+  end;
  end;
  FreeAndNil(fMaterials);
 
@@ -8496,13 +8707,17 @@ var LightMap:TpvScene3D.TGroup.TLights;
     ImageMap:TpvScene3D.TImages;
     SamplerMap:TpvScene3D.TSamplers;
     TextureMap:TpvScene3D.TTextures;
+    NewImages:TpvScene3D.TImages;
+    NewSamplers:TpvScene3D.TSamplers;
+    NewTextures:TpvScene3D.TTextures;
     //MaterialMap:TpvScene3D.TMaterials;
     HasLights:boolean;
  procedure ProcessImages;
  var Index:TpvSizeInt;
      SourceImage:TPasGLTF.TImage;
      Image,
-     HashedImage:TImage;
+     HashedImage,
+     CurrentImage:TImage;
      HashData:TImage.THashData;
  begin
   for Index:=0 to aSourceDocument.Images.Count-1 do begin
@@ -8516,11 +8731,17 @@ var LightMap:TpvScene3D.TGroup.TLights;
      HashedImage:=fSceneInstance.fImageHashMap[HashData];
      if assigned(HashedImage) then begin
       ImageMap.Add(HashedImage);
+      CurrentImage:=HashedImage;
      end else begin
       Image.fHashData:=HashData;
       fSceneInstance.fImageHashMap[HashData]:=Image;
       ImageMap.Add(Image);
+      CurrentImage:=Image;
       Image:=nil;
+     end;
+     if assigned(CurrentImage) and (NewImages.IndexOf(CurrentImage)<0) then begin
+      CurrentImage.IncRef;
+      NewImages.Add(CurrentImage);
      end;
     finally
      fSceneInstance.fImageListLock.Release;
@@ -8534,7 +8755,8 @@ var LightMap:TpvScene3D.TGroup.TLights;
  var Index:TpvSizeInt;
      SourceSampler:TPasGLTF.TSampler;
      Sampler,
-     HashedSampler:TSampler;
+     HashedSampler,
+     CurrentSampler:TSampler;
      HashData:TSampler.THashData;
  begin
   for Index:=0 to aSourceDocument.Samplers.Count-1 do begin
@@ -8548,10 +8770,16 @@ var LightMap:TpvScene3D.TGroup.TLights;
      HashedSampler:=fSceneInstance.fSamplerHashMap[HashData];
      if assigned(HashedSampler) then begin
       SamplerMap.Add(HashedSampler);
+      CurrentSampler:=HashedSampler;
      end else begin
       fSceneInstance.fSamplerHashMap[HashData]:=Sampler;
       SamplerMap.Add(Sampler);
+      CurrentSampler:=Sampler;
       Sampler:=nil;
+     end;
+     if assigned(CurrentSampler) and (NewSamplers.IndexOf(CurrentSampler)<0) then begin
+      CurrentSampler.IncRef;
+      NewSamplers.Add(CurrentSampler);
      end;
     finally
      fSceneInstance.fSamplerListLock.Release;
@@ -8565,7 +8793,8 @@ var LightMap:TpvScene3D.TGroup.TLights;
  var Index:TpvSizeInt;
      SourceTexture:TPasGLTF.TTexture;
      Texture,
-     HashedTexture:TTexture;
+     HashedTexture,
+     CurrentTexture:TTexture;
      HashData:TTexture.THashData;
  begin
   for Index:=0 to aSourceDocument.Textures.Count-1 do begin
@@ -8579,10 +8808,16 @@ var LightMap:TpvScene3D.TGroup.TLights;
      HashedTexture:=fSceneInstance.fTextureHashMap[HashData];
      if assigned(HashedTexture) then begin
       TextureMap.Add(HashedTexture);
+      CurrentTexture:=HashedTexture;
      end else begin
       fSceneInstance.fTextureHashMap[HashData]:=Texture;
       TextureMap.Add(Texture);
+      CurrentTexture:=Texture;
       Texture:=nil;
+     end;
+     if assigned(CurrentTexture) and (NewTextures.IndexOf(CurrentTexture)<0) then begin
+      CurrentTexture.IncRef;
+      NewTextures.Add(CurrentTexture);
      end;
     finally
      fSceneInstance.fTextureListLock.Release;
@@ -8605,14 +8840,14 @@ var LightMap:TpvScene3D.TGroup.TLights;
 
   fMaterialMap[0]:=fSceneInstance.fEmptyMaterial.fID;
 
-  for Index:=0 to aSourceDocument.Materials.Count-1 do begin
+  fSceneInstance.fMaterialListLock.Acquire;
+  try
 
-   SourceMaterial:=aSourceDocument.Materials[Index];
+   for Index:=0 to aSourceDocument.Materials.Count-1 do begin
 
-   Material:=TpvScene3D.TMaterial.Create(ResourceManager,fSceneInstance);
-   try
+    SourceMaterial:=aSourceDocument.Materials[Index];
 
-    fSceneInstance.fMaterialListLock.Acquire;
+    Material:=TpvScene3D.TMaterial.Create(ResourceManager,fSceneInstance);
     try
 
      Material.AssignFromGLTF(aSourceDocument,SourceMaterial,TextureMap);
@@ -8629,32 +8864,32 @@ var LightMap:TpvScene3D.TGroup.TLights;
      end;
 
     finally
-     fSceneInstance.fMaterialListLock.Release;
+     FreeAndNil(Material);
     end;
 
-   finally
-    FreeAndNil(Material);
-   end;
+    Material:=fMaterials[Index];
+    try
 
-   Material:=fMaterials[Index];
-   try
+     fMaterialMap[Index+1]:=Material.fID;
 
-    fMaterialMap[Index+1]:=Material.fID;
+     MaterialIDMapArrayIndex:=fMaterialIDMapArrayIndexHashMap[Material.fID];
+     if MaterialIDMapArrayIndex<0 then begin
+      MaterialIDMapArray:=TMaterialIDMapArray.Create;
+      MaterialIDMapArrayIndex:=fMaterialIDMapArrays.Add(MaterialIDMapArray);
+      fMaterialIDMapArrayIndexHashMap.Add(Material.fID,MaterialIDMapArrayIndex);
+     end else begin
+      MaterialIDMapArray:=fMaterialIDMapArrays[MaterialIDMapArrayIndex];
+     end;
+     MaterialIDMapArray.Add(Index);
 
-    MaterialIDMapArrayIndex:=fMaterialIDMapArrayIndexHashMap[Material.fID];
-    if MaterialIDMapArrayIndex<0 then begin
-     MaterialIDMapArray:=TMaterialIDMapArray.Create;
-     MaterialIDMapArrayIndex:=fMaterialIDMapArrays.Add(MaterialIDMapArray);
-     fMaterialIDMapArrayIndexHashMap.Add(Material.fID,MaterialIDMapArrayIndex);
-    end else begin
-     MaterialIDMapArray:=fMaterialIDMapArrays[MaterialIDMapArrayIndex];
+    finally
+     Material.IncRef;
     end;
-    MaterialIDMapArray.Add(Index);
 
-   finally
-    Material.IncRef;
    end;
 
+  finally
+   fSceneInstance.fMaterialListLock.Release;
   end;
 
  end;
@@ -8706,19 +8941,24 @@ var LightMap:TpvScene3D.TGroup.TLights;
             MaterialIDMapArray:=fMaterialIDMapArrays[MaterialIDMapArrayIndex];
             if MaterialIDMapArray.Count>0 then begin
              if MaterialIDMapArray.Count>=2 then begin
-              DuplicatedMaterial:=TpvScene3D.TMaterial.Create(ResourceManager,fSceneInstance);
+              fSceneInstance.fMaterialListLock.Acquire;
               try
-               DuplicatedMaterial.Assign(Material);
-               Material.DecRef;
-               Material:=DuplicatedMaterial;
-               Material.IncRef;
-               MaterialIDMapArray.Remove(MaterialIndex);
-               MaterialIDMapArray:=TMaterialIDMapArray.Create;
-               fMaterialIDMapArrayIndexHashMap.Add(Material.fID,fMaterialIDMapArrays.Add(MaterialIDMapArray));
-               MaterialIDMapArray.Add(MaterialIndex);
+               DuplicatedMaterial:=TpvScene3D.TMaterial.Create(ResourceManager,fSceneInstance);
+               try
+                DuplicatedMaterial.Assign(Material);
+                Material.DecRef;
+                Material:=DuplicatedMaterial;
+                Material.IncRef;
+                MaterialIDMapArray.Remove(MaterialIndex);
+                MaterialIDMapArray:=TMaterialIDMapArray.Create;
+                fMaterialIDMapArrayIndexHashMap.Add(Material.fID,fMaterialIDMapArrays.Add(MaterialIDMapArray));
+                MaterialIDMapArray.Add(MaterialIndex);
+               finally
+                fMaterials[MaterialIndex]:=Material;
+                fMaterialMap[Index+1]:=Material.fID;
+               end;
               finally
-               fMaterials[MaterialIndex]:=Material;
-               fMaterialMap[Index+1]:=Material.fID;
+               fSceneInstance.fMaterialListLock.Release;
               end;
              end;
              //Channel^.TargetIndex:=Material.fID;
@@ -9032,6 +9272,9 @@ var LightMap:TpvScene3D.TGroup.TLights;
    end;
   end;
  end;
+var Image:TpvScene3D.TImage;
+    Sampler:TpvScene3D.TSampler;
+    Texture:TpvScene3D.TTexture;
 begin
 
  HasLights:=aSourceDocument.ExtensionsUsed.IndexOf('KHR_lights_punctual')>=0;
@@ -9046,58 +9289,115 @@ begin
   ImageMap.OwnsObjects:=false;
   try
 
-   ProcessImages;
-
-   SamplerMap:=TpvScene3D.TSamplers.Create;
-   SamplerMap.OwnsObjects:=false;
+   NewImages:=TpvScene3D.TImages.Create;
+   NewImages.OwnsObjects:=false;
    try
 
-    ProcessSamplers;
+    ProcessImages;
 
-    TextureMap:=TpvScene3D.TTextures.Create;
-    TextureMap.OwnsObjects:=false;
+    SamplerMap:=TpvScene3D.TSamplers.Create;
+    SamplerMap.OwnsObjects:=false;
     try
 
-     ProcessTextures;
-
-{    MaterialMap:=TpvScene3D.TMaterials.Create;
-     MaterialMap.OwnsObjects:=false;}
+     NewSamplers:=TpvScene3D.TSamplers.Create;
+     NewSamplers.OwnsObjects:=false;
      try
 
-      ProcessMaterials;
+      ProcessSamplers;
 
-      ProcessAnimations;
+      TextureMap:=TpvScene3D.TTextures.Create;
+      TextureMap.OwnsObjects:=false;
+      try
 
-      ProcessCameras;
+       NewTextures:=TpvScene3D.TTextures.Create;
+       NewTextures.OwnsObjects:=false;
+       try
 
-      ProcessMeshes;
+        ProcessTextures;
 
-      ProcessSkins;
+   {    MaterialMap:=TpvScene3D.TMaterials.Create;
+        MaterialMap.OwnsObjects:=false;}
+        try
 
-      ProcessNodes;
+         ProcessMaterials;
 
-      ProcessScenes;
+         ProcessAnimations;
 
-      if (aSourceDocument.Scene>=0) and (aSourceDocument.Scene<fScenes.Count) then begin
-       fScene:=fScenes[aSourceDocument.Scene];
-      end else if fScenes.Count>0 then begin
-       fScene:=fScenes[0];
-      end else begin
-       fScene:=nil;
+         ProcessCameras;
+
+         ProcessMeshes;
+
+         ProcessSkins;
+
+         ProcessNodes;
+
+         ProcessScenes;
+
+         if (aSourceDocument.Scene>=0) and (aSourceDocument.Scene<fScenes.Count) then begin
+          fScene:=fScenes[aSourceDocument.Scene];
+         end else if fScenes.Count>0 then begin
+          fScene:=fScenes[0];
+         end else begin
+          fScene:=nil;
+         end;
+
+         CalculateBoundingBox;
+
+        finally
+   //    FreeAndNil(MaterialMap);
+        end;
+
+       finally
+        try
+         fSceneInstance.fTextureListLock.Acquire;
+         try
+          for Texture in NewTextures do begin
+           Texture.DecRef;
+          end;
+         finally
+          fSceneInstance.fTextureListLock.Release;
+         end;
+        finally
+         FreeAndNil(NewTextures);
+        end;
+       end;
+
+      finally
+       FreeAndNil(TextureMap);
       end;
 
-      CalculateBoundingBox;
-
      finally
-//    FreeAndNil(MaterialMap);
+      try
+       fSceneInstance.fSamplerListLock.Acquire;
+       try
+        for Sampler in NewSamplers do begin
+         Sampler.DecRef;
+        end;
+       finally
+        fSceneInstance.fSamplerListLock.Release;
+       end;
+      finally
+       FreeAndNil(NewSamplers);
+      end;
      end;
 
     finally
-     FreeAndNil(TextureMap);
+     FreeAndNil(SamplerMap);
     end;
 
    finally
-    FreeAndNil(SamplerMap);
+    try
+     fSceneInstance.fImageListLock.Acquire;
+     try
+      for Image in NewImages do begin
+       Image.DecRef;
+      end;
+     finally
+      fSceneInstance.fImageListLock.Release;
+     end;
+    finally
+     FreeAndNil(NewImages);
+    end;
    end;
 
   finally
@@ -9152,11 +9452,35 @@ begin
  end;
 end;
 
+procedure TpvScene3D.TGroup.Check(const aInFlightFrameIndex:TpvSizeInt);
+var Instance:TpvScene3D.TGroup.TInstance;
+begin
+ for Instance in fInstances do begin
+  Instance.Check(aInFlightFrameIndex);
+ end;
+end;
+
 procedure TpvScene3D.TGroup.Update(const aInFlightFrameIndex:TpvSizeInt);
 var Instance:TpvScene3D.TGroup.TInstance;
 begin
  for Instance in fInstances do begin
   Instance.Update(aInFlightFrameIndex);
+ end;
+end;
+
+procedure TpvScene3D.TGroup.PrepareGPUUpdate(const aInFlightFrameIndex:TpvSizeInt);
+var Instance:TpvScene3D.TGroup.TInstance;
+begin
+ for Instance in fInstances do begin
+  Instance.PrepareGPUUpdate(aInFlightFrameIndex);
+ end;
+end;
+
+procedure TpvScene3D.TGroup.ExecuteGPUUpdate(const aInFlightFrameIndex:TpvSizeInt);
+var Instance:TpvScene3D.TGroup.TInstance;
+begin
+ for Instance in fInstances do begin
+  Instance.ExecuteGPUUpdate(aInFlightFrameIndex);
  end;
 end;
 
@@ -9916,11 +10240,15 @@ begin
  fInstance:=aInstance;
  fNodeMatricesBuffer:=nil;
  fMorphTargetVertexWeightsBuffer:=nil;
+ fNodeMatrices:=nil;
+ fMorphTargetVertexWeights:=nil;
 end;
 
 destructor TpvScene3D.TGroup.TInstance.TVulkanData.Destroy;
 begin
  Unload;
+ fNodeMatrices:=nil;
+ fMorphTargetVertexWeights:=nil;
  inherited Destroy;
 end;
 
@@ -10039,7 +10367,26 @@ begin
  end;
 end;
 
-procedure TpvScene3D.TGroup.TInstance.TVulkanData.Update(const aInFlightFrameIndex:TpvSizeInt);
+procedure TpvScene3D.TGroup.TInstance.TVulkanData.PrepareGPUUpdate(const aInFlightFrameIndex:TpvSizeInt);
+begin
+
+ if length(fNodeMatrices)<>length(fInstance.fNodeMatrices) then begin
+  SetLength(fNodeMatrices,length(fInstance.fNodeMatrices));
+ end;
+ if length(fNodeMatrices)>0 then begin
+  Move(fInstance.fNodeMatrices[0],fNodeMatrices[0],length(fNodeMatrices)*SizeOf(TpvMatrix4x4));
+ end;
+
+ if length(fMorphTargetVertexWeights)<>length(fInstance.fMorphTargetVertexWeights) then begin
+  SetLength(fMorphTargetVertexWeights,length(fInstance.fMorphTargetVertexWeights));
+ end;
+ if length(fMorphTargetVertexWeights)>0 then begin
+  Move(fInstance.fMorphTargetVertexWeights[0],fMorphTargetVertexWeights[0],length(fMorphTargetVertexWeights)*SizeOf(TpvFloat));
+ end;
+
+end;
+
+procedure TpvScene3D.TGroup.TInstance.TVulkanData.ExecuteGPUUpdate(const aInFlightFrameIndex:TpvSizeInt);
 begin
  Upload;
  if fUploaded then begin
@@ -10048,30 +10395,30 @@ begin
 
    TBufferStreamingMode.Direct:begin
 
-    fNodeMatricesBuffer.UpdateData(fInstance.fNodeMatrices[0],0,length(fInstance.fNodeMatrices)*SizeOf(TpvMatrix4x4),FlushUpdateData);
+    fNodeMatricesBuffer.UpdateData(fNodeMatrices[0],0,length(fNodeMatrices)*SizeOf(TpvMatrix4x4),FlushUpdateData);
 
-    fMorphTargetVertexWeightsBuffer.UpdateData(fInstance.fMorphTargetVertexWeights[0],0,length(fInstance.fMorphTargetVertexWeights)*SizeOf(TpvFloat),FlushUpdateData);
+    fMorphTargetVertexWeightsBuffer.UpdateData(fMorphTargetVertexWeights[0],0,length(fMorphTargetVertexWeights)*SizeOf(TpvFloat),FlushUpdateData);
 
    end;
 
    TBufferStreamingMode.Staging:begin
 
-    fInstance.fGroup.fVulkanNodeMatricesStagingBuffers[aInFlightFrameIndex].UpdateData(fInstance.fNodeMatrices[0],0,length(fInstance.fNodeMatrices)*SizeOf(TpvMatrix4x4),FlushUpdateData);
+    fInstance.fGroup.fVulkanNodeMatricesStagingBuffers[aInFlightFrameIndex].UpdateData(fNodeMatrices[0],0,length(fNodeMatrices)*SizeOf(TpvMatrix4x4),FlushUpdateData);
 
     fNodeMatricesBuffer.CopyFrom(fInstance.fSceneInstance.fVulkanBufferCopyBatchItemArrays[aInFlightFrameIndex],
                                  fInstance.fGroup.fVulkanNodeMatricesStagingBuffers[aInFlightFrameIndex],
                                  0,
                                  0,
-                                 length(fInstance.fNodeMatrices)*SizeOf(TpvMatrix4x4));
+                                 length(fNodeMatrices)*SizeOf(TpvMatrix4x4));
 
 
-    fInstance.fGroup.fVulkanMorphTargetVertexWeightsStagingBuffers[aInFlightFrameIndex].UpdateData(fInstance.fMorphTargetVertexWeights[0],0,length(fInstance.fMorphTargetVertexWeights)*SizeOf(TpvFloat),FlushUpdateData);
+    fInstance.fGroup.fVulkanMorphTargetVertexWeightsStagingBuffers[aInFlightFrameIndex].UpdateData(fMorphTargetVertexWeights[0],0,length(fMorphTargetVertexWeights)*SizeOf(TpvFloat),FlushUpdateData);
 
     fMorphTargetVertexWeightsBuffer.CopyFrom(fInstance.fSceneInstance.fVulkanBufferCopyBatchItemArrays[aInFlightFrameIndex],
                                              fInstance.fGroup.fVulkanMorphTargetVertexWeightsStagingBuffers[aInFlightFrameIndex],
                                              0,
                                              0,
-                                             length(fInstance.fMorphTargetVertexWeights)*SizeOf(TpvFloat));
+                                             length(fMorphTargetVertexWeights)*SizeOf(TpvFloat));
 
    end;
 
@@ -10654,6 +11001,13 @@ begin
   if assigned(fNodes[Index].Light) then begin
    FreeAndNil(fNodes[Index].Light);
   end;
+ end;
+end;
+
+procedure TpvScene3D.TGroup.TInstance.Check(const aInFlightFrameIndex:TpvSizeInt);
+begin
+ if aInFlightFrameIndex>=0 then begin
+  Upload;
  end;
 end;
 
@@ -12414,12 +12768,9 @@ begin
 
  if aInFlightFrameIndex>=0 then begin
 
-  Upload;
-
   fActives[aInFlightFrameIndex]:=fActive;
 
  end;
-
 
  if fActive then begin
 
@@ -12557,13 +12908,6 @@ begin
 
   end;
 
-  if aInFlightFrameIndex>=0 then begin
-   fVulkanData:=fVulkanDatas[aInFlightFrameIndex];
-   if assigned(fVulkanData) then begin
-    fVulkanData.Update(aInFlightFrameIndex);
-   end;
-  end;
-
   fBoundingBox:=fGroup.fBoundingBox.Transform(fModelMatrix);
   if assigned(Scene) and (aInFlightFrameIndex>=0) then begin
    for Index:=0 to Scene.fNodes.Count-1 do begin
@@ -12616,6 +12960,30 @@ begin
 
  end;
 
+end;
+
+procedure TpvScene3D.TGroup.TInstance.PrepareGPUUpdate(const aInFlightFrameIndex:TpvSizeInt);
+begin
+ if (aInFlightFrameIndex>=0) and
+    fActives[aInFlightFrameIndex] and
+    assigned(fScenes[aInFlightFrameIndex]) then begin
+  fVulkanData:=fVulkanDatas[aInFlightFrameIndex];
+  if assigned(fVulkanData) then begin
+   fVulkanData.PrepareGPUUpdate(aInFlightFrameIndex);
+  end;
+ end;
+end;
+
+procedure TpvScene3D.TGroup.TInstance.ExecuteGPUUpdate(const aInFlightFrameIndex:TpvSizeInt);
+begin
+ if (aInFlightFrameIndex>=0) and
+    fActives[aInFlightFrameIndex] and
+    assigned(fScenes[aInFlightFrameIndex]) then begin
+  fVulkanData:=fVulkanDatas[aInFlightFrameIndex];
+  if assigned(fVulkanData) then begin
+   fVulkanData.ExecuteGPUUpdate(aInFlightFrameIndex);
+  end;
+ end;
 end;
 
 function TpvScene3D.TGroup.TInstance.GetBakedMesh(const aRelative:boolean=false;
@@ -13338,7 +13706,7 @@ begin
 
  fTechniques:=TpvTechniques.Create;
 
- fImageListLock:=TPasMPSlimReaderWriterLock.Create;
+ fImageListLock:=TPasMPCriticalSection.Create;
 
  fImages:=TImages.Create;
  fImages.OwnsObjects:=false;
@@ -13349,7 +13717,7 @@ begin
 
  fImageHashMap:=TImageHashMap.Create(nil);
 
- fSamplerListLock:=TPasMPSlimReaderWriterLock.Create;
+ fSamplerListLock:=TPasMPCriticalSection.Create;
 
  fSamplers:=TSamplers.Create;
  fSamplers.OwnsObjects:=false;
@@ -13360,7 +13728,7 @@ begin
 
  fSamplerHashMap:=TSamplerHashMap.Create(nil);
 
- fTextureListLock:=TPasMPSlimReaderWriterLock.Create;
+ fTextureListLock:=TPasMPCriticalSection.Create;
 
  fTextures:=TTextures.Create;
  fTextures.OwnsObjects:=false;
@@ -13371,7 +13739,7 @@ begin
 
  fTextureHashMap:=TTextureHashMap.Create(nil);
 
- fMaterialListLock:=TPasMPSlimReaderWriterLock.Create;
+ fMaterialListLock:=TPasMPCriticalSection.Create;
 
  fMaterials:=TMaterials.Create;
  fMaterials.OwnsObjects:=false;
@@ -13380,13 +13748,13 @@ begin
 
  fMaterialIDHashMap:=TMaterialIDHashMap.Create(nil);
 
+ FillChar(fMaterialIDDirtyMap,SizeOf(TMaterialIDDirtyMap),#0);
+
  FillChar(fMaterialIDMap,SizeOf(TMaterialIDMap),#0);
 
  fMaterialHashMap:=TMaterialHashMap.Create(nil);
 
- FillChar(fMaterialDataGenerationMaterials,SizeOf(fMaterialDataGenerationMaterials),#0);
-
- FillChar(fMaterialDataGenerationMaterialGenerations,SizeOf(fMaterialDataGenerationMaterialGenerations),#0);
+ FillChar(fMaterialDataMaterialGenerations,SizeOf(fMaterialDataMaterialGenerations),#$ff);
 
  fDefaultSampler:=TSampler.Create(ResourceManager,self);
  fDefaultSampler.AssignFromDefault;
@@ -13701,8 +14069,9 @@ begin
    inc(fImageDescriptorGeneration);
    if fImageDescriptorGeneration=0 then begin
     fImageDescriptorGeneration:=1;
+    fImageDescriptorProcessedGeneration:=0;
     for Index:=0 to fCountInFlightFrames-1 do begin
-     fImageDescriptorGenerations[Index]:=0;
+     fImageDescriptorProcessedGenerations[Index]:=High(TpvUInt64)-1;
     end;
    end;
   finally
@@ -13720,11 +14089,13 @@ begin
    inc(fMaterialDataGeneration);
    if fMaterialDataGeneration=0 then begin
     fMaterialDataGeneration:=1;
+    fMaterialDataProcessedGeneration:=0;
     for Index:=0 to fCountInFlightFrames-1 do begin
-     fMaterialDataGenerations[Index]:=0;
+     fMaterialDataProcessedGenerations[Index]:=0;
+     fMaterialDataProcessedMinChangedID[Index]:=0;
+     fMaterialDataProcessedMaxChangedID[Index]:=$ffff;
     end;
-    FillChar(fMaterialDataGenerationMaterials,SizeOf(fMaterialDataGenerationMaterials),#0);
-    FillChar(fMaterialDataGenerationMaterialGenerations,SizeOf(fMaterialDataGenerationMaterialGenerations),#0);
+    FillChar(fMaterialDataMaterialGenerations,SizeOf(fMaterialDataMaterialGenerations),#$ff);
    end;
   finally
    fMaterialDataGenerationLock.Release;
@@ -13945,30 +14316,36 @@ begin
         end;
        end;
 
-       for Index:=0 to length(TMaterialBufferData)-1 do begin
+       for Index:=0 to length(fMaterialBufferData)-1 do begin
         fMaterialBufferData[Index]:=TMaterial.DefaultShaderData;
        end;
 
-       FillChar(fMaterialDataGenerationMaterials,SizeOf(fMaterialDataGenerationMaterials),#0);
-
-       FillChar(fMaterialDataGenerationMaterialGenerations,SizeOf(fMaterialDataGenerationMaterialGenerations),#0);
+       FillChar(fMaterialDataMaterialGenerations,SizeOf(fMaterialDataMaterialGenerations),#$ff);
 
        MaxMaterialID:=0;
 
-       fMaterialDataGeneration:=0;
+       fMaterialDataGeneration:=1;
+
+       fMaterialDataProcessedGeneration:=0;
 
        for Index:=0 to fMaterials.Count-1 do begin
         Material:=fMaterials[Index];
-        if (Material.ID>0) and (Material.ID<length(TMaterialBufferData)) then begin
+        if (Material.ID>0) and (Material.ID<length(fMaterialBufferData)) then begin
          fMaterialBufferData[Material.ID]:=Material.fShaderData;
-         for InFlightFrameIndex:=0 to fCountInFlightFrames-1 do begin
-          fMaterialDataGenerationMaterials[InFlightFrameIndex,Material.ID]:=Material;
-          fMaterialDataGenerationMaterialGenerations[InFlightFrameIndex,Material.ID]:=fMaterialDataGeneration;
-         end;
+         fMaterialDataMaterialGenerations[Material.ID]:=Material.fGeneration;
          if MaxMaterialID<Material.ID then begin
           MaxMaterialID:=Material.ID;
          end;
         end;
+       end;
+
+       for Index:=0 to fCountInFlightFrames-1 do begin
+        fInFlightFrameMaterialBufferData[Index]:=fMaterialBufferData;
+        fInFlightFrameMaterialBufferDataOffsets[Index]:=0;
+        fInFlightFrameMaterialBufferDataSizes[Index]:=0;
+        fInFlightFrameMaterialBufferDataMinMaterialID[Index]:=0;
+        fInFlightFrameMaterialBufferDataGeneration[Index]:=0;
+        fInFlightFrameMaterialBufferDataUploadedGeneration[Index]:=0;
        end;
 
   //   MaterialBufferDataSize:=Min(RoundUpToPowerOfTwo((MaxMaterialID+1)*SizeOf(TMaterial.TShaderData)),SizeOf(TMaterialBufferData));
@@ -14161,6 +14538,12 @@ begin
        end;
 
        for Index:=0 to fCountInFlightFrames-1 do begin
+        fInFlightFrameImageInfos[Index]:=fImageInfos;
+        fInFlightFrameImageInfoImageDescriptorGenerations[Index]:=High(TpvUInt64)-2;
+        fInFlightFrameImageInfoImageDescriptorUploadedGenerations[Index]:=High(TpvUInt64)-4;
+       end;
+
+       for Index:=0 to fCountInFlightFrames-1 do begin
         fGlobalVulkanDescriptorSets[Index]:=TpvVulkanDescriptorSet.Create(fGlobalVulkanDescriptorPool,
                                                                           fGlobalVulkanDescriptorSetLayout);
         fGlobalVulkanDescriptorSets[Index].WriteToDescriptorSet(0,
@@ -14218,16 +14601,19 @@ begin
        end;
 
        for Index:=0 to fCountInFlightFrames-1 do begin
-        fImageDescriptorGenerations[Index]:=0;
+        fImageDescriptorProcessedGenerations[Index]:=0;
        end;
 
        fImageDescriptorGeneration:=0;
+       fImageDescriptorProcessedGeneration:=0;
 
        for Index:=0 to fCountInFlightFrames-1 do begin
-        fMaterialDataGenerations[Index]:=0;
+        fMaterialDataProcessedGenerations[Index]:=0;
+        fMaterialDataProcessedMaxChangedID[Index]:=$ffff;
+        fMaterialDataProcessedMinChangedID[Index]:=0;
        end;
 
-       fMaterialDataGeneration:=0;
+       fMaterialDataGeneration:=1;
 
       finally
        fUploaded:=true;
@@ -14356,6 +14742,14 @@ begin
  result:=TPasMPInterlocked.Increment(fRenderPassIndexCounter);
 end;
 
+procedure TpvScene3D.Check(const aInFlightFrameIndex:TpvSizeInt);
+var Group:TpvScene3D.TGroup;
+begin
+ for Group in fGroups do begin
+  Group.Check(aInFlightFrameIndex);
+ end;
+end;
+
 procedure TpvScene3D.Update(const aInFlightFrameIndex:TpvSizeInt);
 var Index,MaterialBufferDataOffset,MaterialBufferDataSize:TpvSizeInt;
     MinMaterialID,MaxMaterialID:TpvInt32;
@@ -14373,148 +14767,6 @@ begin
 
  for Group in fGroups do begin
   Group.Update(aInFlightFrameIndex);
- end;
-
- if fImageDescriptorGenerations[aInFlightFrameIndex]<>fImageDescriptorGeneration then begin
-
-  fImageDescriptorGenerationLock.Acquire;
-  try
-
-   if fImageDescriptorGenerations[aInFlightFrameIndex]<>fImageDescriptorGeneration then begin
-
-    fImageDescriptorGenerations[aInFlightFrameIndex]:=fImageDescriptorGeneration;
-
-    fImageInfos[0]:=fWhiteTexture.GetDescriptorImageInfo(false);
-    for Index:=1 to length(fImageInfos)-1 do begin
-     fImageInfos[Index]:=fImageInfos[0];
-    end;
-
-    for Index:=0 to fTextures.Count-1 do begin
-     Texture:=fTextures[Index];
-     if Texture.fUploaded and (Texture.fReferenceCounter>0) and (Texture.ID>0) and (((Texture.ID*2)+1)<length(fImageInfos)) then begin
-      fImageInfos[(Texture.ID*2)+0]:=Texture.GetDescriptorImageInfo(false);
-      fImageInfos[(Texture.ID*2)+1]:=Texture.GetDescriptorImageInfo(true);
-     end;
-    end;
-
-    fGlobalVulkanDescriptorSets[aInFlightFrameIndex].WriteToDescriptorSet(4,
-                                                                          0,
-                                                                          length(fImageInfos),
-                                                                          TVkDescriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER),
-                                                                          fImageInfos,
-                                                                          [],
-                                                                          [],
-                                                                          true);
-
-   end;
-
-  finally
-   fImageDescriptorGenerationLock.Release;
-  end;
-
- end;
-
- if fMaterialDataGenerations[aInFlightFrameIndex]<>fMaterialDataGeneration then begin
-
-  fMaterialDataGenerationLock.Acquire;
-  try
-
-   if fMaterialDataGenerations[aInFlightFrameIndex]<>fMaterialDataGeneration then begin
-
-    fMaterialDataGenerations[aInFlightFrameIndex]:=fMaterialDataGeneration;
-
-    MinMaterialID:=$ffff;
-    MaxMaterialID:=0;
-
-    for Index:=0 to length(TMaterialBufferData)-1 do begin
-     Material:=fMaterialIDMap[Index];
-     if (fMaterialDataGenerationMaterials[aInFlightFrameIndex,Index]<>Material) or
-        (assigned(Material) and
-         (fMaterialDataGenerationMaterialGenerations[aInFlightFrameIndex,Index]<>Material.fGeneration)) then begin
-      fMaterialDataGenerationMaterials[aInFlightFrameIndex,Index]:=Material;
-      if assigned(Material) then begin
-       fMaterialDataGenerationMaterialGenerations[aInFlightFrameIndex,Index]:=Material.fGeneration;
-       fMaterialBufferData[Index]:=Material.fShaderData;
-      end else begin
-       fMaterialBufferData[Index]:=TMaterial.DefaultShaderData;
-      end;
-      if MinMaterialID>Index then begin
-       MinMaterialID:=Index;
-      end;
-      if MaxMaterialID<Index then begin
-       MaxMaterialID:=Index;
-      end;
-     end;
-    end;
-
-    if MinMaterialID<=MaxMaterialID then begin
-
-     MaterialBufferDataOffset:=SizeOf(TMaterial.TShaderData)*MinMaterialID;
-     MaterialBufferDataSize:=SizeOf(TMaterial.TShaderData)*(MaxMaterialID+1);
-
-     case fBufferStreamingMode of
-
-      TBufferStreamingMode.Direct:begin
-
-       fVulkanMaterialDataBuffers[aInFlightFrameIndex].UpdateData(fMaterialBufferData[MinMaterialID],
-                                                                  MaterialBufferDataOffset,
-                                                                  MaterialBufferDataSize-MaterialBufferDataOffset);
-
-      end;
-
-      TBufferStreamingMode.Staging:begin
-
-       fVulkanMaterialDataStagingBuffers[aInFlightFrameIndex].UpdateData(fMaterialBufferData[MinMaterialID],
-                                                                         MaterialBufferDataOffset,
-                                                                         MaterialBufferDataSize-MaterialBufferDataOffset);
-
-       fVulkanMaterialDataBuffers[aInFlightFrameIndex].CopyFrom(fVulkanBufferCopyBatchItemArrays[aInFlightFrameIndex],
-                                                                fVulkanMaterialDataStagingBuffers[aInFlightFrameIndex],
-                                                                0,
-                                                                0,
-                                                                MaterialBufferDataSize);
-
-      end;
-
-      else begin
-       Assert(false);
-      end;
-
-     end;
-
-    end;
-
-   end;
-
-  finally
-   fMaterialDataGenerationLock.Release;
-  end;
-
- end;
-
- OldGeneration:=fLightAABBTreeStateGenerations[aInFlightFrameIndex];
- NewGeneration:=fLightAABBTreeGeneration;
- if (OldGeneration<>NewGeneration) and
-    (TPasMPInterlocked.CompareExchange(fLightAABBTreeStateGenerations[aInFlightFrameIndex],NewGeneration,OldGeneration)=OldGeneration) then begin
-
-  LightAABBTreeState:=@fLightAABBTreeStates[aInFlightFrameIndex];
-
-  if (length(fLightAABBTree.Nodes)>0) and (fLightAABBTree.Root>=0) then begin
-   if length(LightAABBTreeState^.TreeNodes)<length(fLightAABBTree.Nodes) then begin
-    LightAABBTreeState^.TreeNodes:=copy(fLightAABBTree.Nodes);
-   end else begin
-    Move(fLightAABBTree.Nodes[0],LightAABBTreeState^.TreeNodes[0],length(fLightAABBTree.Nodes)*SizeOf(TpvBVHDynamicAABBTree.TTreeNode));
-   end;
-   LightAABBTreeState^.Root:=fLightAABBTree.Root;
-  end else begin
-   LightAABBTreeState^.Root:=-1;
-  end;
-
-  LightBuffer:=fLightBuffers[aInFlightFrameIndex];
-  CollectLightAABBTreeLights(LightAABBTreeState^.TreeNodes,LightAABBTreeState^.Root,LightBuffer.fLightItems,LightBuffer.fLightMetaInfos);
-  fLightAABBTree.GetSkipListNodes(LightBuffer.fLightTree,GetLightUserDataIndex);
-  LightBuffer.Update;
-
  end;
 
  AABBTreeState:=@fAABBTreeStates[aInFlightFrameIndex];
@@ -14546,6 +14798,238 @@ begin
   fBoundingBox.Min:=TpvVector3.InlineableCreate(-1.0,-1.0,-1.0);
   fBoundingBox.Max:=TpvVector3.InlineableCreate(1.0,1.0,-1.0);
  end;
+
+end;
+
+procedure TpvScene3D.PrepareGPUUpdate(const aInFlightFrameIndex:TpvSizeInt);
+var Index,ItemID,BaseItemID,MaterialBufferDataOffset,MaterialBufferDataSize:TpvSizeInt;
+    MinMaterialID,MaxMaterialID:TpvUInt32;
+    OldGeneration,NewGeneration:TpvUInt64;
+    DirtyBits:TPasMPUInt32;
+    LightBuffer:TpvScene3D.TLightBuffer;
+    LightAABBTreeState,AABBTreeState:TpvBVHDynamicAABBTree.PState;
+    Group:TpvScene3D.TGroup;
+    Texture:TpvScene3D.TTexture;
+    GroupInstance:TpvScene3D.TGroup.TInstance;
+    First:boolean;
+    Material:TpvScene3D.TMaterial;
+begin
+
+ for Group in fGroups do begin
+  Group.PrepareGPUUpdate(aInFlightFrameIndex);
+ end;
+
+ if (fImageDescriptorProcessedGeneration<>fImageDescriptorGeneration) or
+    (fImageDescriptorProcessedGenerations[aInFlightFrameIndex]<>fImageDescriptorProcessedGeneration) then begin
+
+  fImageDescriptorGenerationLock.Acquire;
+  try
+
+   if fImageDescriptorProcessedGeneration<>fImageDescriptorGeneration then begin
+    fImageDescriptorProcessedGeneration:=fImageDescriptorGeneration;
+    fImageInfos[0]:=fWhiteTexture.GetDescriptorImageInfo(false);
+    for Index:=1 to length(fImageInfos)-1 do begin
+     fImageInfos[Index]:=fImageInfos[0];
+    end;
+    for Index:=0 to fTextures.Count-1 do begin
+     Texture:=fTextures[Index];
+     if Texture.fUploaded and (Texture.fReferenceCounter>0) and (Texture.ID>0) and (((Texture.ID*2)+1)<length(fImageInfos)) then begin
+      fImageInfos[(Texture.ID*2)+0]:=Texture.GetDescriptorImageInfo(false);
+      fImageInfos[(Texture.ID*2)+1]:=Texture.GetDescriptorImageInfo(true);
+     end;
+    end;
+   end;
+
+   if fImageDescriptorProcessedGenerations[aInFlightFrameIndex]<>fImageDescriptorProcessedGeneration then begin
+    fImageDescriptorProcessedGenerations[aInFlightFrameIndex]:=fImageDescriptorProcessedGeneration;
+    fInFlightFrameImageInfos[aInFlightFrameIndex]:=fImageInfos;
+    inc(fInFlightFrameImageInfoImageDescriptorGenerations[aInFlightFrameIndex]);
+   end;
+
+  finally
+   fImageDescriptorGenerationLock.Release;
+  end;
+
+ end;
+
+ if (fMaterialDataProcessedGeneration<>fMaterialDataGeneration) or
+    (fMaterialDataProcessedGenerations[aInFlightFrameIndex]<>fMaterialDataProcessedGeneration) then begin
+
+  fMaterialDataGenerationLock.Acquire;
+  try
+
+   if fMaterialDataProcessedGeneration<>fMaterialDataGeneration then begin
+    fMaterialDataProcessedGeneration:=fMaterialDataGeneration;
+    MinMaterialID:=$ffff;
+    MaxMaterialID:=0;
+    BaseItemID:=0;
+    for Index:=0 to length(fMaterialIDDirtyMap)-1 do begin
+     DirtyBits:=TPasMPInterlocked.Exchange(fMaterialIDDirtyMap[Index],0);
+     while DirtyBits<>0 do begin
+      ItemID:=BaseItemID+TPasMPMath.FindFirstSetBit32(DirtyBits);
+      if (ItemID>=0) and (ItemID<length(fMaterialIDMap)) then begin
+       Material:=fMaterialIDMap[ItemID];
+       if assigned(Material) then begin
+        fMaterialBufferData[ItemID]:=Material.fShaderData;
+        fMaterialDataMaterialGenerations[ItemID]:=Material.fGeneration;
+       end else begin
+        fMaterialBufferData[ItemID]:=TMaterial.DefaultShaderData;
+        fMaterialDataMaterialGenerations[ItemID]:=High(TpvUInt64);
+       end;
+       if MinMaterialID>ItemID then begin
+        MinMaterialID:=ItemID;
+       end;
+       if MaxMaterialID<ItemID then begin
+        MaxMaterialID:=ItemID;
+       end;
+      end;
+      DirtyBits:=DirtyBits and (DirtyBits-1);
+     end;
+     inc(BaseItemID,32);
+    end;
+    if MinMaterialID<=MaxMaterialID then begin
+     for Index:=0 to CountInFlightFrames-1 do begin
+      if fMaterialDataProcessedMinChangedID[Index]>MinMaterialID then begin
+       fMaterialDataProcessedMinChangedID[Index]:=MinMaterialID;
+      end;
+      if fMaterialDataProcessedMaxChangedID[Index]<MaxMaterialID then begin
+       fMaterialDataProcessedMaxChangedID[Index]:=MaxMaterialID;
+      end;
+     end;
+    end;
+   end;
+
+   if fMaterialDataProcessedGenerations[aInFlightFrameIndex]<>fMaterialDataProcessedGeneration then begin
+    fMaterialDataProcessedGenerations[aInFlightFrameIndex]:=fMaterialDataProcessedGeneration;
+    MinMaterialID:=fMaterialDataProcessedMinChangedID[aInFlightFrameIndex];
+    MaxMaterialID:=fMaterialDataProcessedMaxChangedID[aInFlightFrameIndex];
+    if MinMaterialID<=MaxMaterialID then begin
+     fMaterialDataProcessedMinChangedID[aInFlightFrameIndex]:=$ffff;
+     fMaterialDataProcessedMaxChangedID[aInFlightFrameIndex]:=$0000;
+     MaterialBufferDataOffset:=SizeOf(TMaterial.TShaderData)*MinMaterialID;
+     MaterialBufferDataSize:=SizeOf(TMaterial.TShaderData)*(MaxMaterialID+1);
+     fInFlightFrameMaterialBufferDataOffsets[aInFlightFrameIndex]:=MaterialBufferDataOffset;
+     fInFlightFrameMaterialBufferDataSizes[aInFlightFrameIndex]:=MaterialBufferDataSize;
+     fInFlightFrameMaterialBufferDataMinMaterialID[aInFlightFrameIndex]:=MinMaterialID;
+     inc(fInFlightFrameMaterialBufferDataGeneration[aInFlightFrameIndex]);
+     Move(fMaterialBufferData[fInFlightFrameMaterialBufferDataMinMaterialID[aInFlightFrameIndex]],
+          fInFlightFrameMaterialBufferData[aInFlightFrameIndex,fInFlightFrameMaterialBufferDataMinMaterialID[aInFlightFrameIndex]],
+          MaterialBufferDataSize-MaterialBufferDataOffset);
+    end;
+   end;
+
+  finally
+   fMaterialDataGenerationLock.Release;
+  end;
+
+ end;
+
+ OldGeneration:=fLightAABBTreeStateGenerations[aInFlightFrameIndex];
+ NewGeneration:=fLightAABBTreeGeneration;
+ if (OldGeneration<>NewGeneration) and
+    (TPasMPInterlocked.CompareExchange(fLightAABBTreeStateGenerations[aInFlightFrameIndex],NewGeneration,OldGeneration)=OldGeneration) then begin
+
+  LightAABBTreeState:=@fLightAABBTreeStates[aInFlightFrameIndex];
+
+  if (length(fLightAABBTree.Nodes)>0) and (fLightAABBTree.Root>=0) then begin
+   if length(LightAABBTreeState^.TreeNodes)<length(fLightAABBTree.Nodes) then begin
+    LightAABBTreeState^.TreeNodes:=copy(fLightAABBTree.Nodes);
+   end else begin
+    Move(fLightAABBTree.Nodes[0],LightAABBTreeState^.TreeNodes[0],length(fLightAABBTree.Nodes)*SizeOf(TpvBVHDynamicAABBTree.TTreeNode));
+   end;
+   LightAABBTreeState^.Root:=fLightAABBTree.Root;
+  end else begin
+   LightAABBTreeState^.Root:=-1;
+  end;
+
+  LightBuffer:=fLightBuffers[aInFlightFrameIndex];
+  CollectLightAABBTreeLights(LightAABBTreeState^.TreeNodes,LightAABBTreeState^.Root,LightBuffer.fLightItems,LightBuffer.fLightMetaInfos);
+  fLightAABBTree.GetSkipListNodes(LightBuffer.fLightTree,GetLightUserDataIndex);
+  LightBuffer.fNewLightAABBTreeGeneration:=fLightAABBTreeGeneration;
+
+ end;
+
+end;
+
+procedure TpvScene3D.ExecuteGPUUpdate(const aInFlightFrameIndex:TpvSizeInt);
+var Group:TpvScene3D.TGroup;
+begin
+
+ for Group in fGroups do begin
+  Group.ExecuteGPUUpdate(aInFlightFrameIndex);
+ end;
+
+ if fInFlightFrameImageInfoImageDescriptorUploadedGenerations[aInFlightFrameIndex]<>fInFlightFrameImageInfoImageDescriptorGenerations[aInFlightFrameIndex] then begin
+  fImageDescriptorGenerationLock.Acquire;
+  try
+   if fInFlightFrameImageInfoImageDescriptorUploadedGenerations[aInFlightFrameIndex]<>fInFlightFrameImageInfoImageDescriptorGenerations[aInFlightFrameIndex] then begin
+    fInFlightFrameImageInfoImageDescriptorUploadedGenerations[aInFlightFrameIndex]:=fInFlightFrameImageInfoImageDescriptorGenerations[aInFlightFrameIndex];
+    fGlobalVulkanDescriptorSets[aInFlightFrameIndex].WriteToDescriptorSet(4,
+                                                                          0,
+                                                                          length(fInFlightFrameImageInfos[aInFlightFrameIndex]),
+                                                                          TVkDescriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER),
+                                                                          fInFlightFrameImageInfos[aInFlightFrameIndex][0],
+                                                                          [],
+                                                                          [],
+                                                                          true);
+   end;
+  finally
+   fImageDescriptorGenerationLock.Release;
+  end;
+ end;
+
+ if fInFlightFrameMaterialBufferDataUploadedGeneration[aInFlightFrameIndex]<>fInFlightFrameMaterialBufferDataGeneration[aInFlightFrameIndex] then begin
+
+  fMaterialDataGenerationLock.Acquire;
+  try
+
+   if fInFlightFrameMaterialBufferDataUploadedGeneration[aInFlightFrameIndex]<>fInFlightFrameMaterialBufferDataGeneration[aInFlightFrameIndex] then begin
+
+    fInFlightFrameMaterialBufferDataUploadedGeneration[aInFlightFrameIndex]:=fInFlightFrameMaterialBufferDataGeneration[aInFlightFrameIndex];
+
+    if fInFlightFrameMaterialBufferDataOffsets[aInFlightFrameIndex]<fInFlightFrameMaterialBufferDataSizes[aInFlightFrameIndex] then begin
+
+     case fBufferStreamingMode of
+
+      TBufferStreamingMode.Direct:begin
+
+       fVulkanMaterialDataBuffers[aInFlightFrameIndex].UpdateData(fInFlightFrameMaterialBufferData[aInFlightFrameIndex,fInFlightFrameMaterialBufferDataMinMaterialID[aInFlightFrameIndex]],
+                                                                  fInFlightFrameMaterialBufferDataOffsets[aInFlightFrameIndex],
+                                                                  fInFlightFrameMaterialBufferDataSizes[aInFlightFrameIndex]-fInFlightFrameMaterialBufferDataOffsets[aInFlightFrameIndex]);
+
+      end;
+
+      TBufferStreamingMode.Staging:begin
+
+       fVulkanMaterialDataStagingBuffers[aInFlightFrameIndex].UpdateData(fInFlightFrameMaterialBufferData[aInFlightFrameIndex,fInFlightFrameMaterialBufferDataMinMaterialID[aInFlightFrameIndex]],
+                                                                         fInFlightFrameMaterialBufferDataOffsets[aInFlightFrameIndex],
+                                                                         fInFlightFrameMaterialBufferDataSizes[aInFlightFrameIndex]-fInFlightFrameMaterialBufferDataOffsets[aInFlightFrameIndex]);
+
+       fVulkanMaterialDataBuffers[aInFlightFrameIndex].CopyFrom(fVulkanBufferCopyBatchItemArrays[aInFlightFrameIndex],
+                                                                fVulkanMaterialDataStagingBuffers[aInFlightFrameIndex],
+                                                                0,
+                                                                0,
+                                                                fInFlightFrameMaterialBufferDataSizes[aInFlightFrameIndex]);
+
+      end;
+
+      else begin
+       Assert(false);
+      end;
+
+     end;
+
+    end;
+
+   end;
+
+  finally
+   fMaterialDataGenerationLock.Release;
+  end;
+
+ end;
+
+ LightBuffers[aInFlightFrameIndex].ExecuteGPUUpdate;
 
 end;
 
