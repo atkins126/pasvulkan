@@ -26,7 +26,7 @@
   #endif
 #endif
 
-#if defined(LOCKOIT)
+#if defined(LOCKOIT) || defined(DFAOIT)
   #extension GL_ARB_post_depth_coverage : enable
   #ifdef INTERLOCK
     #extension GL_ARB_fragment_shader_interlock : enable
@@ -295,6 +295,33 @@ layout (std430, set = 1, binding = 7) readonly buffer LightGridClusters {
     } uOIT;
   #endif
 
+#elif defined(DFAOIT)
+
+  #ifdef MSAA
+    layout(input_attachment_index = 0, set = 1, binding = 8) uniform subpassInputMS uOITImgDepth;
+    layout(set = 1, binding = 9, rgba32ui) uniform coherent uimage2DMSArray uOITImgFragmentCouterFragmentDepthsSampleMask;
+    layout(set = 1, binding = 10, rgba16f) uniform coherent image2DMSArray uOITImgAccumulation;
+    layout(set = 1, binding = 11, rgba16f) uniform coherent image2DMSArray uOITImgAverage;
+    layout(set = 1, binding = 12, rgba16f) uniform coherent image2DMSArray uOITImgBucket;
+  #else
+    layout(input_attachment_index = 0, set = 1, binding = 8) uniform subpassInput uOITImgDepth;
+    layout(set = 1, binding = 9, rgba32ui) uniform coherent uimage2DArray uOITImgFragmentCouterFragmentDepthsSampleMask;
+    layout(set = 1, binding = 10, rgba16f) uniform coherent image2DArray uOITImgAccumulation;
+    layout(set = 1, binding = 11, rgba16f) uniform coherent image2DArray uOITImgAverage;
+    layout(set = 1, binding = 12, rgba16f) uniform coherent image2DArray uOITImgBucket;
+  #endif
+  #ifdef SPINLOCK
+    layout(set = 1, binding = 13, r32ui) uniform coherent uimage2DArray uOITImgSpinLock;
+    /*layout(std140, set = 1, binding = 14) uniform uboOIT {
+      ivec4 oitViewPort;
+    } uOIT;*/
+  #endif
+  #ifdef INTERLOCK
+    /*layout(std140, set = 1, binding = 14) uniform uboOIT {
+      ivec4 oitViewPort;
+    } uOIT;*/
+  #endif
+
 #elif defined(LOOPOIT)
 
   layout(std140, set = 1, binding = 8) uniform uboOIT {
@@ -318,6 +345,8 @@ layout (std430, set = 1, binding = 7) readonly buffer LightGridClusters {
 #endif
 
 /* clang-format on */
+
+vec3 workTangent, workBitangent, workNormal;
 
 float sq(float t){
   return t * t; //
@@ -377,7 +406,7 @@ float iridescenceFactor = 0.0;
 float iridescenceIor = 1.3;
 float iridescenceThickness = 400.0;
 
-#if defined(BLEND) || defined(LOOPOIT) || defined(LOCKOIT) || defined(MBOIT) || defined(WBOIT)
+#if defined(BLEND) || defined(LOOPOIT) || defined(LOCKOIT) || defined(MBOIT) || defined(WBOIT) || defined(DFAOIT)
   #define TRANSMISSION
 #endif
 
@@ -867,7 +896,7 @@ vec2 computeReceiverPlaneDepthBias(const vec3 position) {
 vec3 getOffsetedBiasedWorldPositionForShadowMapping(const in vec4 values, const in vec3 lightDirection){
   vec3 worldSpacePosition = inWorldSpacePosition;
   {
-    vec3 worldSpaceNormal = inNormal;
+    vec3 worldSpaceNormal = workNormal;
     float cos_alpha = clamp(dot(worldSpaceNormal, lightDirection), 0.0, 1.0);
     float offset_scale_N = sqrt(1.0 - (cos_alpha * cos_alpha));   // sin(acos(L·N))
     float offset_scale_L = offset_scale_N / max(5e-4, cos_alpha); // tan(acos(L·N))
@@ -1249,6 +1278,10 @@ float getMSMShadowIntensity(vec4 moments, float depth, float depthBias, float mo
   return 1.0 - clamp((s.z + (s.w * ((((s.x * z.z) - (b.x * (s.x + z.z))) + b.y) / ((z.z - s.y) * (z.x - z.y))))), 0.0, 1.0); // * 1.03
 }
 
+float fastTanArcCos(const in float x){
+  return sqrt(-fma(x, x, -1.0)) / x; // tan(acos(x)); sqrt(1.0 - (x * x)) / x 
+}
+
 float doCascadedShadowMapShadow(const in int cascadedShadowMapIndex, const in vec3 lightDirection) {
   mat4 shadowMapMatrix = uCascadedShadowMaps.shadowMapMatrices[cascadedShadowMapIndex];
   vec4 shadowNDC = shadowMapMatrix * vec4(inWorldSpacePosition, 1.0);
@@ -1261,7 +1294,7 @@ float doCascadedShadowMapShadow(const in int cascadedShadowMapIndex, const in ve
                         0.1549679261, 0.1394629426, 0.7963415838, -0.172282317,                                           //
                         0.1451988946, 0.2120202157, 0.7258694464, -0.2758014811,                                          //
                         0.163127443, 0.2591432266, 0.6539092497, -0.3376131734);
-    float depthBias = clamp(0.005 * tan(acos(clamp(dot(inNormal, -lightDirection), -1.0, 1.0))), 0.0, 0.1) * 0.15;
+    float depthBias = clamp(0.005 * fastTanArcCos(clamp(dot(workNormal, -lightDirection), -1.0, 1.0)), 0.0, 0.1) * 0.15;
     return clamp(reduceLightBleeding(getMSMShadowIntensity(moments, shadowNDC.z, depthBias, 3e-4), 0.25), 0.0, 1.0);
   } else {
     return 1.0;
@@ -1287,7 +1320,7 @@ const uint smPBRMetallicRoughness = 0u,  //
     smPBRSpecularGlossiness = 1u,        //
     smUnlit = 2u;                        //
 
-#if defined(ALPHATEST) || defined(LOOPOIT) || defined(LOCKOIT) || defined(WBOIT) || defined(MBOIT) || !defined(DEPTHONLY) 
+#if defined(ALPHATEST) || defined(LOOPOIT) || defined(LOCKOIT) || defined(WBOIT) || defined(MBOIT) || defined(DFAOIT) || !defined(DEPTHONLY)
 
 uvec2 textureFlags;
 vec2 texCoords[2];
@@ -1325,6 +1358,12 @@ vec4 textureFetch(const in int textureIndex, const in vec4 defaultValue, const b
 #endif
 
 void main() {
+  {
+	float frontFacingSign = gl_FrontFacing ? 1.0 : -1.0;   
+	workTangent = inTangent * frontFacingSign;
+	workBitangent = inBitangent * frontFacingSign;
+	workNormal = inNormal * frontFacingSign;
+  }
 #if !(defined(NOBUFFERREFERENCE) || defined(USEINT64))
   material = uMaterials.materials;
   {
@@ -1335,7 +1374,7 @@ void main() {
     material = Material(materialPointer);
   }
 #endif
-#if defined(ALPHATEST) || defined(LOOPOIT) || defined(LOCKOIT) || defined(WBOIT) || defined(MBOIT) || !defined(DEPTHONLY) 
+#if defined(ALPHATEST) || defined(LOOPOIT) || defined(LOCKOIT) || defined(WBOIT) || defined(MBOIT) || defined(DFAOIT) || !defined(DEPTHONLY)
   textureFlags = material.alphaCutOffFlagsTex0Tex1.zw;
   texCoords[0] = inTexCoord0;
   texCoords[1] = inTexCoord1;
@@ -1355,7 +1394,7 @@ void main() {
   shadingModel = (flags >> 0u) & 0xfu;
 #endif
 #ifdef DEPTHONLY
-#if defined(ALPHATEST) || defined(LOOPOIT) || defined(LOCKOIT) || defined(WBOIT) || defined(MBOIT) 
+#if defined(ALPHATEST) || defined(LOOPOIT) || defined(LOCKOIT) || defined(WBOIT) || defined(MBOIT) || defined(DFAOIT)
   float alpha = textureFetch(0, vec4(1.0), true).w * material.baseColorFactor.w * inColor0.w;
 #endif
 #else
@@ -1404,7 +1443,7 @@ void main() {
       const float minimumRoughness = 0.0525;
       float geometryRoughness;
       {
-        vec3 dxy = max(abs(dFdx(inNormal)), abs(dFdy(inNormal)));
+        vec3 dxy = max(abs(dFdx(workNormal)), abs(dFdy(workNormal)));
         geometryRoughness = max(max(dxy.x, dxy.y), dxy.z);
       }
 
@@ -1424,7 +1463,7 @@ void main() {
       float kernelRoughness;
       {
         const float SIGMA2 = 0.15915494, KAPPA = 0.18;        
-        vec3 dx = dFdx(inNormal), dy = dFdy(inNormal);
+        vec3 dx = dFdx(workNormal), dy = dFdy(workNormal);
         kernelRoughness = min(KAPPA, (2.0 * SIGMA2) * (dot(dx, dx) + dot(dy, dy)));
         float roughness = perceptualRoughness * perceptualRoughness;
         perceptualRoughness = sqrt(sqrt(clamp((roughness * roughness) + kernelRoughness, 0.0, 1.0)));
@@ -1437,11 +1476,11 @@ void main() {
       if ((textureFlags.x & (1 << 2)) != 0) {
         vec4 normalTexture = textureFetch(2, vec2(0.0, 1.0).xxyx, false);
         normal = normalize(                                                                                                                      //
-            mat3(normalize(inTangent), normalize(inBitangent), normalize(inNormal)) *                                                            //
+            mat3(normalize(workTangent), normalize(workBitangent), normalize(workNormal)) *                                                            //
             normalize((normalTexture.xyz - vec3(0.5)) * (vec2(material.metallicRoughnessNormalScaleOcclusionStrengthFactor.z, 1.0).xxy * 2.0))  //
         );
       } else {
-        normal = normalize(inNormal);
+        normal = normalize(workNormal);
       }
       normal *= (((flags & (1u << 6u)) != 0u) && !gl_FrontFacing) ? -1.0 : 1.0;
 
@@ -1454,7 +1493,7 @@ void main() {
       float transparency = 0.0;
       float refractiveAngle = 0.0;
       float shadow = 1.0;
-  #if defined(ALPHATEST) || defined(LOOPOIT) || defined(LOCKOIT) || defined(WBOIT) || defined(MBOIT) || defined(BLEND)
+  #if defined(ALPHATEST) || defined(LOOPOIT) || defined(LOCKOIT) || defined(WBOIT) || defined(MBOIT) || defined(DFAOIT) || defined(BLEND)
       ambientOcclusion = 1.0;
   #else
       ambientOcclusion = ((textureFlags.x & (1 << 3)) != 0) ? 1.0 : texelFetch(uPassTextures[0], ivec3(gl_FragCoord.xy, int(gl_ViewIndex)), 0).x;
@@ -1524,7 +1563,7 @@ void main() {
         float kernelRoughness;
         {
           const float SIGMA2 = 0.15915494, KAPPA = 0.18;        
-          vec3 dx = dFdx(inNormal), dy = dFdy(inNormal);
+          vec3 dx = dFdx(workNormal), dy = dFdy(workNormal);
           kernelRoughness = min(KAPPA, (2.0 * SIGMA2) * (dot(dx, dx) + dot(dy, dy)));
           float roughness = sheenRoughness * sheenRoughness;
           sheenRoughness = sqrt(sqrt(clamp((roughness * roughness) + kernelRoughness, 0.0, 1.0)));
@@ -1549,9 +1588,9 @@ void main() {
         }
         if ((textureFlags.x & (1 << 9)) != 0) {
           vec4 normalTexture = textureFetch(9, vec2(0.0, 1.0).xxyx, false);
-          clearcoatNormal = normalize(mat3(normalize(inTangent), normalize(inBitangent), normalize(inNormal)) * normalize((normalTexture.xyz - vec3(0.5)) * (vec2(material.metallicRoughnessNormalScaleOcclusionStrengthFactor.z, 1.0).xxy * 2.0)));
+          clearcoatNormal = normalize(mat3(normalize(workTangent), normalize(workBitangent), normalize(workNormal)) * normalize((normalTexture.xyz - vec3(0.5)) * (vec2(material.metallicRoughnessNormalScaleOcclusionStrengthFactor.z, 1.0).xxy * 2.0)));
         } else {
-          clearcoatNormal = normalize(inNormal);
+          clearcoatNormal = normalize(workNormal);
         }
         clearcoatNormal *= (((flags & (1u << 6u)) != 0u) && !gl_FrontFacing) ? -1.0 : 1.0;
 #ifdef UseGeometryRoughness        
@@ -1899,7 +1938,7 @@ void main() {
     float fragDepth;
   #endif
   if (alpha < uintBitsToFloat(material.alphaCutOffFlagsTex0Tex1.x)) {
-  #if defined(WBOIT) || defined(LOCKOIT) || defined(LOCKOIT_PASS2)
+  #if defined(WBOIT) || defined(LOCKOIT) || defined(DFAOIT) || defined(LOCKOIT_PASS2)
     finalColor = vec4(alpha = 0.0);    
   #elif defined(LOCKOIT_PASS1)
     alpha = 0.0;    
@@ -1933,8 +1972,8 @@ void main() {
   #if defined(NODISCARD)  
     fragDepth = gl_FragCoord.z;
   #endif
-  #if defined(WBOIT) || defined(MBOIT) || defined(LOCKOIT) || defined(LOOPOIT)
-    #if defined(WBOIT) || defined(LOCKOIT) || defined(LOOPOIT_PASS2)
+  #if defined(WBOIT) || defined(MBOIT) || defined(LOCKOIT) || defined(LOOPOIT) || defined(DFAOIT)
+    #if defined(WBOIT) || defined(LOCKOIT) || defined(LOOPOIT_PASS2) || defined(DFAOIT)
       finalColor.w = alpha = 1.0;    
     #elif defined(LOOPOIT_PASS1)
       alpha = 1.0;    
@@ -1948,7 +1987,7 @@ void main() {
   #if defined(NODISCARD)  
     gl_FragDepth = fragDepth;
   #endif
-  #if !(defined(WBOIT) || defined(MBOIT) || defined(LOCKOIT) || defined(LOOPOIT))
+  #if !(defined(WBOIT) || defined(MBOIT) || defined(LOCKOIT) || defined(LOOPOIT) || defined(DFAOIT))
     #ifdef MSAA
       #if 0
         vec2 alphaTextureSize = vec2(texture2DSize(0));
@@ -2019,6 +2058,119 @@ void main() {
     outFragColor = vec4(finalColor.xyz, 1.0) * (finalColor.w * transmittance_at_depth);
   } 
 #endif
+
+#elif defined(DFAOIT)
+
+  int oitMultiViewIndex = int(gl_ViewIndex);
+  ivec3 oitCoord = ivec3(ivec2(gl_FragCoord.xy), oitMultiViewIndex);
+  uint oitStoreMask = uint(gl_SampleMaskIn[0]);
+
+#ifdef INTERLOCK
+  beginInvocationInterlock();
+#endif
+
+  // Workaround for missing VK_EXT_post_depth_coverage support on AMD GPUs older than RDNA,
+  // namely, an extra OIT renderpass with an fragment-shader-based depth check on the depth
+  // buffer values from the previous forward rendering pass, which should fix problems with
+  // transparent and opaque objects in MSAA, even without VK_EXT_post_depth_coverage support,
+  // at least I hope it so:
+  uint oitCurrentDepth = floatBitsToUint(gl_FragCoord.z);
+ #ifdef MSAA
+  uint oitDepth = floatBitsToUint(subpassLoad(uOITImgDepth, gl_SampleID).r);
+ #else
+  uint oitDepth = floatBitsToUint(subpassLoad(uOITImgDepth).r);
+ #endif
+  if(
+#ifdef USE_SPECIALIZATION_CONSTANTS
+     ((UseReversedZ && (oitCurrentDepth >= oitDepth)) ||
+      ((!UseReversedZ) && (oitCurrentDepth <= oitDepth))) &&
+#else
+#ifdef REVERSEDZ
+     (oitCurrentDepth >= oitDepth) &&
+#else
+     (oitCurrentDepth <= oitDepth) &&
+#endif
+#endif
+     (min(alpha, finalColor.w) > 0.0)
+    ){
+
+#ifdef SPINLOCK
+    bool oitDone = /*gl_HelperInvocation ||*/ (oitStoreMask == 0);
+    while(!oitDone){
+      uint oitOld = imageAtomicExchange(uOITImgSpinLock, oitCoord, 1u);
+      if(oitOld == 0u){
+#endif
+
+#ifdef MSAA
+        #define SAMPLE_ID , int(gl_SampleID)
+#else
+        #define SAMPLE_ID
+#endif
+
+        // Average color
+        imageStore(uOITImgAverage, oitCoord SAMPLE_ID , vec4(imageLoad(uOITImgAverage, oitCoord SAMPLE_ID ) + finalColor));
+
+        // Accumulated color
+        imageStore(uOITImgAccumulation, oitCoord SAMPLE_ID , vec4((imageLoad(uOITImgAccumulation, oitCoord SAMPLE_ID ) + vec4(finalColor.xyz * finalColor.w, 0.0)) * vec2(1.0, 1.0 - finalColor.w).xxxy));
+
+        // Load the first and second fragments
+        vec4 fragments[2];
+        fragments[0] = imageLoad(uOITImgBucket, ivec3(oitCoord.xy, (oitCoord.z << 1) | 0) SAMPLE_ID );
+        fragments[1] = imageLoad(uOITImgBucket, ivec3(oitCoord.xy, (oitCoord.z << 1) | 1) SAMPLE_ID );
+
+        uvec4 fragmentCounterFragmentDepthsSampleMask = (imageLoad(uOITImgFragmentCouterFragmentDepthsSampleMask, oitCoord SAMPLE_ID ) + uvec2(1u, 0u).xyyy) | uvec2(0, oitStoreMask).xxxy;
+        uvec2 depths = uvec2(fragmentCounterFragmentDepthsSampleMask.yz); 
+
+        uint depth = oitCurrentDepth;
+
+        if
+#ifdef REVERSEDZ
+          (depth >= depths.x)
+#else
+          (depth <= depths.x)
+#endif
+        {
+          vec4 tempColor = finalColor;
+          uint tempDepth = depth;
+          finalColor = fragments[0];
+          depth = depths.x;
+          imageStore(uOITImgBucket, ivec3(oitCoord.xy, (oitCoord.z << 1) | 0) SAMPLE_ID , fragments[0] = tempColor);
+          fragmentCounterFragmentDepthsSampleMask.y = depths.x = tempDepth;
+        }
+
+        if
+#ifdef REVERSEDZ
+          (depth >= depths.y)
+#else
+          (depth <= depths.y)
+#endif
+        {
+          vec4 tempColor = finalColor;
+          uint tempDepth = depth;
+          finalColor = fragments[1];
+          depth = depths.y;          
+          imageStore(uOITImgBucket, ivec3(oitCoord.xy, (oitCoord.z << 1) | 1) SAMPLE_ID , fragments[1] = tempColor);
+          fragmentCounterFragmentDepthsSampleMask.z = depths.y = tempDepth;
+        }
+
+        imageStore(uOITImgFragmentCouterFragmentDepthsSampleMask, oitCoord SAMPLE_ID , fragmentCounterFragmentDepthsSampleMask);
+
+        #undef SAMPLE_ID
+
+#ifdef SPINLOCK
+        imageAtomicExchange(uOITImgSpinLock, oitCoord, 0u);
+        oitDone = true;
+      }
+    }
+#endif
+
+  }
+
+#ifdef INTERLOCK
+  endInvocationInterlock();
+#endif
+
+  outFragColor = vec4(0.0);
 
 #elif defined(LOCKOIT)
 
@@ -2317,7 +2469,7 @@ void main() {
 #ifdef VELOCITY
   outFragVelocity = (((inCurrentClipSpace.xy / inCurrentClipSpace.w) - inJitter.xy) - ((inPreviousClipSpace.xy / inPreviousClipSpace.w) - inJitter.zw)) * 0.5;
 
-  vec3 normal = normalize(inNormal);
+  vec3 normal = normalize(workNormal);
   normal /= (abs(normal.x) + abs(normal.y) + abs(normal.z));
   outFragNormal = normalize(vec3(fma(normal.xx, vec2(0.5, -0.5), vec2(fma(normal.y, 0.5, 0.5))), clamp(normal.z * 3.402823e+38, 0.0, 1.0)));  
 #endif
@@ -2325,6 +2477,6 @@ void main() {
 }
 
 /*oid main() {
-  outFragColor = vec4(vec3(mix(0.25, 1.0, max(0.0, dot(inNormal, vec3(0.0, 0.0, 1.0))))), 1.0);
-//outFragColor = vec4(texture(uTexture, inTexCoord)) * vec4(vec3(mix(0.25, 1.0, max(0.0, dot(inNormal, vec3(0.0, 0.0, 1.0))))), 1.0);
+  outFragColor = vec4(vec3(mix(0.25, 1.0, max(0.0, dot(workNormal, vec3(0.0, 0.0, 1.0))))), 1.0);
+//outFragColor = vec4(texture(uTexture, inTexCoord)) * vec4(vec3(mix(0.25, 1.0, max(0.0, dot(workNormal, vec3(0.0, 0.0, 1.0))))), 1.0);
 }*/

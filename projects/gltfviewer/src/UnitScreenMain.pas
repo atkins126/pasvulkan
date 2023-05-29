@@ -400,7 +400,7 @@ begin
   end else begin
    FrameTime:=0.0;
   end;
-  Str(FrameTime:1:5,fFrameTimeString);
+  Str(FrameTime*1000.0:1:5,fFrameTimeString);
  end;
 
  if abs(fOldFPS-FPS)>=100 then begin
@@ -590,7 +590,7 @@ begin
      end;
      for Result_ in fRendererInstance.FrameGraph.LastTimerQueryResults do begin
       if Result_.Valid then begin
-       writeln(Result_.Name:MaxLen,': ',Result_.Duration:1:5,' ms');
+       writeln(Result_.Name:MaxLen,': ',Result_.Duration*1000.0:1:5,' ms');
       end;
      end;
     end;
@@ -609,6 +609,8 @@ begin
    end;
    KEYCODE_L:begin
     pvApplication.CatchMouse:=not pvApplication.CatchMouse;
+    pvApplication.VisibleMouseCursor:=not pvApplication.CatchMouse;
+    pvApplication.RelativeMouse:=pvApplication.CatchMouse;
    end;
    KEYCODE_V,KEYCODE_B:begin
     if assigned(fGroupInstance) then begin

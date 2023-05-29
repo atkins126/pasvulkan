@@ -369,6 +369,8 @@ type EpvVulkanException=class(Exception);
        fFragmentShaderInterlockFeaturesEXT:TVkPhysicalDeviceFragmentShaderInterlockFeaturesEXT;
        fBufferDeviceAddressFeaturesKHR:TVkPhysicalDeviceBufferDeviceAddressFeaturesKHR;
        fHostQueryResetFeaturesEXT:TVkPhysicalDeviceHostQueryResetFeaturesEXT;
+       fPresentIDFeatures:TVkPhysicalDevicePresentIDFeaturesKHR;
+       fPresentWaitFeatures:TVkPhysicalDevicePresentWaitFeaturesKHR;
        fFeatures2KHR:TVkPhysicalDeviceFeatures2KHR;
        fProperties2KHR:TVkPhysicalDeviceProperties2KHR;
        fQueueFamilyProperties:TVkQueueFamilyPropertiesArray;
@@ -427,6 +429,8 @@ type EpvVulkanException=class(Exception);
        property FragmentShaderInterlockFeaturesEXT:TVkPhysicalDeviceFragmentShaderInterlockFeaturesEXT read fFragmentShaderInterlockFeaturesEXT;
        property BufferDeviceAddressFeaturesKHR:TVkPhysicalDeviceBufferDeviceAddressFeaturesKHR read fBufferDeviceAddressFeaturesKHR;
        property HostQueryResetFeaturesEXT:TVkPhysicalDeviceHostQueryResetFeaturesEXT read fHostQueryResetFeaturesEXT;
+       property PresentIDFeatures:TVkPhysicalDevicePresentIDFeaturesKHR read fPresentIDFeatures;
+       property PresentWaitFeatures:TVkPhysicalDevicePresentWaitFeaturesKHR read fPresentWaitFeatures;
        property Features2KHR:TVkPhysicalDeviceFeatures2KHR read fFeatures2KHR;
        property Properties2KHR:TVkPhysicalDeviceProperties2KHR read fProperties2KHR;
       published
@@ -604,6 +608,8 @@ type EpvVulkanException=class(Exception);
        fImageFormatList:boolean;
        fUseNVIDIADeviceDiagnostics:boolean;
        fFullScreenExclusiveSupport:boolean;
+       fPresentIDSupport:boolean;
+       fPresentWaitSupport:boolean;
        fNVIDIADeviceDiagnosticsFlags:TVkDeviceDiagnosticsConfigFlagsNV;
        fNVIDIADeviceDiagnosticsConfigCreateInfoNV:TVkDeviceDiagnosticsConfigCreateInfoNV;
        fDescriptorIndexingFeaturesEXT:TVkPhysicalDeviceDescriptorIndexingFeaturesEXT;
@@ -613,6 +619,8 @@ type EpvVulkanException=class(Exception);
        fFragmentShaderInterlockFeaturesEXT:TVkPhysicalDeviceFragmentShaderInterlockFeaturesEXT;
        fBufferDeviceAddressFeaturesKHR:TVkPhysicalDeviceBufferDeviceAddressFeaturesKHR;
        fHostQueryResetFeaturesEXT:TVkPhysicalDeviceHostQueryResetFeaturesEXT;
+       fPresentIDFeatures:TVkPhysicalDevicePresentIDFeaturesKHR;
+       fPresentWaitFeatures:TVkPhysicalDevicePresentWaitFeaturesKHR;
       protected
       public
        constructor Create(const aInstance:TpvVulkanInstance;
@@ -666,6 +674,8 @@ type EpvVulkanException=class(Exception);
        property UseNVIDIADeviceDiagnostics:boolean read fUseNVIDIADeviceDiagnostics write fUseNVIDIADeviceDiagnostics;
        property NVIDIADeviceDiagnosticsFlags:TVkDeviceDiagnosticsConfigFlagsNV read fNVIDIADeviceDiagnosticsFlags write fNVIDIADeviceDiagnosticsFlags;
        property FullScreenExclusiveSupport:boolean read fFullScreenExclusiveSupport;
+       property PresentIDSupport:boolean read fPresentIDSupport;
+       property PresentWaitSupport:boolean read fPresentWaitSupport;
      end;
 
      TpvVulkanDeviceDebugMarker=class
@@ -1737,7 +1747,8 @@ type EpvVulkanException=class(Exception);
                           const aRenderPass:TpvVulkanRenderPass;
                           const aWidth:TpvUInt32;
                           const aHeight:TpvUInt32;
-                          const aLayers:TpvUInt32); reintroduce; overload;
+                          const aLayers:TpvUInt32;
+                          const aDoDestroyAttachments:boolean=true); reintroduce; overload;
        constructor Create(const aDevice:TpvVulkanDevice;
                           const aRenderPass:TpvVulkanRenderPass;
                           const aWidth:TpvUInt32;
@@ -1838,7 +1849,7 @@ type EpvVulkanException=class(Exception);
                           const aImageUsage:TVkImageUsageFlags=TVkImageUsageFlags(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
                           const aImageSharingMode:TVkSharingMode=VK_SHARING_MODE_EXCLUSIVE); reintroduce; overload;
        destructor Destroy; override;
-       function QueuePresent(const aQueue:TpvVulkanQueue;const aSemaphore:TpvVulkanSemaphore=nil):TVkResult;
+       function QueuePresent(const aQueue:TpvVulkanQueue;const aSemaphore:TpvVulkanSemaphore=nil;const aNext:Pointer=nil):TVkResult;
        function AcquireNextImage(const aSemaphore:TpvVulkanSemaphore=nil;const aFence:TpvVulkanFence=nil;const aTimeOut:TpvUInt64=TpvUInt64(high(TpvUInt64))):TVkResult;
        procedure GetScreenshot(out aScreenshot:TpvVulkanSwapChainScreenshot;const aSwapChainImage:TpvVulkanImage=nil);
        procedure SaveScreenshotAsJPEGToStream(const aStream:TStream;const aSwapChainImage:TpvVulkanImage=nil;const aQuality:TpvInt32=95);
@@ -3051,6 +3062,7 @@ type EpvVulkanException=class(Exception);
        fSRGBImageView:TpvVulkanImageView;
        fImageViewType:TVkImageViewType;
        fSampler:TpvVulkanSampler;
+       fExternalSampler:Boolean;
        fDescriptorImageInfo:TVkDescriptorImageInfo;
        fMemoryBlock:TpvVulkanDeviceMemoryBlock;
        fWidth:TpvInt32;
@@ -3071,6 +3083,9 @@ type EpvVulkanException=class(Exception);
        fFilterMode:TpvVulkanTextureFilterMode;
        fBorderColor:TVkBorderColor;
        fMaxAnisotropy:double;
+       fStreaming:boolean;
+       fStagingBuffer:TpvVulkanBuffer;
+       procedure SetSampler(const aSampler:TpvVulkanSampler);
       public
        constructor Create; reintroduce;
        constructor CreateFromMemory(const aDevice:TpvVulkanDevice;
@@ -3095,7 +3110,8 @@ type EpvVulkanException=class(Exception);
                                     const aSwapEndianness:boolean;
                                     const aSwapEndiannessTexels:TpvInt32;
                                     const aDDSStructure:boolean=true;
-                                    const aAdditionalSRGB:boolean=false);
+                                    const aAdditionalSRGB:boolean=false;
+                                    const aStreaming:boolean=false);
        constructor CreateFromStream(const aDevice:TpvVulkanDevice;
                                     const aGraphicsQueue:TpvVulkanQueue;
                                     const aGraphicsCommandBuffer:TpvVulkanCommandBuffer;
@@ -3278,7 +3294,8 @@ type EpvVulkanException=class(Exception);
        property ImageView:TpvVulkanImageView read fImageView;
        property SRGBImageView:TpvVulkanImageView read fSRGBImageView;
        property ImageViewType:TVkImageViewType read fImageViewType;
-       property Sampler:TpvVulkanSampler read fSampler;
+       property Sampler:TpvVulkanSampler read fSampler write SetSampler;
+       property ExternalSampler:Boolean read fExternalSampler;
        property MemoryBlock:TpvVulkanDeviceMemoryBlock read fMemoryBlock;
        property Width:TpvInt32 read fWidth;
        property Height:TpvInt32 read fHeight;
@@ -3697,6 +3714,37 @@ const BooleanToVkBool:array[boolean] of TVkBool32=(VK_FALSE,VK_TRUE);
 
 type PUInt32Array=^TUInt32Array;
      TUInt32Array=array[0..65535] of TpvUInt32;
+
+procedure VulkanDebugLn(const What:TpvUTF8String);
+{$if defined(Windows)}
+{$if defined(Debug) or not defined(Release)}
+var StdOut:Windows.THandle;
+    TemporaryString:WideString;
+{$ifend}
+begin
+{$if defined(Debug) or not defined(Release)}
+ TemporaryString:=WideString(What);
+ OutputDebugStringW(PWideChar(TemporaryString));
+ StdOut:=GetStdHandle(Std_Output_Handle);
+//Win32Check(StdOut<>Invalid_Handle_Value);
+ if (StdOut<>0) and (StdOut<>Invalid_Handle_Value) then begin
+  WriteLn(What);
+ end;
+{$ifend}
+end;
+{$elseif defined(fpc) and defined(android)}
+begin
+{$if defined(Debug) or not defined(Release)}
+ __android_log_write(ANDROID_LOG_DEBUG,'PasVulkanApplication',PAnsiChar(TpvUTF8String(What)));
+{$ifend}
+end;
+{$else}
+begin
+{$if defined(Debug) or not defined(Release)}
+ WriteLn({$ifdef Windows}WideString(What){$else}What{$endif});
+{$ifend}
+end;
+{$ifend}
 
 function VulkanSwap16(x:TpvUInt16):TpvUInt16;
 {$if defined(cpu386)}assembler; register;
@@ -6278,8 +6326,15 @@ begin
 end;
 
 procedure VulkanCheckResult(const ResultCode:TVkResult);
+{$if (defined(fpc) and defined(android)) and not defined(Release)}
+var s:TpvUTF8String;
+{$ifend}
 begin
  if ResultCode<>VK_SUCCESS then begin
+{$if (defined(fpc) and defined(android)) and not defined(Release)}
+  s:='Vulkan error ['+IntToStr(TpvInt64(ResultCode))+']: '+VulkanErrorToString(ResultCode);
+  __android_log_write(ANDROID_LOG_ERROR,'PasVulkanApplication',PAnsiChar(s));
+{$ifend}
   raise EpvVulkanResultException.Create(ResultCode);
  end;
 end;
@@ -6578,19 +6633,74 @@ begin
 end;
 
 function TpvVulkanAllocationManager.AllocationCallback(const Size:TVkSize;const Alignment:TVkSize;const Scope:TVkSystemAllocationScope):PVkVoid;
+var Original,Aligned:pointer;
+    Mask:TpvPtrUInt;
+    Align,RealSize:TpvSizeUInt;
 begin
- GetMem(result,Size);
+ if Alignment<1 then begin
+  Align:=1;
+ end else begin
+  Align:=Alignment;
+ end;
+ if (Align and (Align-1))<>0 then begin
+  Align:=RoundUpToPowerOfTwoSizeUInt(Align);
+ end;
+ Mask:=Align-1;
+ RealSize:=Size+(Align shl 1)+SizeOf(Pointer)+(SizeOf(TpvSizeUInt)*2);
+ GetMem(Original,RealSize);
+ FillChar(Original^,RealSize,#0);
+ Aligned:=Pointer(TpvPtrUInt(TpvPtrUInt(Original)+SizeOf(Pointer)+(SizeOf(TpvSizeUInt)*2)));
+ if (Align>1) and ((TpvPtrUInt(Aligned) and Mask)<>0) then begin
+  inc(TpvPtrUInt(Aligned),TpvPtrUInt(TpvPtrUInt(Align)-(TpvPtrUInt(Aligned) and Mask)));
+ end;
+ Pointer(Pointer(TpvPtrUInt(TpvPtrUInt(Aligned)-SizeOf(Pointer)))^):=Original;
+ TpvSizeUInt(Pointer(TpvPtrUInt(TpvPtrUInt(Aligned)-(SizeOf(Pointer)+SizeOf(TpvSizeUInt))))^):=Size;
+ TpvSizeUInt(Pointer(TpvPtrUInt(TpvPtrUInt(Aligned)-(SizeOf(Pointer)+(SizeOf(TpvSizeUInt)*2))))^):=Align;
+ result:=Aligned;
 end;
 
 function TpvVulkanAllocationManager.ReallocationCallback(const Original:PVkVoid;const Size:TVkSize;const Alignment:TVkSize;const Scope:TVkSystemAllocationScope):PVkVoid;
+var pp:pointer;
+    OldSize,OldAlign,Align:TpvSizeUInt;
 begin
- result:=Original;
- ReallocMem(result,Size);
+ if assigned(Original) then begin
+  if Alignment<1 then begin
+   Align:=1;
+  end else begin
+   Align:=Alignment;
+  end;
+  if (Align and (Align-1))<>0 then begin
+   Align:=RoundUpToPowerOfTwoSizeUInt(Align);
+  end;
+  OldSize:=TpvSizeUInt(Pointer(TpvPtrUInt(TpvPtrUInt(Original)-(SizeOf(Pointer)+SizeOf(TpvSizeUInt))))^);
+  OldAlign:=TpvSizeUInt(Pointer(TpvPtrUInt(TpvPtrUInt(Original)-(SizeOf(Pointer)+(SizeOf(TpvSizeUInt)*2))))^);
+  if ((Align=OldAlign) or ((OldAlign and (Align-1))=0)) and (Size<=OldSize) then begin
+   TpvSizeUInt(Pointer(TpvPtrUInt(TpvPtrUInt(Original)-(SizeOf(Pointer)+SizeOf(TpvSizeUInt))))^):=Size;
+   TpvSizeUInt(Pointer(TpvPtrUInt(TpvPtrUInt(Original)-(SizeOf(Pointer)+(SizeOf(TpvSizeUInt)*2))))^):=Align;
+   result:=Original;
+  end else begin
+   result:=AllocationCallback(Size,Alignment,Scope);
+   if Size<OldSize then begin
+    Move(Original^,result^,Size);
+   end else begin
+    Move(Original^,result^,OldSize);
+   end;
+   pp:=Pointer(Pointer(TpvPtrUInt(TpvPtrUInt(Original)-SizeOf(Pointer)))^);
+   FreeMem(pp);
+  end;
+ end else begin
+  result:=AllocationCallback(Size,Alignment,Scope);
+ end;
 end;
 
 procedure TpvVulkanAllocationManager.FreeCallback(const Memory:PVkVoid);
+var pp:pointer;
 begin
- FreeMem(Memory);
+ pp:=Memory;
+ if assigned(pp) then begin
+  pp:=Pointer(Pointer(TpvPtrUInt(TpvPtrUInt(pp)-SizeOf(Pointer)))^);
+  FreeMem(pp);
+ end;
 end;
 
 procedure TpvVulkanAllocationManager.InternalAllocationCallback(const Size:TVkSize;const Type_:TVkInternalAllocationType;const Scope:TVkSystemAllocationScope);
@@ -6857,6 +6967,9 @@ begin
   for i:=0 to fEnabledLayerNames.Count-1 do begin
    fEnabledLayerNameStrings[i]:=TpvVulkanCharString(fEnabledLayerNames.Strings[i]);
    fRawEnabledLayerNameStrings[i]:=PVkChar(fEnabledLayerNameStrings[i]);
+{$if (defined(fpc) and defined(android)) and not defined(Release)}
+   VulkanDebugLn('TpvVulkanInstance.Initialize EnabledLayer['+IntToStr(i)+']: '+TpvUTF8String(fEnabledLayerNameStrings[i]));
+{$ifend}
   end;
 
   SetLength(fEnabledExtensionNameStrings,fEnabledExtensionNames.Count);
@@ -6864,6 +6977,9 @@ begin
   for i:=0 to fEnabledExtensionNames.Count-1 do begin
    fEnabledExtensionNameStrings[i]:=TpvVulkanCharString(fEnabledExtensionNames.Strings[i]);
    fRawEnabledExtensionNameStrings[i]:=PVkChar(fEnabledExtensionNameStrings[i]);
+{$if (defined(fpc) and defined(android)) and not defined(Release)}
+   VulkanDebugLn('TpvVulkanInstance.Initialize EnabledExtension['+IntToStr(i)+']: '+TpvUTF8String(fEnabledExtensionNameStrings[i]));
+{$ifend}
   end;
 
   FillChar(InstanceCreateInfo,SizeOf(TVkInstanceCreateInfo),#0);
@@ -7144,6 +7260,24 @@ begin
   if AvailableExtensionNames.IndexOf(VK_EXT_HOST_QUERY_RESET_EXTENSION_NAME)>0 then begin
    fHostQueryResetFeaturesEXT.pNext:=fFeatures2KHR.pNext;
    fFeatures2KHR.pNext:=@fHostQueryResetFeaturesEXT;
+  end;
+ end;
+
+ begin
+  FillChar(fPresentIDFeatures,SizeOf(TVkPhysicalDevicePresentIdFeaturesKHR),#0);
+  fPresentIDFeatures.sType:=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR;
+  if AvailableExtensionNames.IndexOf(VK_KHR_PRESENT_ID_EXTENSION_NAME)>0 then begin
+   fPresentIDFeatures.pNext:=fFeatures2KHR.pNext;
+   fFeatures2KHR.pNext:=@fPresentIDFeatures;
+  end;
+ end;
+
+ begin
+  FillChar(fPresentWaitFeatures,SizeOf(TVkPhysicalDevicePresentIdFeaturesKHR),#0);
+  fPresentWaitFeatures.sType:=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR;
+  if AvailableExtensionNames.IndexOf(VK_KHR_PRESENT_WAIT_EXTENSION_NAME)>0 then begin
+   fPresentWaitFeatures.pNext:=fFeatures2KHR.pNext;
+   fFeatures2KHR.pNext:=@fPresentWaitFeatures;
   end;
  end;
 
@@ -7453,8 +7587,8 @@ begin
 end;
 
 function TpvVulkanPhysicalDevice.GetBestSupportedDepthFormat(const aWithStencil:boolean):TVkFormat;
-const Formats:array[0..4] of TVkFormat=(VK_FORMAT_D32_SFLOAT_S8_UINT,
-                                        VK_FORMAT_D32_SFLOAT,
+const Formats:array[0..4] of TVkFormat=(VK_FORMAT_D32_SFLOAT,
+                                        VK_FORMAT_D32_SFLOAT_S8_UINT,
                                         VK_FORMAT_D24_UNORM_S8_UINT,
                                         VK_FORMAT_D16_UNORM_S8_UINT,
                                         VK_FORMAT_D16_UNORM);
@@ -7472,7 +7606,7 @@ begin
    fInstance.fVulkan.GetPhysicalDeviceFormatProperties(fPhysicalDeviceHandle,Format,@FormatProperties);
    if (FormatProperties.OptimalTilingFeatures and TVkFormatFeatureFlags(VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT))<>0 then begin
     result:=Format;
-    exit;
+    break;
    end;
   end;
  end else begin
@@ -7481,10 +7615,13 @@ begin
    fInstance.fVulkan.GetPhysicalDeviceFormatProperties(fPhysicalDeviceHandle,Format,@FormatProperties);
    if (FormatProperties.OptimalTilingFeatures and TVkFormatFeatureFlags(VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT))<>0 then begin
     result:=Format;
-    exit;
+    break;
    end;
   end;
  end;
+{$if (defined(fpc) and defined(android)) and (defined(Debug) or not defined(Release))}
+ VulkanDebugLn('GetBestSupportedDepthFormat, Format: '+IntToStr(TpvUInt64(result)));
+{$ifend}
 end;
 
 function TpvVulkanPhysicalDevice.GetQueueNodeIndex(const aSurface:TpvVulkanSurface;const aQueueFlagBits:TVkQueueFlagBits):TpvInt32;
@@ -7525,6 +7662,10 @@ begin
    SetLength(SurfaceFormats,FormatCount);
    VulkanCheckResult(vkGetPhysicalDeviceSurfaceFormatsKHR(fPhysicalDeviceHandle,aSurface.fSurfaceHandle,@FormatCount,@SurfaceFormats[0]));
   end;
+
+{$if (defined(fpc) and defined(android)) and (defined(Debug) or not defined(Release))}
+  VulkanDebugLn('GetSurfaceFormat, FormatCount: '+IntToStr(FormatCount));
+{$ifend}
 
   if FormatCount=0 then begin
 {$if defined(Android)}
@@ -7567,6 +7708,11 @@ begin
    end;
    result:=SurfaceFormats[BestIndex];
   end;
+
+{$if (defined(fpc) and defined(android)) and (defined(Debug) or not defined(Release))}
+  VulkanDebugLn('GetSurfaceFormat, Format: '+IntToStr(TpvInt64(result.Format)));
+  VulkanDebugLn('GetSurfaceFormat, ColorSpace: '+IntToStr(TpvInt64(result.ColorSpace)));
+{$ifend}
 
  finally
   SetLength(SurfaceFormats,0);
@@ -8552,6 +8698,32 @@ begin
 
    fFullScreenExclusiveSupport:=fEnabledExtensionNames.IndexOf(VK_EXT_FULL_SCREEN_EXCLUSIVE_EXTENSION_NAME)>0;
 
+   begin
+    FillChar(fPresentIDFeatures,SizeOf(TVkPhysicalDevicePresentIDFeaturesKHR),#0);
+    fPresentIDFeatures.sType:=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR;
+    if (fEnabledExtensionNames.IndexOf(VK_KHR_PRESENT_ID_EXTENSION_NAME)>0) and
+       (PhysicalDevice.fPresentIDFeatures.presentId<>VK_FALSE) then begin
+     fPresentIDFeatures.presentId:=PhysicalDevice.fPresentIDFeatures.presentId;
+     fPresentIDFeatures.pNext:=DeviceCreateInfo.pNext;
+     DeviceCreateInfo.pNext:=@fPresentIDFeatures;
+    end;
+   end;
+
+   fPresentIDSupport:=PhysicalDevice.fPresentIDFeatures.presentId<>VK_FALSE;
+
+   begin
+    FillChar(fPresentWaitFeatures,SizeOf(TVkPhysicalDevicePresentWaitFeaturesKHR),#0);
+    fPresentWaitFeatures.sType:=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR;
+    if (fEnabledExtensionNames.IndexOf(VK_KHR_PRESENT_WAIT_EXTENSION_NAME)>0) and
+       (PhysicalDevice.fPresentWaitFeatures.presentWait<>VK_FALSE) then begin
+     fPresentWaitFeatures.presentWait:=PhysicalDevice.fPresentWaitFeatures.presentWait;
+     fPresentWaitFeatures.pNext:=DeviceCreateInfo.pNext;
+     DeviceCreateInfo.pNext:=@fPresentWaitFeatures;
+    end;
+   end;
+
+   fPresentWaitSupport:=PhysicalDevice.fPresentWaitFeatures.presentWait<>VK_FALSE;
+
   end;
 
   VulkanCheckResult(fInstance.Commands.CreateDevice(fPhysicalDevice.fPhysicalDeviceHandle,@DeviceCreateInfo,fAllocationCallbacks,@fDeviceHandle));
@@ -8663,7 +8835,7 @@ end;
 
 procedure TpvVulkanDevice.WaitIdle;
 begin
- fDeviceVulkan.DeviceWaitIdle(fDeviceHandle);
+ VulkanCheckResult(fDeviceVulkan.DeviceWaitIdle(fDeviceHandle));
 end;
 
 constructor TpvVulkanDeviceQueueCreateInfo.Create(const aQueueFamilyIndex:TpvUInt32;const aQueuePriorities:array of TpvFloat);
@@ -13895,7 +14067,8 @@ constructor TpvVulkanFrameBuffer.Create(const aDevice:TpvVulkanDevice;
                                         const aRenderPass:TpvVulkanRenderPass;
                                         const aWidth:TpvUInt32;
                                         const aHeight:TpvUInt32;
-                                        const aLayers:TpvUInt32);
+                                        const aLayers:TpvUInt32;
+                                        const aDoDestroyAttachments:boolean=true);
 begin
 
  inherited Create;
@@ -13919,6 +14092,8 @@ begin
  fLayers:=aLayers;
 
  fDoDestroy:=true;
+
+ fDoDestroyAttachments:=aDoDestroyAttachments;
 
 end;
 
@@ -14318,8 +14493,14 @@ begin
    end;
   end;
   if not Found then begin
+{$if (defined(fpc) and defined(android)) and (defined(Debug) or not defined(Release))}
+   VulkanDebugLn('Vulkan initialization error (no suitable compositeAlpha mode found, buggy graphics driver?)');
+{$ifend}
    raise EpvVulkanException.Create('Vulkan initialization error (no suitable compositeAlpha mode found, buggy graphics driver?)');
   end;
+{$if (defined(fpc) and defined(android)) and (defined(Debug) or not defined(Release))}
+  VulkanDebugLn('CompositeAlpha: '+IntToStr(TpvInt64(SwapChainCreateInfo.compositeAlpha)));
+{$ifend}
 
   SurfacePresentModes:=nil;
   try
@@ -14383,6 +14564,10 @@ begin
    SetLength(SurfacePresentModes,0);
   end;
 
+{$if (defined(fpc) and defined(android)) and (defined(Debug) or not defined(Release))}
+  VulkanDebugLn('PresentMode: '+IntToStr(TpvInt64(SwapChainCreateInfo.presentMode)));
+{$ifend}
+
   if aClipped then begin
    SwapChainCreateInfo.clipped:=VK_TRUE;
   end else begin
@@ -14395,9 +14580,18 @@ begin
    SwapChainCreateInfo.oldSwapchain:=VK_NULL_HANDLE;
   end;
 
+{$if (defined(fpc) and defined(android)) and (defined(Debug) or not defined(Release))}
+  VulkanDebugLn('Creating swap chain...');
+{$ifend}
+
+{$ifdef Windows}
   if fExclusiveFullScreen then begin
 
    SwapChainCreateInfo.pNext:=@SurfaceFullScreenExclusiveInfoEXT;
+
+{$if (defined(fpc) and defined(android)) and (defined(Debug) or not defined(Release))}
+   VulkanDebugLn('CreateSwapChainKHR[1]()...');
+{$ifend}
 
    if fDevice.fDeviceVulkan.CreateSwapChainKHR(fDevice.fDeviceHandle,@SwapChainCreateInfo,fDevice.fAllocationCallbacks,@fSwapChainHandle)<>VK_SUCCESS then begin
 
@@ -14405,15 +14599,27 @@ begin
 
     fExclusiveFullScreen:=false;
 
+{$if (defined(fpc) and defined(android)) and (defined(Debug) or not defined(Release))}
+    VulkanDebugLn('CreateSwapChainKHR[2]()...');
+{$ifend}
+
     VulkanCheckResult(fDevice.fDeviceVulkan.CreateSwapChainKHR(fDevice.fDeviceHandle,@SwapChainCreateInfo,fDevice.fAllocationCallbacks,@fSwapChainHandle));
 
    end;
 
-  end else begin
+  end else{$endif}begin
+
+{$if (defined(fpc) and defined(android)) and (defined(Debug) or not defined(Release))}
+   VulkanDebugLn('CreateSwapChainKHR()...');
+{$ifend}
 
    VulkanCheckResult(fDevice.fDeviceVulkan.CreateSwapChainKHR(fDevice.fDeviceHandle,@SwapChainCreateInfo,fDevice.fAllocationCallbacks,@fSwapChainHandle));
 
   end;
+
+{$if (defined(fpc) and defined(android)) and (defined(Debug) or not defined(Release))}
+  VulkanDebugLn('GetSwapchainImagesKHR()...');
+{$ifend}
 
   VulkanCheckResult(fDevice.fDeviceVulkan.GetSwapchainImagesKHR(fDevice.fDeviceHandle,fSwapChainHandle,@fCountImages,nil));
 
@@ -14447,6 +14653,9 @@ begin
   end;
 
   if fSwapChainHandle<>VK_NULL_HANDLE then begin
+{$if (defined(fpc) and defined(android)) and (defined(Debug) or not defined(Release))}
+   VulkanDebugLn('DestroySwapChainKHR()...');
+{$ifend}
    fDevice.fDeviceVulkan.DestroySwapChainKHR(fDevice.fDeviceHandle,fSwapChainHandle,fDevice.fAllocationCallbacks);
    fSwapChainHandle:=VK_NULL_HANDLE;
   end;
@@ -14507,11 +14716,12 @@ begin
  inherited Destroy;
 end;
 
-function TpvVulkanSwapChain.QueuePresent(const aQueue:TpvVulkanQueue;const aSemaphore:TpvVulkanSemaphore=nil):TVkResult;
+function TpvVulkanSwapChain.QueuePresent(const aQueue:TpvVulkanQueue;const aSemaphore:TpvVulkanSemaphore=nil;const aNext:Pointer=nil):TVkResult;
 var PresentInfo:TVkPresentInfoKHR;
 begin
  FillChar(PresentInfo,SizeOf(TVkPresentInfoKHR),#0);
  PresentInfo.sType:=VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+ PresentInfo.pNext:=aNext;
  PresentInfo.swapchainCount:=1;
  PresentInfo.pSwapchains:=@fSwapChainHandle;
  PresentInfo.pImageIndices:=@fCurrentImageIndex;
@@ -18365,8 +18575,8 @@ end;
 
 destructor TpvVulkanPipelineDepthStencilState.Destroy;
 begin
- fFrontStencilOpState.Free;
- fBackStencilOpState.Free;
+ FreeAndNil(fFrontStencilOpState);
+ FreeAndNil(fBackStencilOpState);
  inherited Destroy;
 end;
 
@@ -18789,15 +18999,15 @@ end;
 destructor TpvVulkanGraphicsPipelineConstructor.Destroy;
 begin
  SetLength(fStages,0);
- fVertexInputState.Free;
- fInputAssemblyState.Free;
- fTessellationState.Free;
- fViewPortState.Free;
- fRasterizationState.Free;
- fMultisampleState.Free;
- fDepthStencilState.Free;
- fColorBlendState.Free;
- fDynamicState.Free;
+ FreeAndNil(fVertexInputState);
+ FreeAndNil(fInputAssemblyState);
+ FreeAndNil(fTessellationState);
+ FreeAndNil(fViewPortState);
+ FreeAndNil(fRasterizationState);
+ FreeAndNil(fMultisampleState);
+ FreeAndNil(fDepthStencilState);
+ FreeAndNil(fColorBlendState);
+ FreeAndNil(fDynamicState);
  inherited Destroy;
 end;
 
@@ -19088,14 +19298,14 @@ constructor TpvVulkanGraphicsPipeline.Create(const aDevice:TpvVulkanDevice;
 begin
  inherited Create(aDevice);
  fGraphicsPipelineConstructor:=TpvVulkanGraphicsPipelineConstructor.Create(fDevice,
-                                                                         aCache,
-                                                                         aFlags,
-                                                                         aStages,
-                                                                         aLayout,
-                                                                         aRenderPass,
-                                                                         aSubPass,
-                                                                         aBasePipelineHandle,
-                                                                         aBasePipelineIndex);
+                                                                           aCache,
+                                                                           aFlags,
+                                                                           aStages,
+                                                                           aLayout,
+                                                                           aRenderPass,
+                                                                           aSubPass,
+                                                                           aBasePipelineHandle,
+                                                                           aBasePipelineIndex);
 end;
 
 destructor TpvVulkanGraphicsPipeline.Destroy;
@@ -19423,7 +19633,8 @@ constructor TpvVulkanTexture.CreateFromMemory(const aDevice:TpvVulkanDevice;
                                               const aSwapEndianness:boolean;
                                               const aSwapEndiannessTexels:TpvInt32;
                                               const aDDSStructure:boolean;
-                                              const aAdditionalSRGB:boolean);
+                                              const aAdditionalSRGB:boolean;
+                                              const aStreaming:boolean);
 var MaxDimension,MaxMipMapLevels:TpvInt32;
     FormatProperties:TVkFormatProperties;
     Usage:TVkImageUsageFlags;
@@ -19439,6 +19650,8 @@ begin
 
  fDevice:=aDevice;
 
+ fStreaming:=aStreaming;
+
  fFormat:=VK_FORMAT_UNDEFINED;
 
  fImageLayout:=VK_IMAGE_LAYOUT_UNDEFINED;
@@ -19449,7 +19662,11 @@ begin
 
  fSampler:=nil;
 
+ fExternalSampler:=false;
+
  fMemoryBlock:=nil;
+
+ fStagingBuffer:=nil;
 
  fWidth:=0;
  fHeight:=0;
@@ -19835,7 +20052,6 @@ begin
                                             0,
                                             Max(1,fTotalCountArrayLayers));
  end;
-
 
  if assigned(fSampler) then begin
   fDescriptorImageInfo.sampler:=fSampler.fSamplerHandle;
@@ -22164,7 +22380,9 @@ end;
 
 destructor TpvVulkanTexture.Destroy;
 begin
- FreeAndNil(fSampler);
+ if not fExternalSampler then begin
+  FreeAndNil(fSampler);
+ end;
  FreeAndNil(fSRGBImageView);
  FreeAndNil(fImageView);
  if assigned(fMemoryBlock) then begin
@@ -22173,6 +22391,7 @@ begin
   fMemoryBlock:=nil;
  end;
  FreeAndNil(fImage);
+ FreeAndNil(fStagingBuffer);
  inherited Destroy;
 end;
 
@@ -22647,19 +22866,18 @@ procedure TpvVulkanTexture.Upload(const aGraphicsQueue:TpvVulkanQueue;
                                   const aTransferFence:TpvVulkanFence;
                                   const aData:TpvPointer;
                                   const aDataSize:TVkSizeInt;
-                                  const aMipMapSizeStored:boolean=false;
-                                  const aSwapEndianness:boolean=false;
-                                  const aSwapEndiannessTexels:TpvInt32=0;
-                                  const aDDSStructure:boolean=true;
-                                  const aStagingBuffer:TpvVulkanBuffer=nil;
-                                  const aCommandBufferResetAndExecute:boolean=true);
+                                  const aMipMapSizeStored:boolean;
+                                  const aSwapEndianness:boolean;
+                                  const aSwapEndiannessTexels:TpvInt32;
+                                  const aDDSStructure:boolean;
+                                  const aStagingBuffer:TpvVulkanBuffer;
+                                  const aCommandBufferResetAndExecute:boolean);
 type PpvUInt8Array=^TpvUInt8Array;
      TpvUInt8Array=array[0..65535] of TpvUInt8;
 var BufferImageCopyArraySize,MipMapLevelIndex,MipMapWidth,MipMapHeight,MipMapDepth,
     LayerIndex,DepthIndex,PreviousMipMapLevelIndex:TpvInt32;
     DataOffset,TotalMipMapSize,StoredMipMapSize,MipMapSize,Index:TpvUInt32;
     Compressed:boolean;
-    StagingBuffer:TpvVulkanBuffer;
     BufferMemoryBarrier:TVkBufferMemoryBarrier;
     BufferImageCopyArray:TVkBufferImageCopyArray;
     BufferImageCopy:PVkBufferImageCopy;
@@ -22676,7 +22894,7 @@ begin
   end;
 
   if assigned(aStagingBuffer) then begin
-   StagingBuffer:=aStagingBuffer;
+   fStagingBuffer:=aStagingBuffer;
   end else begin
    if aGraphicsQueue.fQueueFamilyIndex=aTransferQueue.fQueueFamilyIndex then begin
     SharingMode:=VK_SHARING_MODE_EXCLUSIVE;
@@ -22688,21 +22906,26 @@ begin
                          aTransferQueue.fQueueFamilyIndex];
    end;
    try
-    StagingBuffer:=TpvVulkanBuffer.Create(fDevice,
-                                          aDataSize,
-                                          TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_SRC_BIT),
-                                          SharingMode,
-                                          QueueFamilyIndices,
-                                          TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
-                                          TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
-                                          0,
-                                          0,
-                                          0,
-                                          0,
-                                          0,
-                                          0,
-                                          [TpvVulkanBufferFlag.OwnSingleMemoryChunk,
-                                           TpvVulkanBufferFlag.DedicatedAllocation]);
+    if fStreaming and assigned(fStagingBuffer) and (fStagingBuffer.Size=aDataSize) then begin
+     // Nothing, just keep the existent staging buffer
+    end else begin
+     FreeAndNil(fStagingBuffer);
+     fStagingBuffer:=TpvVulkanBuffer.Create(fDevice,
+                                            aDataSize,
+                                            TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_SRC_BIT),
+                                            SharingMode,
+                                            QueueFamilyIndices,
+                                            TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                            TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                                            0,
+                                            0,
+                                            0,
+                                            0,
+                                            0,
+                                            0,
+                                            [TpvVulkanBufferFlag.OwnSingleMemoryChunk,
+                                             TpvVulkanBufferFlag.DedicatedAllocation]);
+    end;
    finally
     QueueFamilyIndices:=nil;
    end;
@@ -22727,13 +22950,13 @@ begin
                     aDDSStructure);
     end;
 
-    StagingBuffer.UploadData(aTransferQueue,
-                             aTransferCommandBuffer,
-                             aTransferFence,
-                             aData^,
-                             0,
-                             aDataSize,
-                             TpvVulkanBufferUseTemporaryStagingBufferMode.No);
+    fStagingBuffer.UploadData(aTransferQueue,
+                              aTransferCommandBuffer,
+                              aTransferFence,
+                              aData^,
+                              0,
+                              aDataSize,
+                              TpvVulkanBufferUseTemporaryStagingBufferMode.No);
 
      if aGraphicsQueue.fQueueFamilyIndex<>aTransferQueue.fQueueFamilyIndex then begin
       if aCommandBufferResetAndExecute then begin
@@ -22748,8 +22971,8 @@ begin
        BufferMemoryBarrier.dstAccessMask:=TVkAccessFlags(VK_ACCESS_TRANSFER_READ_BIT);
        BufferMemoryBarrier.srcQueueFamilyIndex:=VK_QUEUE_FAMILY_IGNORED;
        BufferMemoryBarrier.dstQueueFamilyIndex:=VK_QUEUE_FAMILY_IGNORED;
-       BufferMemoryBarrier.buffer:=StagingBuffer.fBufferHandle;
-       BufferMemoryBarrier.offset:=StagingBuffer.Memory.fOffset;
+       BufferMemoryBarrier.buffer:=fStagingBuffer.fBufferHandle;
+       BufferMemoryBarrier.offset:=fStagingBuffer.Memory.fOffset;
        BufferMemoryBarrier.size:=aDataSize;
        aTransferCommandBuffer.CmdPipelineBarrier(TVkPipelineStageFlags(VK_PIPELINE_STAGE_HOST_BIT),
                                                  TVkPipelineStageFlags(VK_PIPELINE_STAGE_TRANSFER_BIT),
@@ -22767,8 +22990,8 @@ begin
        BufferMemoryBarrier.dstAccessMask:=0;
        BufferMemoryBarrier.srcQueueFamilyIndex:=aTransferQueue.fQueueFamilyIndex;
        BufferMemoryBarrier.dstQueueFamilyIndex:=aGraphicsQueue.fQueueFamilyIndex;
-       BufferMemoryBarrier.buffer:=StagingBuffer.fBufferHandle;
-       BufferMemoryBarrier.offset:=StagingBuffer.Memory.fOffset;
+       BufferMemoryBarrier.buffer:=fStagingBuffer.fBufferHandle;
+       BufferMemoryBarrier.offset:=fStagingBuffer.Memory.fOffset;
        BufferMemoryBarrier.size:=aDataSize;
        aTransferCommandBuffer.CmdPipelineBarrier(TVkPipelineStageFlags(VK_PIPELINE_STAGE_TRANSFER_BIT),
                                                  TVkPipelineStageFlags(VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT),
@@ -22831,8 +23054,8 @@ begin
       BufferMemoryBarrier.dstAccessMask:=TVkAccessFlags(VK_ACCESS_TRANSFER_READ_BIT);
       BufferMemoryBarrier.srcQueueFamilyIndex:=aTransferQueue.fQueueFamilyIndex;
       BufferMemoryBarrier.dstQueueFamilyIndex:=aGraphicsQueue.fQueueFamilyIndex;
-      BufferMemoryBarrier.buffer:=StagingBuffer.fBufferHandle;
-      BufferMemoryBarrier.offset:=StagingBuffer.Memory.fOffset;
+      BufferMemoryBarrier.buffer:=fStagingBuffer.fBufferHandle;
+      BufferMemoryBarrier.offset:=fStagingBuffer.Memory.fOffset;
       BufferMemoryBarrier.size:=aDataSize;
       aGraphicsCommandBuffer.CmdPipelineBarrier(TVkPipelineStageFlags(VK_PIPELINE_STAGE_TRANSFER_BIT),
                                                 TVkPipelineStageFlags(VK_PIPELINE_STAGE_TRANSFER_BIT),
@@ -22850,8 +23073,8 @@ begin
       BufferMemoryBarrier.dstAccessMask:=TVkAccessFlags(VK_ACCESS_TRANSFER_READ_BIT);
       BufferMemoryBarrier.srcQueueFamilyIndex:=VK_QUEUE_FAMILY_IGNORED;
       BufferMemoryBarrier.dstQueueFamilyIndex:=VK_QUEUE_FAMILY_IGNORED;
-      BufferMemoryBarrier.buffer:=StagingBuffer.fBufferHandle;
-      BufferMemoryBarrier.offset:=StagingBuffer.Memory.fOffset;
+      BufferMemoryBarrier.buffer:=fStagingBuffer.fBufferHandle;
+      BufferMemoryBarrier.offset:=fStagingBuffer.Memory.fOffset;
       BufferMemoryBarrier.size:=aDataSize;
       aGraphicsCommandBuffer.CmdPipelineBarrier(TVkPipelineStageFlags(VK_PIPELINE_STAGE_HOST_BIT),
                                                 TVkPipelineStageFlags(VK_PIPELINE_STAGE_TRANSFER_BIT),
@@ -22954,7 +23177,7 @@ begin
 
      Assert(TVkSizeInt(DataOffset)=TVkSizeInt(aDataSize));
 
-     aGraphicsCommandBuffer.CmdCopyBufferToImage(StagingBuffer.fBufferHandle,fImage.fImageHandle,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,BufferImageCopyArraySize,@BufferImageCopyArray[0]);
+     aGraphicsCommandBuffer.CmdCopyBufferToImage(fStagingBuffer.fBufferHandle,fImage.fImageHandle,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,BufferImageCopyArraySize,@BufferImageCopyArray[0]);
 
      if fCountMipMaps<1 then begin
 
@@ -23071,8 +23294,8 @@ begin
    end;
 
   finally
-   if (StagingBuffer<>aStagingBuffer) or not assigned(aStagingBuffer) then begin
-    FreeAndNil(StagingBuffer);
+   if ((fStagingBuffer<>aStagingBuffer) or not assigned(aStagingBuffer)) and not fStreaming then begin
+    FreeAndNil(fStagingBuffer);
    end;
   end;
 
@@ -23123,6 +23346,23 @@ begin
 
 end;
 
+procedure TpvVulkanTexture.SetSampler(const aSampler:TpvVulkanSampler);
+begin
+ if fSampler<>aSampler then begin
+  if not fExternalSampler then begin
+   FreeAndNil(fSampler);
+  end;
+  fSampler:=aSampler;
+  if assigned(fSampler) then begin
+   fExternalSampler:=true;
+   fDescriptorImageInfo.sampler:=fSampler.fSamplerHandle;
+  end else begin
+   fExternalSampler:=false;
+   fDescriptorImageInfo.sampler:=VK_NULL_HANDLE;
+  end;
+ end;
+end;
+
 procedure TpvVulkanTexture.UpdateSampler;
 var MagFilter:TVkFilter;
     MinFilter:TVkFilter;
@@ -23132,7 +23372,10 @@ var MagFilter:TVkFilter;
     AddressModeW:TVkSamplerAddressMode;
     AnisotropyEnable:boolean;
 begin
- FreeAndNil(fSampler);
+ if not fExternalSampler then begin
+  FreeAndNil(fSampler);
+ end;
+ fExternalSampler:=false;
  case fFilterMode of
   TpvVulkanTextureFilterMode.Nearest:begin
    MagFilter:=VK_FILTER_NEAREST;
