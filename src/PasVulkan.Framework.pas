@@ -9736,12 +9736,13 @@ begin
 
    fMemoryHeapFlags:=PhysicalDevice.fMemoryProperties.memoryHeaps[fMemoryHeapIndex].flags;
 
+   fMemoryMustBeAwareOfNonCoherentAtomSize:=fMemoryManager.fDevice.fPhysicalDevice.fProperties.limits.nonCoherentAtomSize>1;
+
    if ((fMemoryPropertyFlags and
         (aMemoryRequiredPropertyFlags or aMemoryPreferredPropertyFlags)) and
        (TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) or
         TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)))=
       TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) then begin
-    fMemoryMustBeAwareOfNonCoherentAtomSize:=true;
     if fMemoryMinimumAlignment<fMemoryManager.fDevice.fPhysicalDevice.fProperties.limits.nonCoherentAtomSize then begin
      fMemoryMinimumAlignment:=fMemoryManager.fDevice.fPhysicalDevice.fProperties.limits.nonCoherentAtomSize;
     end;
@@ -11821,28 +11822,7 @@ begin
    try
     if assigned(p) then begin
      Move(aData,p^,aDataSize);
-     if aForceFlush or ((fMemoryPropertyFlags and TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))=0) then begin
-      DataSize:=aDataSize;
-      NonCoherentAtomSize:=fDevice.fPhysicalDevice.fProperties.limits.nonCoherentAtomSize;
-      if NonCoherentAtomSize>0 then begin
-       if (NonCoherentAtomSize and (NonCoherentAtomSize-1))=0 then begin
-        if (DataSize and (NonCoherentAtomSize-1))<>0 then begin
-         inc(DataSize,NonCoherentAtomSize-(DataSize and (NonCoherentAtomSize-1)));
-         if (aDataOffset+aDataSize)>=Memory.Size then begin
-          DataSize:=Memory.Size-(aDataOffset+aDataSize);
-         end;
-        end;
-       end else begin
-        if (DataSize mod NonCoherentAtomSize)=0 then begin
-         inc(DataSize,NonCoherentAtomSize-(DataSize mod NonCoherentAtomSize));
-         if (aDataOffset+aDataSize)>=Memory.Size then begin
-          DataSize:=Memory.Size-(aDataOffset+aDataSize);
-         end;
-        end;
-       end;
-      end;
-      Memory.FlushMappedMemoryRange(p,DataSize);
-     end;
+     Flush(p,aDataOffset,aDataSize,aForceFlush);
     end else begin
      raise EpvVulkanException.Create('Vulkan buffer memory block map failed');
     end;
@@ -11869,28 +11849,7 @@ begin
   try
    if assigned(p) then begin
     Move(aData,p^,aDataSize);
-    if aForceFlush or ((fMemoryPropertyFlags and TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))=0) then begin
-     DataSize:=aDataSize;
-     NonCoherentAtomSize:=fDevice.fPhysicalDevice.fProperties.limits.nonCoherentAtomSize;
-     if NonCoherentAtomSize>0 then begin
-      if (NonCoherentAtomSize and (NonCoherentAtomSize-1))=0 then begin
-       if (DataSize and (NonCoherentAtomSize-1))<>0 then begin
-        inc(DataSize,NonCoherentAtomSize-(DataSize and (NonCoherentAtomSize-1)));
-        if (aDataOffset+aDataSize)>=Memory.Size then begin
-         DataSize:=Memory.Size-(aDataOffset+aDataSize);
-        end;
-       end;
-      end else begin
-       if (DataSize mod NonCoherentAtomSize)=0 then begin
-        inc(DataSize,NonCoherentAtomSize-(DataSize mod NonCoherentAtomSize));
-        if (aDataOffset+aDataSize)>=Memory.Size then begin
-         DataSize:=Memory.Size-(aDataOffset+aDataSize);
-        end;
-       end;
-      end;
-     end;
-     Memory.FlushMappedMemoryRange(p,DataSize);
-    end;
+    Flush(p,aDataOffset,aDataSize,aForceFlush);
    end else begin
     raise EpvVulkanException.Create('Vulkan buffer memory block map failed');
    end;
@@ -12086,12 +12045,12 @@ var QueueItem:TpvVulkanDeviceMemoryStagingQueueItem;
     Destination:pointer;
 begin
  if (TpvVulkanBufferFlag.PersistentMapped in aDestinationBuffer.fBufferFlags) and
-    ((aDestinationBuffer.fMemoryPropertyFlags and VulkanHostVisibleCoherentMemoryPropertyFlags)=VulkanHostVisibleCoherentMemoryPropertyFlags) then begin
+    ((aDestinationBuffer.fMemoryPropertyFlags and TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))<>0) then begin
   Destination:=aDestinationBuffer.Memory.MapMemory;
   if assigned(Destination) then begin
    try
-    inc(PpvUInt8(Destination),aDestinationOffset);
-    FillChar(Destination^,aSize,#0);
+    FillChar(Pointer(TpvPtrUInt(TpvPtrUInt(Destination)+TpvPtrUInt(aDestinationOffset)))^,aSize,#0);
+    aDestinationBuffer.Flush(Destination,aDestinationOffset,aSize);
    finally
     aDestinationBuffer.Memory.UnmapMemory;
    end;
@@ -12122,12 +12081,12 @@ var QueueItem:TpvVulkanDeviceMemoryStagingQueueItem;
     Destination:pointer;
 begin
  if (TpvVulkanBufferFlag.PersistentMapped in aDestinationBuffer.fBufferFlags) and
-    ((aDestinationBuffer.fMemoryPropertyFlags and VulkanHostVisibleCoherentMemoryPropertyFlags)=VulkanHostVisibleCoherentMemoryPropertyFlags) then begin
+    ((aDestinationBuffer.fMemoryPropertyFlags and TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))<>0) then begin
   Destination:=aDestinationBuffer.Memory.MapMemory;
   if assigned(Destination) then begin
    try
-    inc(PpvUInt8(Destination),aDestinationOffset);
-    Move(aSourceData,Destination^,aSize);
+    Move(aSourceData,Pointer(TpvPtrUInt(TpvPtrUInt(Destination)+TpvPtrUInt(aDestinationOffset)))^,aSize);
+    aDestinationBuffer.Flush(Destination,aDestinationOffset,aSize);
    finally
     aDestinationBuffer.Memory.UnmapMemory;
    end;
@@ -12158,12 +12117,12 @@ var QueueItem:TpvVulkanDeviceMemoryStagingQueueItem;
     Source:pointer;
 begin
  if (TpvVulkanBufferFlag.PersistentMapped in aSourceBuffer.fBufferFlags) and
-    ((aSourceBuffer.fMemoryPropertyFlags and VulkanHostVisibleCoherentMemoryPropertyFlags)=VulkanHostVisibleCoherentMemoryPropertyFlags) then begin
+    ((aSourceBuffer.fMemoryPropertyFlags and TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))<>0) then begin
   Source:=aSourceBuffer.Memory.MapMemory;
   if assigned(Source) then begin
    try
-    inc(PpvUInt8(Source),aSourceOffset);
-    Move(Source^,aDestinationData,aSize);
+    aSourceBuffer.Flush(Source,aSourceOffset,aSize);
+    Move(Pointer(TpvPtrUInt(TpvPtrUInt(Source)+TpvPtrUInt(aSourceOffset)))^,aDestinationData,aSize);
    finally
     aSourceBuffer.Memory.UnmapMemory;
    end;
@@ -12281,13 +12240,13 @@ var Remain,ToDo,Offset:TVkDeviceSize;
 begin
 
  if (TpvVulkanBufferFlag.PersistentMapped in aDestinationBuffer.fBufferFlags) and
-    ((aDestinationBuffer.fMemoryPropertyFlags and VulkanHostVisibleCoherentMemoryPropertyFlags)=VulkanHostVisibleCoherentMemoryPropertyFlags) then begin
+    ((aDestinationBuffer.fMemoryPropertyFlags and TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))<>0) then begin
 
   Destination:=aDestinationBuffer.Memory.MapMemory;
   if assigned(Destination) then begin
    try
-    inc(PpvUInt8(Destination),aDestinationOffset);
-    FillChar(Destination^,aSize,#0);
+    FillChar(Pointer(TpvPtrUInt(TpvPtrUInt(Destination)+TpvPtrUInt(aDestinationOffset)))^,aSize,#0);
+    aDestinationBuffer.Flush(Destination,aDestinationOffset,aSize);
    finally
     aDestinationBuffer.Memory.UnmapMemory;
    end;
@@ -12435,13 +12394,13 @@ var Remain,ToDo,Offset:TVkDeviceSize;
 begin
 
  if (TpvVulkanBufferFlag.PersistentMapped in aDestinationBuffer.fBufferFlags) and
-    ((aDestinationBuffer.fMemoryPropertyFlags and VulkanHostVisibleCoherentMemoryPropertyFlags)=VulkanHostVisibleCoherentMemoryPropertyFlags) then begin
+    ((aDestinationBuffer.fMemoryPropertyFlags and TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))<>0) then begin
 
   Destination:=aDestinationBuffer.Memory.MapMemory;
   if assigned(Destination) then begin
    try
-    inc(PpvUInt8(Destination),aDestinationOffset);
-    Move(aSourceData,Destination^,aSize);
+    Move(aSourceData,Pointer(TpvPtrUInt(TpvPtrUInt(Destination)+TpvPtrUInt(aDestinationOffset)))^,aSize);
+    aDestinationBuffer.Flush(Destination,aDestinationOffset,aSize);
    finally
     aDestinationBuffer.Memory.UnmapMemory;
    end;
@@ -12579,13 +12538,13 @@ var Remain,ToDo,Offset:TVkDeviceSize;
 begin
 
  if (TpvVulkanBufferFlag.PersistentMapped in aSourceBuffer.fBufferFlags) and
-    ((aSourceBuffer.fMemoryPropertyFlags and VulkanHostVisibleCoherentMemoryPropertyFlags)=VulkanHostVisibleCoherentMemoryPropertyFlags) then begin
+    ((aSourceBuffer.fMemoryPropertyFlags and TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))<>0) then begin
 
   Source:=aSourceBuffer.Memory.MapMemory;
   if assigned(Source) then begin
    try
-    inc(PpvUInt8(Source),aSourceOffset);
-    Move(Source^,aDestinationData,aSize);
+    aSourceBuffer.Flush(Source,aSourceOffset,aSize);
+    Move(Pointer(TpvPtrUInt(TpvPtrUInt(Source)+TpvPtrUInt(aSourceOffset)))^,aDestinationData,aSize);
    finally
     aSourceBuffer.Memory.UnmapMemory;
    end;

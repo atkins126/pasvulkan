@@ -51,7 +51,9 @@
  ******************************************************************************)
 unit PasVulkan.FrameGraph;
 {$i PasVulkan.inc}
-{$ifndef fpc}
+{$ifdef fpc}
+ {$packset fixed}
+{$else}
  {$ifdef conditionalexpressions}
   {$if CompilerVersion>=24.0}
    {$legacyifend on}
@@ -105,6 +107,9 @@ type EpvFrameGraph=class(Exception);
 
      TpvFrameGraph=class
       public
+       const UsedAsImageDepthInputAttachmentFlag=1 shl 0;
+             UsedAsImageDepthInputNonAttachmentFlag=1 shl 1;
+             ForbiddenUsedImageDepthInputFlagCombination=UsedAsImageDepthInputAttachmentFlag or UsedAsImageDepthInputNonAttachmentFlag;
        type PpvVulkanSemaphore=^TpvVulkanSemaphore;
             TpvVulkanSemaphorePointers=TpvDynamicArray<PpvVulkanSemaphore>;
             TpvVkSemaphorePointers=TpvDynamicArray<PVkSemaphore>;
@@ -420,6 +425,7 @@ type EpvFrameGraph=class(Exception);
             TResourceTransitionList=class(TpvObjectGenericList<TResourceTransition>)
              public
               function HasPhysicalPassesIntersectionWith(const aWith:TResourceTransitionList):boolean;
+              function MergeCompatibleWith(const aWith:TResourceTransitionList):boolean;
             end;
             TResourcePhysicalData=class
              private
@@ -516,6 +522,7 @@ type EpvFrameGraph=class(Exception);
               fResources:TResourceList;
               fResourcePhysicalData:TResourcePhysicalData;
               fExternalData:TExternalData;
+              fUsedFlags:TpvUInt32;
               fTransient:boolean;
               fMinimumPhysicalPassStepIndex:TpvSizeInt;
               fMaximumPhysicalPassStepIndex:TpvSizeInt;
@@ -546,6 +553,7 @@ type EpvFrameGraph=class(Exception);
               fResourceAliasGroup:TResourceAliasGroup;
               fLayoutHistory:TLayoutHistory;
               fExternalData:TExternalData;
+              fUsedFlags:TpvUInt32;
               fTransient:boolean;
               fUsed:boolean;
              public
@@ -564,6 +572,7 @@ type EpvFrameGraph=class(Exception);
               property ResourceType:TResourceType read fResourceType;
               property ResourceAliasGroup:TResourceAliasGroup read fResourceAliasGroup;
               property ExternalData:TExternalData read fExternalData write fExternalData;
+              property UsedFlags:TpvUInt32 read fUsedFlags;
               property Transient:boolean read fTransient;
               property Used:boolean read fUsed;
             end;
@@ -630,6 +639,10 @@ type EpvFrameGraph=class(Exception);
                       AllDepths=[
                        TKind.ImageDepthOutput,
                        TKind.ImageDepthInput
+                      ];
+                      AllBuffers=[
+                       TKind.BufferInput,
+                       TKind.BufferOutput
                       ];
              private
               fFrameGraph:TpvFrameGraph;
@@ -916,9 +929,7 @@ type EpvFrameGraph=class(Exception);
               fDstStageMask:TVkPipelineStageFlags;
             end;
             TExplicitPassNameDependencyList=TpvObjectGenericList<TExplicitPassNameDependency>;
-
             { TPass }
-
             TPass=class
              public
               type TFlag=
@@ -1194,6 +1205,7 @@ type EpvFrameGraph=class(Exception);
        fCanDoParallelProcessing:boolean;
        fDoWaitOnSemaphore:boolean;
        fDoSignalSemaphore:boolean;
+       fTryToMergeSubpasses:boolean;
        fPhysicalPasses:TPhysicalPasses;
        fRootPhysicalPass:TPhysicalPass;
        fDrawToWaitOnSemaphores:array[0..MaxInFlightFrames-1] of TVulkanSemaphores;
@@ -1284,6 +1296,7 @@ type EpvFrameGraph=class(Exception);
        property CanDoParallelProcessing:boolean read fCanDoParallelProcessing write fCanDoParallelProcessing;
        property DoWaitOnSemaphore:boolean read fDoWaitOnSemaphore write fDoWaitOnSemaphore;
        property DoSignalSemaphore:boolean read fDoSignalSemaphore write fDoSignalSemaphore;
+       property TryToMergeSubpasses:boolean read fTryToMergeSubpasses write fTryToMergeSubpasses;
        property VulkanDevice:TpvVulkanDevice read fVulkanDevice;
        property SurfaceIsSwapchain:boolean read fSurfaceIsSwapchain write fSurfaceIsSwapchain;
        property SurfaceWidth:TpvSizeInt read fSurfaceWidth write fSurfaceWidth;
@@ -2531,6 +2544,32 @@ begin
  result:=false;
 end;
 
+function TpvFrameGraph.TResourceTransitionList.MergeCompatibleWith(const aWith:TpvFrameGraph.TResourceTransitionList):boolean;
+var Index,OtherIndex:TpvSizeInt;
+    ResourceTransitions:array[0..1] of TpvFrameGraph.TResourceTransition;
+begin
+ for Index:=0 to Count-1 do begin
+  ResourceTransitions[0]:=Items[Index];
+  for OtherIndex:=0 to aWith.Count-1 do begin
+   ResourceTransitions[1]:=aWith.Items[OtherIndex];
+   if ((ResourceTransitions[0].fKind in TpvFrameGraph.TResourceTransition.AllImages)<>(ResourceTransitions[1].Kind in TpvFrameGraph.TResourceTransition.AllImages)) or
+      ((ResourceTransitions[0].fKind in TpvFrameGraph.TResourceTransition.AllBuffers)<>(ResourceTransitions[1].Kind in TpvFrameGraph.TResourceTransition.AllBuffers)) then begin
+    result:=false;
+    exit;
+   end else begin
+    if (ResourceTransitions[0].fKind in TpvFrameGraph.TResourceTransition.AllImages) and
+       (ResourceTransitions[1].fKind in TpvFrameGraph.TResourceTransition.AllImages) then begin
+     if (TpvFrameGraph.TResourceTransition.TFlag.Attachment in ResourceTransitions[0].fFlags)<>(TpvFrameGraph.TResourceTransition.TFlag.Attachment in ResourceTransitions[1].fFlags) then begin
+      result:=false;
+      exit;
+     end;
+    end;
+   end;
+  end;
+ end;
+ result:=true;
+end;
+
 { TpvFrameGraph.TResourceTransition }
 
 constructor TpvFrameGraph.TResourceTransition.Create(const aFrameGraph:TpvFrameGraph;
@@ -2538,16 +2577,37 @@ constructor TpvFrameGraph.TResourceTransition.Create(const aFrameGraph:TpvFrameG
                                                      const aResource:TResource;
                                                      const aKind:TKind;
                                                      const aFlags:TFlags);
+var UsedFlags:TpvUInt32;
 begin
+
  inherited Create;
+
  fFrameGraph:=aFrameGraph;
+
  fFrameGraph.fResourceTransitions.Add(self);
+
  fPass:=aPass;
+
  fResource:=aResource;
+
  fKind:=aKind;
+
  fFlags:=aFlags;
+
  fResource.fResourceTransitions.Add(self);
+
  fPass.fResourceTransitions.Add(self);
+
+ UsedFlags:=0;
+ if fKind in TpvFrameGraph.TResourceTransition.AllImageInputs then begin
+  if TpvFrameGraph.TResourceTransition.TFlag.Attachment in fFlags then begin
+   UsedFlags:=UsedFlags or TpvFrameGraph.UsedAsImageDepthInputAttachmentFlag;
+  end else begin
+   UsedFlags:=UsedFlags or TpvFrameGraph.UsedAsImageDepthInputNonAttachmentFlag;
+  end;
+ end;
+ fResource.fUsedFlags:=fResource.fUsedFlags or UsedFlags;
+
 end;
 
 constructor TpvFrameGraph.TResourceTransition.Create(const aFrameGraph:TpvFrameGraph;
@@ -4155,12 +4215,17 @@ procedure TpvFrameGraph.TPhysicalRenderPass.Execute(const aCommandBuffer:TpvVulk
 var SubpassIndex:TpvSizeInt;
     Subpass:TSubpass;
     SubpassContents:TVkSubpassContents;
+    SingleSubpassDebug:boolean;
 begin
  inherited Execute(aCommandBuffer);
  if fHasSecondaryBuffers then begin
   SubpassContents:=VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS;
  end else begin
   SubpassContents:=VK_SUBPASS_CONTENTS_INLINE;
+ end;
+ SingleSubpassDebug:=(fSubpasses.Count=1) and (fSubpasses[0].fRenderPass.fDoubleBufferedEnabledState[fFrameGraph.fDrawFrameIndex and 1]);
+ if SingleSubpassDebug then begin
+  fSubpasses[0].fRenderPass.AddStartMarker(fQueue,aCommandBuffer);
  end;
  fEventPipelineBarrierGroups.Execute(aCommandBuffer);
  fBeforePipelineBarrierGroups.Execute(aCommandBuffer);
@@ -4185,9 +4250,13 @@ begin
  for SubpassIndex:=0 to fSubpasses.Count-1 do begin
   Subpass:=fSubpasses[SubpassIndex];
   if Subpass.fRenderPass.fDoubleBufferedEnabledState[fFrameGraph.fDrawFrameIndex and 1] then begin
-   Subpass.fRenderPass.AddStartMarker(fQueue,aCommandBuffer);
+   if not SingleSubpassDebug then begin
+    Subpass.fRenderPass.AddStartMarker(fQueue,aCommandBuffer);
+   end;
    Subpass.fRenderPass.Execute(aCommandBuffer,fFrameGraph.fDrawInFlightFrameIndex,fFrameGraph.fDrawFrameIndex);
-   Subpass.fRenderPass.AddEndMarker(fQueue,aCommandBuffer);
+   if not SingleSubpassDebug then begin
+    Subpass.fRenderPass.AddEndMarker(fQueue,aCommandBuffer);
+   end;
   end;
   if (SubpassIndex+1)<fSubpasses.Count then begin
    aCommandBuffer.CmdNextSubpass(SubpassContents);
@@ -4196,6 +4265,9 @@ begin
  fVulkanRenderPass.EndRenderPass(aCommandBuffer);
  fAfterPipelineBarrierGroups.Execute(aCommandBuffer);
  SetEvents(aCommandBuffer,fFrameGraph.fDrawInFlightFrameIndex);
+ if SingleSubpassDebug then begin
+  fSubpasses[0].fRenderPass.AddEndMarker(fQueue,aCommandBuffer);
+ end;
 end;
 
 { TpvFrameGraph }
@@ -4232,6 +4304,8 @@ begin
  fDoWaitOnSemaphore:=false;
 
  fDoSignalSemaphore:=false;
+
+ fTryToMergeSubpasses:=false;
 
  fDefaultResourceInstanceType:=TResourceInstanceType.InstancePerInFlightFrame;
 
@@ -5035,9 +5109,10 @@ type TEventBeforeAfter=(Event,Before,After);
      TRenderPass(Pass).fPhysicalRenderPassSubpass.fIndex:=PhysicalRenderPass.fSubpasses.Add(TRenderPass(Pass).fPhysicalRenderPassSubpass);
      PhysicalRenderPass.fMultiview:=TRenderPass(Pass).fMultiviewMask<>0;
      inc(Index);
-     if (Pass.fFlags*[TPass.TFlag.SeparatePhysicalPass,
-                      TPass.TFlag.SeparateCommandBuffer,
-                      TPass.TFlag.Toggleable])=[] then begin
+     if fTryToMergeSubpasses and
+        ((Pass.fFlags*[TPass.TFlag.SeparatePhysicalPass,
+                       TPass.TFlag.SeparateCommandBuffer,
+                       TPass.TFlag.Toggleable])=[]) then begin
       while Index<Count do begin
        OtherPass:=fTopologicalSortedPasses[Index];
        if ((OtherPass.fFlags*[TPass.TFlag.SeparatePhysicalPass,
@@ -5045,17 +5120,19 @@ type TEventBeforeAfter=(Event,Before,After);
                               TPass.TFlag.Toggleable])=[]) and
           (OtherPass is TRenderPass) and
           (TRenderPass(OtherPass).fQueue=TRenderPass(Pass).fQueue) and
-          (TRenderPass(OtherPass).fSize=TRenderPass(Pass).fSize) then begin
+          (TRenderPass(OtherPass).fSize=TRenderPass(Pass).fSize) and
+          (TRenderPass(OtherPass).fMultiviewMask=TRenderPass(Pass).fMultiviewMask) then begin
         CountFoundCrossSubpassAttachmentPairs:=0;
         Compatible:=true;
         for ResourceTransition in OtherPass.fResourceTransitions do begin
-         if (ResourceTransition.Kind in TResourceTransition.AllImageInputs) then begin
+         if ResourceTransition.Kind in TResourceTransition.AllImageInputs then begin
           if TResourceTransition.TFlag.Attachment in ResourceTransition.fFlags then begin
-           if not OutputAttachmentImagesResources.ExistKey(ResourceTransition.Resource) then begin
+           if OutputAttachmentImagesResources.ExistKey(ResourceTransition.Resource) then begin
+            inc(CountFoundCrossSubpassAttachmentPairs);
+           end else begin
             Compatible:=false;
             break;
            end;
-           inc(CountFoundCrossSubpassAttachmentPairs);
           end else begin
            if OutputAttachmentImagesResources.ExistKey(ResourceTransition.Resource) then begin
             Compatible:=false;
@@ -5285,6 +5362,8 @@ type TEventBeforeAfter=(Event,Before,After);
          CanResourceReused(OtherResource) then begin
        if (not ((ResourceAliasGroup.fMinimumPhysicalPassStepIndex<=OtherResource.fMaximumPhysicalPassStepIndex) and
                (OtherResource.fMinimumPhysicalPassStepIndex<=ResourceAliasGroup.fMaximumPhysicalPassStepIndex))) and
+          //Resource.fResourceTransitions.MergeCompatibleWith(OtherResource.fResourceTransitions) and
+          (((Resource.fUsedFlags or OtherResource.fUsedFlags) and TpvFrameGraph.ForbiddenUsedImageDepthInputFlagCombination)<>TpvFrameGraph.ForbiddenUsedImageDepthInputFlagCombination) and
           not Resource.fResourceTransitions.HasPhysicalPassesIntersectionWith(OtherResource.fResourceTransitions) then begin
         ResourceAliasGroup.fMinimumPhysicalPassStepIndex:=Min(ResourceAliasGroup.fMinimumPhysicalPassStepIndex,OtherResource.fMinimumPhysicalPassStepIndex);
         ResourceAliasGroup.fMaximumPhysicalPassStepIndex:=Max(ResourceAliasGroup.fMaximumPhysicalPassStepIndex,OtherResource.fMaximumPhysicalPassStepIndex);
