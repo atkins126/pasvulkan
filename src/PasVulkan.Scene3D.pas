@@ -267,6 +267,7 @@ type EpvScene3D=class(Exception);
               function Get(const aDefaultX:TpvDouble=0.0;const aDefaultY:TpvDouble=0.0;const aDefaultZ:TpvDouble=0.0;const aDefaultW:TpvDouble=0.0):TpvVector4; overload; inline;
               function Get(const aDefault:TpvVector4):TpvVector4; overload; inline;
             end;
+            TInFlightFrameAABBs=array[0..MaxInFlightFrames-1] of TpvAABB;
        const MaxViews=65536 div SizeOf(TView);
        type TID=TpvUInt32;
             TIDManager=class(TpvGenericIDManager<TID>);
@@ -2175,6 +2176,7 @@ type EpvScene3D=class(Exception);
        fAABBTree:TpvBVHDynamicAABBTree;
        fAABBTreeStates:array[0..MaxInFlightFrames-1] of TpvBVHDynamicAABBTree.TState;
        fBoundingBox:TpvAABB;
+       fInFlightFrameBoundingBoxes:TInFlightFrameAABBs;
        fInFlightFrameBufferMemoryBarriers:TInFlightFrameBufferMemoryBarriers;
        fPreviousViews:TViews;
        fViews:TViews;
@@ -2268,6 +2270,7 @@ type EpvScene3D=class(Exception);
        procedure InitializeGraphicsPipeline(const aPipeline:TpvVulkanGraphicsPipeline;const aWithPreviousPosition:boolean=false);
       public
        property BoundingBox:TpvAABB read fBoundingBox;
+       property InFlightFrameBoundingBoxes:TInFlightFrameAABBs read fInFlightFrameBoundingBoxes;
        property GlobalVulkanViewUniformBuffers:TGlobalVulkanViewUniformBuffers read fGlobalVulkanViewUniformBuffers;
        property Views:TViews read fViews;
        property PrimaryLightDirection:TpvVector3 read fPrimaryLightDirection write fPrimaryLightDirection;
@@ -5709,8 +5712,8 @@ begin
                                                      TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
                                                      TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
                                                      [],
-                                                     TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
-                                                     TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                                                     TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                     TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
                                                      0,
                                                      0,
                                                      0,
@@ -5724,8 +5727,8 @@ begin
                                                     TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
                                                     TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
                                                     [],
-                                                    TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
-                                                    TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                                                    TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                    TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
                                                     0,
                                                     0,
                                                     0,
@@ -5739,8 +5742,8 @@ begin
                                                         TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
                                                         TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
                                                         [],
-                                                        TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
-                                                        TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                                                        TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                        TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
                                                         0,
                                                         0,
                                                         0,
@@ -10439,8 +10442,8 @@ begin
                                                    TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
                                                    TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
                                                    [],
-                                                   TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
-                                                   TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                                                   TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                   TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
                                                    0,
                                                    0,
                                                    0,
@@ -10455,8 +10458,8 @@ begin
                                                                TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
                                                                TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
                                                                [],
-                                                               TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
-                                                               TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                                                               TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                               TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
                                                                0,
                                                                0,
                                                                0,
@@ -13745,7 +13748,10 @@ begin
 
  fMaterialDataGenerationLock:=TPasMPSpinLock.Create;
 
- if assigned(fVulkanDevice) and fVulkanDevice.MemoryManager.CompleteTotalMemoryMappable then begin
+(*{$ifdef Linux}
+ if TpvVulkanVendorID(fVulkanDevice.PhysicalDevice.Properties.vendorID)=TpvVulkanVendorID.NVIDIA then begin
+  fBufferStreamingMode:=TBufferStreamingMode.Staging;
+ end else {$endif}*)if assigned(fVulkanDevice) and fVulkanDevice.MemoryManager.CompleteTotalMemoryMappable then begin
   fBufferStreamingMode:=TBufferStreamingMode.Direct;
  end else begin
   fBufferStreamingMode:=TBufferStreamingMode.Staging;
@@ -14251,8 +14257,8 @@ begin
                                                                          TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT),
                                                                          TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
                                                                          [],
-                                                                         TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
-                                                                         TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                                                                         TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                                         TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
                                                                          0,
                                                                          0,
                                                                          0,
@@ -14494,8 +14500,8 @@ begin
                                                                         TVkBufferUsageFlags(VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT_KHR),
                                                                         TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
                                                                         [],
-                                                                        TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
-                                                                        TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                                                                        TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                                        TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
                                                                         0,
                                                                         0,
                                                                         0,
@@ -14891,6 +14897,8 @@ begin
   fBoundingBox.Min:=TpvVector3.InlineableCreate(-1.0,-1.0,-1.0);
   fBoundingBox.Max:=TpvVector3.InlineableCreate(1.0,1.0,-1.0);
  end;
+
+ fInFlightFrameBoundingBoxes[aInFlightFrameIndex]:=fBoundingBox;
 
 end;
 
