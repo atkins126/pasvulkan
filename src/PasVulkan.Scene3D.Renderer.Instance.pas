@@ -192,6 +192,8 @@ type { TpvScene3DRendererInstance }
              LogLuminanceRange:TpvFloat;
              InverseLogLuminanceRange:TpvFloat;
              TimeCoefficient:TpvFloat;
+             MinLuminance:TpvFloat;
+             MaxLuminance:TpvFloat;
              CountPixels:TpvUInt32;
             end;
             PLuminancePushConstants=^TLuminancePushConstants;
@@ -1797,7 +1799,7 @@ begin
   end;
  end;
 
- if true then begin
+ if false then begin
 
   TpvScene3DRendererInstancePasses(fPasses).fDitheringRenderPass:=TpvScene3DRendererPassesDitheringRenderPass.Create(fFrameGraph,self,false);
 
@@ -2480,11 +2482,17 @@ begin
                           false,
                           true);
 
+ Renderer.Scene3D.UpdateDebugPrimitives(aInFlightFrameIndex);
+
  TPasMPInterlocked.Write(InFlightFrameState^.Ready,true);
 
 end;
 
 procedure TpvScene3DRendererInstance.Draw(const aSwapChainImageIndex,aInFlightFrameIndex:TpvInt32;const aFrameCounter:TpvInt64;var aWaitSemaphore:TpvVulkanSemaphore;const aWaitFence:TpvVulkanFence=nil);
+const MinDeltaTime=1.0/480.0; // 480 Hz
+      MaxDeltaTime=1.0/1.0; // 1 Hz
+      LN2=0.6931471805599453;
+var t:TpvDouble;
 begin
 
  FillChar(fLightGridPushConstants,SizeOf(TpvScene3DRendererInstance.TLightGridPushConstants),#0);
@@ -2508,7 +2516,15 @@ begin
  fLuminancePushConstants.MinLogLuminance:=Renderer.MinLogLuminance;
  fLuminancePushConstants.LogLuminanceRange:=Renderer.MaxLogLuminance-Renderer.MinLogLuminance;
  fLuminancePushConstants.InverseLogLuminanceRange:=1.0/fLuminancePushConstants.LogLuminanceRange;
- fLuminancePushConstants.TimeCoefficient:=1.0-exp(pvApplication.DeltaTime*(-TwoPI));
+ t:=pvApplication.DeltaTime;
+ if t<=MinDeltaTime then begin
+  t:=MinDeltaTime;
+ end else if t>=MaxDeltaTime then begin
+  t:=MaxDeltaTime;
+ end;
+ fLuminancePushConstants.TimeCoefficient:=Clamp(1.0-exp(t*(-TwoPI)),0.025,1.0);
+ fLuminancePushConstants.MinLuminance:=exp(LN2*Renderer.MinLogLuminance);
+ fLuminancePushConstants.MaxLuminance:=exp(LN2*Renderer.MaxLogLuminance);
  fLuminancePushConstants.CountPixels:=fWidth*fHeight*fCountSurfaceViews;
 
  fFrameGraph.Draw(aSwapChainImageIndex,

@@ -3206,8 +3206,9 @@ type EpvVulkanException=class(Exception);
        fStreaming:boolean;
        fStagingBuffer:TpvVulkanBuffer;
        fData:Pointer;
-       fDataSize:TpvSizeUInt;
+       fDataSize:TpvSizeInt;
        fDoFreeDataAfterFinish:boolean;
+       procedure UpdateSRGBFormat;
        procedure SetSampler(const aSampler:TpvVulkanSampler);
       public
        constructor Create; overload;
@@ -3381,6 +3382,7 @@ type EpvVulkanException=class(Exception);
                                  const aSRGB:boolean;
                                  const aAdditionalSRGB:boolean=false);
        destructor Destroy; override;
+       procedure Unload;
        class procedure GetMipMapSize(const aFormat:TVkFormat;const aMipMapWidth,aMipMapHeight:TpvInt32;out aMipMapSize:TVkUInt32;out aCompressed:boolean); static;
        class procedure SwapEndianness(const aData:TpvPointer;
                                       const aDataSize:TVkSizeInt;
@@ -3394,6 +3396,8 @@ type EpvVulkanException=class(Exception);
                                       const aSwapEndianness:boolean=false;
                                       const aSwapEndiannessTexels:TpvInt32=0;
                                       const aDDSStructure:boolean=true);
+       procedure ConvertChannelToMonoRedChannel(const aChannelIndex:TpvInt32);
+       procedure AlphaBleeding;
        procedure Finish(const aGraphicsQueue:TpvVulkanQueue;
                         const aGraphicsCommandBuffer:TpvVulkanCommandBuffer;
                         const aGraphicsFence:TpvVulkanFence;
@@ -3564,6 +3568,7 @@ procedure VulkanDisableFloatingPointExceptions;
 implementation
 
 uses PasVulkan.Utils,
+     PasVulkan.Image.Utils,
      PasVulkan.Streams,
      PasVulkan.NVIDIA.AfterMath;
 
@@ -21156,15 +21161,21 @@ end;
 
 destructor TpvVulkanTexture.Destroy;
 begin
- if not fExternalSampler then begin
-  FreeAndNil(fSampler);
- end;
  if assigned(fData) then begin
   try
    FreeMem(fData);
   finally
    fData:=nil;
   end;
+ end;
+ Unload;
+ inherited Destroy;
+end;
+
+procedure TpvVulkanTexture.Unload;
+begin
+ if not fExternalSampler then begin
+  FreeAndNil(fSampler);
  end;
  FreeAndNil(fSRGBImageView);
  FreeAndNil(fImageView);
@@ -21178,7 +21189,6 @@ begin
  end;
  FreeAndNil(fImage);
  FreeAndNil(fStagingBuffer);
- inherited Destroy;
 end;
 
 class procedure TpvVulkanTexture.GetMipMapSize(const aFormat:TVkFormat;const aMipMapWidth,aMipMapHeight:TpvInt32;out aMipMapSize:TVkUInt32;out aCompressed:boolean);
@@ -21644,6 +21654,284 @@ begin
  end;
 end;
 
+procedure TpvVulkanTexture.UpdateSRGBFormat;
+begin
+ if fAdditionalSRGB then begin
+  case fFormat of
+   VK_FORMAT_R8_UNORM:begin
+    fSRGBFormat:=VK_FORMAT_R8_SRGB;
+   end;
+   VK_FORMAT_R8G8_UNORM:begin
+    fSRGBFormat:=VK_FORMAT_R8G8_SRGB;
+   end;
+   VK_FORMAT_R8G8B8_UNORM:begin
+    fSRGBFormat:=VK_FORMAT_R8G8B8_SRGB;
+   end;
+   VK_FORMAT_B8G8R8_UNORM:begin
+    fSRGBFormat:=VK_FORMAT_B8G8R8_SRGB;
+   end;
+   VK_FORMAT_R8G8B8A8_UNORM:begin
+    fSRGBFormat:=VK_FORMAT_R8G8B8A8_SRGB;
+   end;
+   VK_FORMAT_B8G8R8A8_UNORM:begin
+    fSRGBFormat:=VK_FORMAT_B8G8R8A8_SRGB;
+   end;
+   VK_FORMAT_A8B8G8R8_UNORM_PACK32:begin
+    fSRGBFormat:=VK_FORMAT_A8B8G8R8_SRGB_PACK32;
+   end;
+   VK_FORMAT_BC1_RGB_UNORM_BLOCK:begin
+    fSRGBFormat:=VK_FORMAT_BC1_RGB_SRGB_BLOCK;
+   end;
+   VK_FORMAT_BC1_RGBA_UNORM_BLOCK:begin
+    fSRGBFormat:=VK_FORMAT_BC1_RGBA_SRGB_BLOCK;
+   end;
+   VK_FORMAT_BC2_UNORM_BLOCK:begin
+    fSRGBFormat:=VK_FORMAT_BC2_SRGB_BLOCK;
+   end;
+   VK_FORMAT_BC3_UNORM_BLOCK:begin
+    fSRGBFormat:=VK_FORMAT_BC3_SRGB_BLOCK;
+   end;
+   VK_FORMAT_BC7_UNORM_BLOCK:begin
+    fSRGBFormat:=VK_FORMAT_BC7_SRGB_BLOCK;
+   end;
+   VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK:begin
+    fSRGBFormat:=VK_FORMAT_ETC2_R8G8B8_SRGB_BLOCK;
+   end;
+   VK_FORMAT_ETC2_R8G8B8A1_UNORM_BLOCK:begin
+    fSRGBFormat:=VK_FORMAT_ETC2_R8G8B8A1_SRGB_BLOCK;
+   end;
+   VK_FORMAT_ETC2_R8G8B8A8_UNORM_BLOCK:begin
+    fSRGBFormat:=VK_FORMAT_ETC2_R8G8B8A8_SRGB_BLOCK;
+   end;
+   VK_FORMAT_ASTC_4x4_UNORM_BLOCK:begin
+    fSRGBFormat:=VK_FORMAT_ASTC_4x4_SRGB_BLOCK;
+   end;
+   VK_FORMAT_ASTC_5x4_UNORM_BLOCK:begin
+    fSRGBFormat:=VK_FORMAT_ASTC_5x4_SRGB_BLOCK;
+   end;
+   VK_FORMAT_ASTC_5x5_UNORM_BLOCK:begin
+    fSRGBFormat:=VK_FORMAT_ASTC_5x5_SRGB_BLOCK;
+   end;
+   VK_FORMAT_ASTC_6x5_UNORM_BLOCK:begin
+    fSRGBFormat:=VK_FORMAT_ASTC_6x5_SRGB_BLOCK;
+   end;
+   VK_FORMAT_ASTC_6x6_UNORM_BLOCK:begin
+    fSRGBFormat:=VK_FORMAT_ASTC_6x6_SRGB_BLOCK;
+   end;
+   VK_FORMAT_ASTC_8x5_UNORM_BLOCK:begin
+    fSRGBFormat:=VK_FORMAT_ASTC_8x5_SRGB_BLOCK;
+   end;
+   VK_FORMAT_ASTC_8x6_UNORM_BLOCK:begin
+    fSRGBFormat:=VK_FORMAT_ASTC_8x6_SRGB_BLOCK;
+   end;
+   VK_FORMAT_ASTC_8x8_UNORM_BLOCK:begin
+    fSRGBFormat:=VK_FORMAT_ASTC_8x8_SRGB_BLOCK;
+   end;
+   VK_FORMAT_ASTC_10x5_UNORM_BLOCK:begin
+    fSRGBFormat:=VK_FORMAT_ASTC_10x5_SRGB_BLOCK;
+   end;
+   VK_FORMAT_ASTC_10x6_UNORM_BLOCK:begin
+    fSRGBFormat:=VK_FORMAT_ASTC_10x6_SRGB_BLOCK;
+   end;
+   VK_FORMAT_ASTC_10x8_UNORM_BLOCK:begin
+    fSRGBFormat:=VK_FORMAT_ASTC_10x8_SRGB_BLOCK;
+   end;
+   VK_FORMAT_ASTC_10x10_UNORM_BLOCK:begin
+    fSRGBFormat:=VK_FORMAT_ASTC_10x10_SRGB_BLOCK;
+   end;
+   VK_FORMAT_ASTC_12x10_UNORM_BLOCK:begin
+    fSRGBFormat:=VK_FORMAT_ASTC_12x10_SRGB_BLOCK;
+   end;
+   VK_FORMAT_ASTC_12x12_UNORM_BLOCK:begin
+    fSRGBFormat:=VK_FORMAT_ASTC_12x12_SRGB_BLOCK;
+   end;
+   VK_FORMAT_PVRTC1_2BPP_UNORM_BLOCK_IMG:begin
+    fSRGBFormat:=VK_FORMAT_PVRTC1_2BPP_SRGB_BLOCK_IMG;
+   end;
+   VK_FORMAT_PVRTC1_4BPP_UNORM_BLOCK_IMG:begin
+    fSRGBFormat:=VK_FORMAT_PVRTC1_4BPP_SRGB_BLOCK_IMG;
+   end;
+   VK_FORMAT_PVRTC2_2BPP_UNORM_BLOCK_IMG:begin
+    fSRGBFormat:=VK_FORMAT_PVRTC2_2BPP_SRGB_BLOCK_IMG;
+   end;
+   VK_FORMAT_PVRTC2_4BPP_UNORM_BLOCK_IMG:begin
+    fSRGBFormat:=VK_FORMAT_PVRTC2_4BPP_SRGB_BLOCK_IMG;
+   end;
+   VK_FORMAT_ASTC_3x3x3_UNORM_BLOCK_EXT:begin
+    fSRGBFormat:=VK_FORMAT_ASTC_3x3x3_SRGB_BLOCK_EXT;
+   end;
+   VK_FORMAT_ASTC_4x3x3_UNORM_BLOCK_EXT:begin
+    fSRGBFormat:=VK_FORMAT_ASTC_4x3x3_SRGB_BLOCK_EXT;
+   end;
+   VK_FORMAT_ASTC_4x4x3_UNORM_BLOCK_EXT:begin
+    fSRGBFormat:=VK_FORMAT_ASTC_4x4x3_SRGB_BLOCK_EXT;
+   end;
+   VK_FORMAT_ASTC_4x4x4_UNORM_BLOCK_EXT:begin
+    fSRGBFormat:=VK_FORMAT_ASTC_4x4x4_SRGB_BLOCK_EXT;
+   end;
+   VK_FORMAT_ASTC_5x4x4_UNORM_BLOCK_EXT:begin
+    fSRGBFormat:=VK_FORMAT_ASTC_5x4x4_SRGB_BLOCK_EXT;
+   end;
+   VK_FORMAT_ASTC_5x5x4_UNORM_BLOCK_EXT:begin
+    fSRGBFormat:=VK_FORMAT_ASTC_5x5x4_SRGB_BLOCK_EXT;
+   end;
+   VK_FORMAT_ASTC_5x5x5_UNORM_BLOCK_EXT:begin
+    fSRGBFormat:=VK_FORMAT_ASTC_5x5x5_SRGB_BLOCK_EXT;
+   end;
+   VK_FORMAT_ASTC_6x5x5_UNORM_BLOCK_EXT:begin
+    fSRGBFormat:=VK_FORMAT_ASTC_6x5x5_SRGB_BLOCK_EXT;
+   end;
+   VK_FORMAT_ASTC_6x6x5_UNORM_BLOCK_EXT:begin
+    fSRGBFormat:=VK_FORMAT_ASTC_6x6x5_SRGB_BLOCK_EXT;
+   end;
+   VK_FORMAT_ASTC_6x6x6_UNORM_BLOCK_EXT:begin
+    fSRGBFormat:=VK_FORMAT_ASTC_6x6x6_SRGB_BLOCK_EXT;
+   end;
+   else begin
+    fSRGBFormat:=VK_FORMAT_UNDEFINED;
+   end;
+  end;
+ end else begin
+  fSRGBFormat:=VK_FORMAT_UNDEFINED;
+ end;
+end;
+
+procedure TpvVulkanTexture.ConvertChannelToMonoRedChannel(const aChannelIndex:TpvInt32);
+var Index:TpvSizeInt;
+begin
+ case fFormat of
+  VK_FORMAT_R8G8B8A8_SINT,
+  VK_FORMAT_R8G8B8A8_SNORM,
+  VK_FORMAT_R8G8B8A8_SRGB,
+  VK_FORMAT_R8G8B8A8_SSCALED,
+  VK_FORMAT_R8G8B8A8_UINT,
+  VK_FORMAT_R8G8B8A8_UNORM,
+  VK_FORMAT_R8G8B8A8_USCALED:begin
+   if assigned(fData) and (fDataSize>0) then begin
+    fDataSize:=fDataSize shr 2;
+    for Index:=0 to fDataSize-1 do begin
+     PpvUInt8Array(fData)^[Index]:=PpvUInt8Array(fData)^[(Index shl 2) or aChannelIndex];
+    end;
+    ReAllocMem(fData,fDataSize);
+   end;
+   case fFormat of
+    VK_FORMAT_R8G8B8A8_SINT:begin
+     fFormat:=VK_FORMAT_R8_SINT;
+    end;
+    VK_FORMAT_R8G8B8A8_SNORM:begin
+     fFormat:=VK_FORMAT_R8_SNORM;
+    end;
+    VK_FORMAT_R8G8B8A8_SSCALED:begin
+     fFormat:=VK_FORMAT_R8_SSCALED;
+    end;
+    VK_FORMAT_R8G8B8A8_UINT:begin
+     fFormat:=VK_FORMAT_R8_UINT;
+    end;
+    VK_FORMAT_R8G8B8A8_UNORM:begin
+     fFormat:=VK_FORMAT_R8_UNORM;
+    end;
+    VK_FORMAT_R8G8B8A8_USCALED:begin
+     fFormat:=VK_FORMAT_R8_USCALED;
+    end;
+    else begin
+     fFormat:=VK_FORMAT_R8_SRGB;
+    end;
+   end;
+   UpdateSRGBFormat;
+  end;
+  VK_FORMAT_R16G16B16A16_SFLOAT,
+  VK_FORMAT_R16G16B16A16_SINT,
+  VK_FORMAT_R16G16B16A16_SNORM,
+  VK_FORMAT_R16G16B16A16_SSCALED,
+  VK_FORMAT_R16G16B16A16_UINT,
+  VK_FORMAT_R16G16B16A16_UNORM,
+  VK_FORMAT_R16G16B16A16_USCALED:begin
+   if assigned(fData) and (fDataSize>0) then begin
+    fDataSize:=fDataSize shr 2;
+    for Index:=0 to (fDataSize shr 1)-1 do begin
+     PpvUInt16Array(fData)^[Index]:=PpvUInt16Array(fData)^[(Index shl 2) or aChannelIndex];
+    end;
+    ReAllocMem(fData,fDataSize);
+   end;
+   case fFormat of
+    VK_FORMAT_R16G16B16A16_SINT:begin
+     fFormat:=VK_FORMAT_R16_SINT;
+    end;
+    VK_FORMAT_R16G16B16A16_SNORM:begin
+     fFormat:=VK_FORMAT_R16_SNORM;
+    end;
+    VK_FORMAT_R16G16B16A16_SSCALED:begin
+     fFormat:=VK_FORMAT_R16_SSCALED;
+    end;
+    VK_FORMAT_R16G16B16A16_UINT:begin
+     fFormat:=VK_FORMAT_R16_UINT;
+    end;
+    VK_FORMAT_R16G16B16A16_UNORM:begin
+     fFormat:=VK_FORMAT_R16_UNORM;
+    end;
+    VK_FORMAT_R16G16B16A16_USCALED:begin
+     fFormat:=VK_FORMAT_R16_USCALED;
+    end;
+    else begin
+     fFormat:=VK_FORMAT_R16_SFLOAT;
+    end;
+   end;
+   UpdateSRGBFormat;
+  end;
+  VK_FORMAT_R32G32B32A32_SFLOAT,
+  VK_FORMAT_R32G32B32A32_SINT,
+  VK_FORMAT_R32G32B32A32_UINT:begin
+   if assigned(fData) and (fDataSize>0) then begin
+    fDataSize:=fDataSize shr 2;
+    for Index:=0 to (fDataSize shr 2)-1 do begin
+     PpvUInt32Array(fData)^[Index]:=PpvUInt32Array(fData)^[(Index shl 2) or aChannelIndex];
+    end;
+    ReAllocMem(fData,fDataSize);
+   end;
+   case fFormat of
+    VK_FORMAT_R32G32B32A32_SINT:begin
+     fFormat:=VK_FORMAT_R32_SINT;
+    end;
+    VK_FORMAT_R32G32B32A32_UINT:begin
+     fFormat:=VK_FORMAT_R32_UINT;
+    end;
+    else begin
+     fFormat:=VK_FORMAT_R32_SFLOAT;
+    end;
+   end;
+   UpdateSRGBFormat;
+  end;
+  else begin
+   raise EpvVulkanTextureException.Create('Non-supported format for this operation');
+  end;
+ end;
+end;
+
+procedure TpvVulkanTexture.AlphaBleeding;
+begin
+ if assigned(fData) and (fDataSize>0) and (fDepth<=1) and (fCountFaces<=1) then begin
+  case fFormat of
+   VK_FORMAT_R8G8B8A8_SINT,
+   VK_FORMAT_R8G8B8A8_SNORM,
+   VK_FORMAT_R8G8B8A8_SRGB,
+   VK_FORMAT_R8G8B8A8_SSCALED,
+   VK_FORMAT_R8G8B8A8_UINT,
+   VK_FORMAT_R8G8B8A8_UNORM,
+   VK_FORMAT_R8G8B8A8_USCALED:begin
+    RGBAAlphaBleeding(fData,fWidth,fHeight,false);
+   end;
+   VK_FORMAT_R16G16B16A16_SINT,
+   VK_FORMAT_R16G16B16A16_SNORM,
+   VK_FORMAT_R16G16B16A16_SSCALED,
+   VK_FORMAT_R16G16B16A16_UINT,
+   VK_FORMAT_R16G16B16A16_UNORM,
+   VK_FORMAT_R16G16B16A16_USCALED:begin
+    RGBAAlphaBleeding(fData,fWidth,fHeight,true);
+   end;
+  end;
+ end;
+end;
+
 procedure TpvVulkanTexture.Finish(const aGraphicsQueue:TpvVulkanQueue;
                                   const aGraphicsCommandBuffer:TpvVulkanCommandBuffer;
                                   const aGraphicsFence:TpvVulkanFence;
@@ -21699,144 +21987,7 @@ begin
 
   FormatProperties:=fDevice.fPhysicalDevice.GetFormatProperties(fFormat);
 
-  if fAdditionalSRGB then begin
-   case fFormat of
-    VK_FORMAT_R8_UNORM:begin
-     fSRGBFormat:=VK_FORMAT_R8_SRGB;
-    end;
-    VK_FORMAT_R8G8_UNORM:begin
-     fSRGBFormat:=VK_FORMAT_R8G8_SRGB;
-    end;
-    VK_FORMAT_R8G8B8_UNORM:begin
-     fSRGBFormat:=VK_FORMAT_R8G8B8_SRGB;
-    end;
-    VK_FORMAT_B8G8R8_UNORM:begin
-     fSRGBFormat:=VK_FORMAT_B8G8R8_SRGB;
-    end;
-    VK_FORMAT_R8G8B8A8_UNORM:begin
-     fSRGBFormat:=VK_FORMAT_R8G8B8A8_SRGB;
-    end;
-    VK_FORMAT_B8G8R8A8_UNORM:begin
-     fSRGBFormat:=VK_FORMAT_B8G8R8A8_SRGB;
-    end;
-    VK_FORMAT_A8B8G8R8_UNORM_PACK32:begin
-     fSRGBFormat:=VK_FORMAT_A8B8G8R8_SRGB_PACK32;
-    end;
-    VK_FORMAT_BC1_RGB_UNORM_BLOCK:begin
-     fSRGBFormat:=VK_FORMAT_BC1_RGB_SRGB_BLOCK;
-    end;
-    VK_FORMAT_BC1_RGBA_UNORM_BLOCK:begin
-     fSRGBFormat:=VK_FORMAT_BC1_RGBA_SRGB_BLOCK;
-    end;
-    VK_FORMAT_BC2_UNORM_BLOCK:begin
-     fSRGBFormat:=VK_FORMAT_BC2_SRGB_BLOCK;
-    end;
-    VK_FORMAT_BC3_UNORM_BLOCK:begin
-     fSRGBFormat:=VK_FORMAT_BC3_SRGB_BLOCK;
-    end;
-    VK_FORMAT_BC7_UNORM_BLOCK:begin
-     fSRGBFormat:=VK_FORMAT_BC7_SRGB_BLOCK;
-    end;
-    VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK:begin
-     fSRGBFormat:=VK_FORMAT_ETC2_R8G8B8_SRGB_BLOCK;
-    end;
-    VK_FORMAT_ETC2_R8G8B8A1_UNORM_BLOCK:begin
-     fSRGBFormat:=VK_FORMAT_ETC2_R8G8B8A1_SRGB_BLOCK;
-    end;
-    VK_FORMAT_ETC2_R8G8B8A8_UNORM_BLOCK:begin
-     fSRGBFormat:=VK_FORMAT_ETC2_R8G8B8A8_SRGB_BLOCK;
-    end;
-    VK_FORMAT_ASTC_4x4_UNORM_BLOCK:begin
-     fSRGBFormat:=VK_FORMAT_ASTC_4x4_SRGB_BLOCK;
-    end;
-    VK_FORMAT_ASTC_5x4_UNORM_BLOCK:begin
-     fSRGBFormat:=VK_FORMAT_ASTC_5x4_SRGB_BLOCK;
-    end;
-    VK_FORMAT_ASTC_5x5_UNORM_BLOCK:begin
-     fSRGBFormat:=VK_FORMAT_ASTC_5x5_SRGB_BLOCK;
-    end;
-    VK_FORMAT_ASTC_6x5_UNORM_BLOCK:begin
-     fSRGBFormat:=VK_FORMAT_ASTC_6x5_SRGB_BLOCK;
-    end;
-    VK_FORMAT_ASTC_6x6_UNORM_BLOCK:begin
-     fSRGBFormat:=VK_FORMAT_ASTC_6x6_SRGB_BLOCK;
-    end;
-    VK_FORMAT_ASTC_8x5_UNORM_BLOCK:begin
-     fSRGBFormat:=VK_FORMAT_ASTC_8x5_SRGB_BLOCK;
-    end;
-    VK_FORMAT_ASTC_8x6_UNORM_BLOCK:begin
-     fSRGBFormat:=VK_FORMAT_ASTC_8x6_SRGB_BLOCK;
-    end;
-    VK_FORMAT_ASTC_8x8_UNORM_BLOCK:begin
-     fSRGBFormat:=VK_FORMAT_ASTC_8x8_SRGB_BLOCK;
-    end;
-    VK_FORMAT_ASTC_10x5_UNORM_BLOCK:begin
-     fSRGBFormat:=VK_FORMAT_ASTC_10x5_SRGB_BLOCK;
-    end;
-    VK_FORMAT_ASTC_10x6_UNORM_BLOCK:begin
-     fSRGBFormat:=VK_FORMAT_ASTC_10x6_SRGB_BLOCK;
-    end;
-    VK_FORMAT_ASTC_10x8_UNORM_BLOCK:begin
-     fSRGBFormat:=VK_FORMAT_ASTC_10x8_SRGB_BLOCK;
-    end;
-    VK_FORMAT_ASTC_10x10_UNORM_BLOCK:begin
-     fSRGBFormat:=VK_FORMAT_ASTC_10x10_SRGB_BLOCK;
-    end;
-    VK_FORMAT_ASTC_12x10_UNORM_BLOCK:begin
-     fSRGBFormat:=VK_FORMAT_ASTC_12x10_SRGB_BLOCK;
-    end;
-    VK_FORMAT_ASTC_12x12_UNORM_BLOCK:begin
-     fSRGBFormat:=VK_FORMAT_ASTC_12x12_SRGB_BLOCK;
-    end;
-    VK_FORMAT_PVRTC1_2BPP_UNORM_BLOCK_IMG:begin
-     fSRGBFormat:=VK_FORMAT_PVRTC1_2BPP_SRGB_BLOCK_IMG;
-    end;
-    VK_FORMAT_PVRTC1_4BPP_UNORM_BLOCK_IMG:begin
-     fSRGBFormat:=VK_FORMAT_PVRTC1_4BPP_SRGB_BLOCK_IMG;
-    end;
-    VK_FORMAT_PVRTC2_2BPP_UNORM_BLOCK_IMG:begin
-     fSRGBFormat:=VK_FORMAT_PVRTC2_2BPP_SRGB_BLOCK_IMG;
-    end;
-    VK_FORMAT_PVRTC2_4BPP_UNORM_BLOCK_IMG:begin
-     fSRGBFormat:=VK_FORMAT_PVRTC2_4BPP_SRGB_BLOCK_IMG;
-    end;
-    VK_FORMAT_ASTC_3x3x3_UNORM_BLOCK_EXT:begin
-     fSRGBFormat:=VK_FORMAT_ASTC_3x3x3_SRGB_BLOCK_EXT;
-    end;
-    VK_FORMAT_ASTC_4x3x3_UNORM_BLOCK_EXT:begin
-     fSRGBFormat:=VK_FORMAT_ASTC_4x3x3_SRGB_BLOCK_EXT;
-    end;
-    VK_FORMAT_ASTC_4x4x3_UNORM_BLOCK_EXT:begin
-     fSRGBFormat:=VK_FORMAT_ASTC_4x4x3_SRGB_BLOCK_EXT;
-    end;
-    VK_FORMAT_ASTC_4x4x4_UNORM_BLOCK_EXT:begin
-     fSRGBFormat:=VK_FORMAT_ASTC_4x4x4_SRGB_BLOCK_EXT;
-    end;
-    VK_FORMAT_ASTC_5x4x4_UNORM_BLOCK_EXT:begin
-     fSRGBFormat:=VK_FORMAT_ASTC_5x4x4_SRGB_BLOCK_EXT;
-    end;
-    VK_FORMAT_ASTC_5x5x4_UNORM_BLOCK_EXT:begin
-     fSRGBFormat:=VK_FORMAT_ASTC_5x5x4_SRGB_BLOCK_EXT;
-    end;
-    VK_FORMAT_ASTC_5x5x5_UNORM_BLOCK_EXT:begin
-     fSRGBFormat:=VK_FORMAT_ASTC_5x5x5_SRGB_BLOCK_EXT;
-    end;
-    VK_FORMAT_ASTC_6x5x5_UNORM_BLOCK_EXT:begin
-     fSRGBFormat:=VK_FORMAT_ASTC_6x5x5_SRGB_BLOCK_EXT;
-    end;
-    VK_FORMAT_ASTC_6x6x5_UNORM_BLOCK_EXT:begin
-     fSRGBFormat:=VK_FORMAT_ASTC_6x6x5_SRGB_BLOCK_EXT;
-    end;
-    VK_FORMAT_ASTC_6x6x6_UNORM_BLOCK_EXT:begin
-     fSRGBFormat:=VK_FORMAT_ASTC_6x6x6_SRGB_BLOCK_EXT;
-    end;
-    else begin
-     fSRGBFormat:=VK_FORMAT_UNDEFINED;
-    end;
-   end;
-  end else begin
-   fSRGBFormat:=VK_FORMAT_UNDEFINED;
-  end;
+  UpdateSRGBFormat;
 
   if (TpvVulkanTextureUsageFlag.Sampled in fUsageFlags) and ((FormatProperties.optimalTilingFeatures and TVkFormatFeatureFlags(VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT))=0) then begin
    raise EpvVulkanTextureException.Create('Texture format '+IntToStr(TpvInt32(fFormat))+' can''t be sampled');
