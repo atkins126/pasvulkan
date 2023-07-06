@@ -146,13 +146,8 @@ const SampleFixUp=1024;
       HF_DAMP_FACTOR=1.0-(HF_DAMP*0.25);
       HF_FREQUENCY=3300;
 
-      MinDistance=8.0;
-      MaxDistance=65536.0;
-
       MinAbsorptionDistance=16;
       MaxAbsorptionDistance=4096;
-
-      AttenuationRollOff=0.1;
 
       AirAbsorptionGainHF=0.99426; // -0.05dB
       AirAbsorptionFactor=0.1;
@@ -373,6 +368,9 @@ type PpvAudioInt32=^TpvInt32;
        Voices:TpvAudioSoundSampleVoices;
        ReferenceCounter:TpvInt32;
        SamplePolyphony:TpvInt32;
+       MinDistance:TpvFloat;
+       MaxDistance:TpvFloat;
+       AttenuationRollOff:TpvFloat;
        FreeVoice:TpvAudioSoundSampleVoice;
        constructor Create(AAudioEngine:TpvAudio;ASoundSamples:TpvAudioSoundSamples);
        destructor Destroy; override;
@@ -1149,10 +1147,10 @@ begin
 
  NormalizedSourceVector:=SourceVector.Normalize;
 
- ClampedDistance:=Clamp(Distance,MinDistance,MaxDistance);
- AttenuationDistance:=MinDistance+(AttenuationRollOff*(ClampedDistance-MinDistance));
+ ClampedDistance:=Clamp(Distance,Sample.MinDistance,Sample.MaxDistance);
+ AttenuationDistance:=Sample.MinDistance+(Sample.AttenuationRollOff*(ClampedDistance-Sample.MinDistance));
  if AttenuationDistance>0.0 then begin
-  Attenuation:=MinDistance/AttenuationDistance;
+  Attenuation:=Sample.MinDistance/AttenuationDistance;
  end else begin
   Attenuation:=1.0;
  end;
@@ -2222,6 +2220,9 @@ begin
  Voices:=nil;
  ReferenceCounter:=0;
  SamplePolyphony:=0;
+ MinDistance:=8.0;
+ MaxDistance:=65536.0;
+ AttenuationRollOff:=1.0;
 end;
 
 destructor TpvAudioSoundSample.Destroy;
@@ -2282,23 +2283,27 @@ begin
     Data^[(SampleLength+Counter)*2]:=Data^[(SampleLength-1)*2];
     Data^[((SampleLength+Counter)*2)+1]:=Data^[((SampleLength-1)*2)+1];
    end;
-   if Loop.Mode in [SoundLoopModeFORWARD,SoundLoopModeBACKWARD] then begin
-    LoopStart:=Loop.StartSample;
-    LoopEnd:=Loop.EndSample;
-    if (LoopStart>0) and (LoopEnd>0) and (LoopEnd<=SampleLength) then begin
-     for Counter:=0 to SampleFixUp-1 do begin
-      Data^[(LoopEnd+Counter)*2]:=Data^[(LoopStart+Counter)*2];
-      Data^[((LoopEnd+Counter)*2)+1]:=Data^[((LoopStart+Counter)*2)+1];
+   case Loop.Mode of
+    SoundLoopModeFORWARD,SoundLoopModeBACKWARD:begin
+     LoopStart:=Loop.StartSample;
+     LoopEnd:=Loop.EndSample;
+     if (LoopStart>0) and (LoopEnd>0) and (LoopEnd<=SampleLength) then begin
+      for Counter:=0 to SampleFixUp-1 do begin
+       Data^[(LoopEnd+Counter)*2]:=Data^[(LoopStart+Counter)*2];
+       Data^[((LoopEnd+Counter)*2)+1]:=Data^[((LoopStart+Counter)*2)+1];
+      end;
      end;
     end;
    end;
-   if SustainLoop.Mode in [SoundLoopModeFORWARD,SoundLoopModeBACKWARD] then begin
-    LoopStart:=SustainLoop.StartSample;
-    LoopEnd:=SustainLoop.EndSample;
-    if (LoopStart>0) and (LoopEnd>0) and (LoopEnd<=SampleLength) then begin
-     for Counter:=0 to SampleFixUp-1 do begin
-      Data^[(LoopEnd+Counter)*2]:=Data^[(LoopStart+Counter)*2];
-      Data^[((LoopEnd+Counter)*2)+1]:=Data^[((LoopStart+Counter)*2)+1];
+   case SustainLoop.Mode of
+    SoundLoopModeFORWARD,SoundLoopModeBACKWARD:begin
+     LoopStart:=SustainLoop.StartSample;
+     LoopEnd:=SustainLoop.EndSample;
+     if (LoopStart>0) and (LoopEnd>0) and (LoopEnd<=SampleLength) then begin
+      for Counter:=0 to SampleFixUp-1 do begin
+       Data^[(LoopEnd+Counter)*2]:=Data^[(LoopStart+Counter)*2];
+       Data^[((LoopEnd+Counter)*2)+1]:=Data^[((LoopStart+Counter)*2)+1];
+      end;
      end;
     end;
    end;
