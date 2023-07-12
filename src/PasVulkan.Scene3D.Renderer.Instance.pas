@@ -97,6 +97,7 @@ type { TpvScene3DRendererInstance }
             TInFlightFrameState=record
              Ready:TPasMPBool32;
              FinalViewIndex:TpvSizeInt;
+             HUDViewIndex:TpvSizeInt;
              CountViews:TpvSizeInt;
              CascadedShadowMapViewIndex:TpvSizeInt;
              CountCascadedShadowMapViews:TpvSizeInt;
@@ -249,6 +250,15 @@ type { TpvScene3DRendererInstance }
               destructor Destroy; override;
               procedure Calculate(const aInFlightFrameIndex:TpvInt32);
             end;
+            { THUDRenderPass }
+            THUDRenderPass=class(TpvFrameGraph.TRenderPass)
+             protected
+              fRendererInstance:TpvScene3DRendererInstance;
+              fParent:TObject;
+             public
+              constructor Create(const aFrameGraph:TpvFrameGraph;const aRendererInstance:TpvScene3DRendererInstance;const aParent:TObject); reintroduce; virtual;
+            end;
+            THUDRenderPassClass=class of THUDRenderPass;
       private
        fFrameGraph:TpvFrameGraph;
        fVirtualReality:TpvVirtualReality;
@@ -263,6 +273,8 @@ type { TpvScene3DRendererInstance }
        fTop:TpvInt32;
        fWidth:TpvInt32;
        fHeight:TpvInt32;
+       fHUDWidth:TpvInt32;
+       fHUDHeight:TpvInt32;
        fLightGridSizeX:TpvInt32;
        fLightGridSizeY:TpvInt32;
        fLightGridSizeZ:TpvInt32;
@@ -271,8 +283,8 @@ type { TpvScene3DRendererInstance }
        fFOV:TpvFloat;
        fZNear:TpvFloat;
        fZFar:TpvFloat;
-       fCameraMatrix:TpvMatrix4x4;
-       fPointerToCameraMatrix:PpvMatrix4x4;
+       fCameraViewMatrix:TpvMatrix4x4;
+       fPointerToCameraViewMatrix:PpvMatrix4x4;
        fInFlightFrameStates:TInFlightFrameStates;
        fPointerToInFlightFrameStates:PInFlightFrameStates;
        fMeshFragmentSpecializationConstants:TMeshFragmentSpecializationConstants;
@@ -323,6 +335,7 @@ type { TpvScene3DRendererInstance }
       private
        fDepthMipmappedArray2DImages:TMipmappedArray2DImages;
        fSceneMipmappedArray2DImages:TMipmappedArray2DImages;
+       fHUDMipmappedArray2DImages:TMipmappedArray2DImages;
       private
        fLuminanceHistogramVulkanBuffers:TLuminanceVulkanBuffers;
        fLuminanceVulkanBuffers:TLuminanceVulkanBuffers;
@@ -340,6 +353,9 @@ type { TpvScene3DRendererInstance }
        fPasses:TObject;
        fLastOutputResource:TpvFrameGraph.TPass.TUsedImageResource;
        fCascadedShadowMapBuilder:TCascadedShadowMapBuilder;
+       fHUDSize:TpvFrameGraph.TImageSize;
+       fHUDRenderPassClass:THUDRenderPassClass;
+       fHUDRenderPassParent:TObject;
        procedure CalculateCascadedShadowMaps(const aInFlightFrameIndex:TpvInt32);
       public
        constructor Create(const aParent:TpvScene3DRendererBaseObject;const aVirtualReality:TpvVirtualReality=nil;const aExternalImageFormat:TVkFormat=VK_FORMAT_UNDEFINED); reintroduce;
@@ -358,8 +374,8 @@ type { TpvScene3DRendererInstance }
        procedure DrawUpdate(const aInFlightFrameIndex:TpvInt32;const aFrameCounter:TpvInt64);
        procedure Draw(const aSwapChainImageIndex,aInFlightFrameIndex:TpvInt32;const aFrameCounter:TpvInt64;var aWaitSemaphore:TpvVulkanSemaphore;const aWaitFence:TpvVulkanFence=nil);
       public
-       property CameraMatrix:TpvMatrix4x4 read fCameraMatrix write fCameraMatrix;
-       property PointerToCameraMatrix:PpvMatrix4x4 read fPointerToCameraMatrix;
+       property CameraViewMatrix:TpvMatrix4x4 read fCameraViewMatrix write fCameraViewMatrix;
+       property PointerToCameraViewMatrix:PpvMatrix4x4 read fPointerToCameraViewMatrix;
        property InFlightFrameStates:PInFlightFrameStates read fPointerToInFlightFrameStates;
        property Views:TpvScene3D.TViews read fViews;
        property MeshFragmentSpecializationConstants:TMeshFragmentSpecializationConstants read fMeshFragmentSpecializationConstants;
@@ -410,6 +426,7 @@ type { TpvScene3DRendererInstance }
       public
        property DepthMipmappedArray2DImages:TMipmappedArray2DImages read fDepthMipmappedArray2DImages;
        property SceneMipmappedArray2DImages:TMipmappedArray2DImages read fSceneMipmappedArray2DImages;
+       property HUDMipmappedArray2DImages:TMipmappedArray2DImages read fHUDMipmappedArray2DImages;
       public
        property LuminanceHistogramVulkanBuffers:TLuminanceVulkanBuffers read fLuminanceHistogramVulkanBuffers;
        property LuminanceVulkanBuffers:TLuminanceVulkanBuffers read fLuminanceVulkanBuffers;
@@ -418,6 +435,9 @@ type { TpvScene3DRendererInstance }
        property TAAHistoryDepthImages:TArray2DImages read fTAAHistoryDepthImages;
       public
        property LastOutputResource:TpvFrameGraph.TPass.TUsedImageResource read fLastOutputResource write fLastOutputResource;
+       property HUDSize:TpvFrameGraph.TImageSize read fHUDSize;
+       property HUDRenderPassClass:THUDRenderPassClass read fHUDRenderPassClass write fHUDRenderPassClass;
+       property HUDRenderPassParent:TObject read fHUDRenderPassParent write fHUDRenderPassParent;
       published
        property FrameGraph:TpvFrameGraph read fFrameGraph;
        property VirtualReality:TpvVirtualReality read fVirtualReality;
@@ -430,6 +450,8 @@ type { TpvScene3DRendererInstance }
        property Top:TpvInt32 read fTop write fTop;
        property Width:TpvInt32 read fWidth write fWidth;
        property Height:TpvInt32 read fHeight write fHeight;
+       property HUDWidth:TpvInt32 read fHUDWidth write fHUDWidth;
+       property HUDHeight:TpvInt32 read fHUDHeight write fHUDHeight;
        property CountSurfaceViews:TpvInt32 read fCountSurfaceViews write fCountSurfaceViews;
        property SurfaceMultiviewMask:TpvUInt32 read fSurfaceMultiviewMask write fSurfaceMultiviewMask;
        property FOV:TpvFloat read fFOV write fFOV;
@@ -501,7 +523,10 @@ uses PasVulkan.Scene3D.Renderer.Passes.MeshComputePass,
      PasVulkan.Scene3D.Renderer.Passes.AntialiasingSMAAWeightsRenderPass,
      PasVulkan.Scene3D.Renderer.Passes.AntialiasingSMAABlendRenderPass,
      PasVulkan.Scene3D.Renderer.Passes.DitheringRenderPass,
-     PasVulkan.Scene3D.Renderer.Passes.DebugBlitRenderPass;
+     PasVulkan.Scene3D.Renderer.Passes.HUDMipMapCustomPass,
+     PasVulkan.Scene3D.Renderer.Passes.ContentProjectionRenderPass,
+     PasVulkan.Scene3D.Renderer.Passes.DebugBlitRenderPass,
+     PasVulkan.Scene3D.Renderer.Passes.BlitRenderPass;
 
 type TpvScene3DRendererInstancePasses=class
       private
@@ -566,7 +591,11 @@ type TpvScene3DRendererInstancePasses=class
        fAntialiasingSMAAWeightsRenderPass:TpvScene3DRendererPassesAntialiasingSMAAWeightsRenderPass;
        fAntialiasingSMAABlendRenderPass:TpvScene3DRendererPassesAntialiasingSMAABlendRenderPass;
        fDitheringRenderPass:TpvScene3DRendererPassesDitheringRenderPass;
+       fHUDRenderPass:TpvScene3DRendererInstance.THUDRenderPass;
+       fHUDMipMapCustomPass:TpvScene3DRendererPassesHUDMipMapCustomPass;
+       fContentProjectionRenderPass:TpvScene3DRendererPassesContentProjectionRenderPass;
        fDebugBlitRenderPass:TpvScene3DRendererPassesDebugBlitRenderPass;
+       fBlitRenderPass:TpvScene3DRendererPassesBlitRenderPass;
      end;
 
 const CountJitterOffsets=128;
@@ -829,6 +858,15 @@ begin
 
 end;
 
+{ TpvScene3DRendererInstance.THUDRenderPass }
+
+constructor TpvScene3DRendererInstance.THUDRenderPass.Create(const aFrameGraph:TpvFrameGraph;const aRendererInstance:TpvScene3DRendererInstance;const aParent:TObject);
+begin
+ inherited Create(aFrameGraph);
+ fRendererInstance:=aRendererInstance;
+ fParent:=aParent;
+end;
+
 { TpvScene3DRendererInstance }
 
 constructor TpvScene3DRendererInstance.Create(const aParent:TpvScene3DRendererBaseObject;const aVirtualReality:TpvVirtualReality;const aExternalImageFormat:TVkFormat);
@@ -876,13 +914,17 @@ begin
 
  end;
 
+ fHUDRenderPassClass:=nil;
+
+ fHUDRenderPassParent:=nil;
+
  fCascadedShadowMapWidth:=Renderer.ShadowMapSize;
 
  fCascadedShadowMapHeight:=Renderer.ShadowMapSize;
 
- fCameraMatrix:=TpvMatrix4x4.Identity;
+ fCameraViewMatrix:=TpvMatrix4x4.Identity;
 
- fPointerToCameraMatrix:=@fCameraMatrix;
+ fPointerToCameraViewMatrix:=@fCameraViewMatrix;
 
  fPointerToInFlightFrameStates:=@fInFlightFrameStates;
 
@@ -1048,6 +1090,9 @@ begin
                                    TVkImageUsageFlags(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) or TVkImageUsageFlags(VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT),
                                    1
                                   );
+
+  fHUDSize:=TpvFrameGraph.TImageSize.Create(TpvFrameGraph.TImageSize.TKind.Absolute,Renderer.VirtualRealityHUDWidth,Renderer.VirtualRealityHUDHeight);
+
  end else begin
 
   fFrameGraph.AddImageResourceType('resourcetype_output_color',
@@ -1059,7 +1104,30 @@ begin
                                    TVkImageUsageFlags(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) or TVkImageUsageFlags(VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT),
                                    1
                                   );
+
+  fHUDSize:=TpvFrameGraph.TImageSize.Create(TpvFrameGraph.TImageSize.TKind.SurfaceDependent,1.0,1.0);
+
  end;
+
+ fFrameGraph.AddImageResourceType('resourcetype_hud_color',
+                                  false,
+                                  VK_FORMAT_R8G8B8A8_SRGB,
+                                  TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT),
+                                  TpvFrameGraph.TImageType.Color,
+                                  fHUDSize,
+                                  TVkImageUsageFlags(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) or TVkImageUsageFlags(VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT) or TVkImageUsageFlags(VK_IMAGE_USAGE_SAMPLED_BIT) or TVkImageUsageFlags(VK_IMAGE_USAGE_TRANSFER_SRC_BIT),
+                                  1
+                                 );
+
+ fFrameGraph.AddImageResourceType('resourcetype_hud_depth',
+                                  false,
+                                  VK_FORMAT_D32_SFLOAT{pvApplication.VulkanDepthImageFormat},
+                                  TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT),
+                                  TpvFrameGraph.TImageType.From(VK_FORMAT_D32_SFLOAT{pvApplication.VulkanDepthImageFormat}),
+                                  fHUDSize,
+                                  TVkImageUsageFlags(VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT) or TVkImageUsageFlags(VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT) or TVkImageUsageFlags(VK_IMAGE_USAGE_SAMPLED_BIT),
+                                  1
+                                 );
 
  fFrameGraph.AddImageResourceType('resourcetype_msaa_color',
                                   false,
@@ -1185,6 +1253,16 @@ begin
                                  );
 
  fFrameGraph.AddImageResourceType('resourcetype_dithering_color',
+                                  false,
+                                  VK_FORMAT_R8G8B8A8_SRGB,
+                                  TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT),
+                                  TpvFrameGraph.TImageType.Color,
+                                  TpvFrameGraph.TImageSize.Create(TpvFrameGraph.TImageSize.TKind.SurfaceDependent,1.0,1.0,1.0,fCountSurfaceViews),
+                                  TVkImageUsageFlags(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) or TVkImageUsageFlags(VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT) or TVkImageUsageFlags(VK_IMAGE_USAGE_SAMPLED_BIT),
+                                  1
+                                 );
+
+ fFrameGraph.AddImageResourceType('resourcetype_hud_output_color',
                                   false,
                                   VK_FORMAT_R8G8B8A8_SRGB,
                                   TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT),
@@ -1715,13 +1793,43 @@ begin
   end;
  end;
 
- if fUseDebugBlit then begin
+ if fUseDebugBlit or assigned(fHUDRenderPassClass) then begin
 
   TpvScene3DRendererInstancePasses(fPasses).fDitheringRenderPass:=TpvScene3DRendererPassesDitheringRenderPass.Create(fFrameGraph,self,false);
 
-  TpvScene3DRendererInstancePasses(fPasses).fDebugBlitRenderPass:=TpvScene3DRendererPassesDebugBlitRenderPass.Create(fFrameGraph,self);
+  if assigned(fHUDRenderPassClass) then begin
+   TpvScene3DRendererInstancePasses(fPasses).fHUDRenderPass:=fHUDRenderPassClass.Create(fFrameGraph,self,fHUDRenderPassParent);
+   TpvScene3DRendererInstancePasses(fPasses).fHUDRenderPass.AddExplicitPassDependency(TpvScene3DRendererInstancePasses(fPasses).fDitheringRenderPass);
 
-  fFrameGraph.RootPass:=TpvScene3DRendererInstancePasses(fPasses).fDebugBlitRenderPass;
+   TpvScene3DRendererInstancePasses(fPasses).fHUDMipMapCustomPass:=TpvScene3DRendererPassesHUDMipMapCustomPass.Create(fFrameGraph,self);
+   TpvScene3DRendererInstancePasses(fPasses).fHUDMipMapCustomPass.AddExplicitPassDependency(TpvScene3DRendererInstancePasses(fPasses).fHUDRenderPass);
+
+   TpvScene3DRendererInstancePasses(fPasses).fContentProjectionRenderPass:=TpvScene3DRendererPassesContentProjectionRenderPass.Create(fFrameGraph,self);
+   TpvScene3DRendererInstancePasses(fPasses).fContentProjectionRenderPass.AddExplicitPassDependency(TpvScene3DRendererInstancePasses(fPasses).fHUDMipMapCustomPass);
+
+  end;
+
+  if fUseDebugBlit then begin
+
+   TpvScene3DRendererInstancePasses(fPasses).fDebugBlitRenderPass:=TpvScene3DRendererPassesDebugBlitRenderPass.Create(fFrameGraph,self);
+   if assigned(fHUDRenderPassClass) then begin
+    TpvScene3DRendererInstancePasses(fPasses).fDebugBlitRenderPass.AddExplicitPassDependency(TpvScene3DRendererInstancePasses(fPasses).fHUDRenderPass);
+    TpvScene3DRendererInstancePasses(fPasses).fDebugBlitRenderPass.AddExplicitPassDependency(TpvScene3DRendererInstancePasses(fPasses).fContentProjectionRenderPass);
+   end;
+
+   fFrameGraph.RootPass:=TpvScene3DRendererInstancePasses(fPasses).fDebugBlitRenderPass;
+
+  end else begin
+
+   TpvScene3DRendererInstancePasses(fPasses).fBlitRenderPass:=TpvScene3DRendererPassesBlitRenderPass.Create(fFrameGraph,self);
+   if assigned(fHUDRenderPassClass) then begin
+    TpvScene3DRendererInstancePasses(fPasses).fBlitRenderPass.AddExplicitPassDependency(TpvScene3DRendererInstancePasses(fPasses).fHUDRenderPass);
+    TpvScene3DRendererInstancePasses(fPasses).fBlitRenderPass.AddExplicitPassDependency(TpvScene3DRendererInstancePasses(fPasses).fContentProjectionRenderPass);
+   end;
+
+   fFrameGraph.RootPass:=TpvScene3DRendererInstancePasses(fPasses).fBlitRenderPass;
+
+  end;
 
  end else begin
 
@@ -1763,6 +1871,9 @@ begin
 
   fHeight:=fVirtualReality.Height;
 
+  fHUDWidth:=Renderer.VirtualRealityHUDWidth;
+  fHUDHeight:=Renderer.VirtualRealityHUDHeight;
+
  end else if fHasExternalOutputImage then begin
 
   // Nothing
@@ -1772,6 +1883,9 @@ begin
   fWidth:=pvApplication.VulkanSwapChain.Width;
 
   fHeight:=pvApplication.VulkanSwapChain.Height;
+
+  fHUDWidth:=fWidth;
+  fHUDHeight:=fHeight;
 
  end;
 
@@ -1939,6 +2053,11 @@ begin
      for InFlightFrameIndex:=0 to Renderer.CountInFlightFrames-1 do begin
       fDepthMipmappedArray2DImages[InFlightFrameIndex]:=TpvScene3DRendererMipmappedArray2DImage.Create(fWidth,fHeight,fCountSurfaceViews,VK_FORMAT_R32_SFLOAT,false,VK_SAMPLE_COUNT_1_BIT,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
       fSceneMipmappedArray2DImages[InFlightFrameIndex]:=TpvScene3DRendererMipmappedArray2DImage.Create(fWidth,fHeight,fCountSurfaceViews,Renderer.OptimizedNonAlphaFormat,true,VK_SAMPLE_COUNT_1_BIT,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+      if assigned(fHUDRenderPassClass) then begin
+       fHUDMipmappedArray2DImages[InFlightFrameIndex]:=TpvScene3DRendererMipmappedArray2DImage.Create(fHUDWidth,fHUDHeight,1,VK_FORMAT_R8G8B8A8_SRGB,true,VK_SAMPLE_COUNT_1_BIT,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+      end else begin
+       fHUDMipmappedArray2DImages[InFlightFrameIndex]:=nil;
+      end;
      end;
 
      case Renderer.TransparencyMode of
@@ -2191,6 +2310,7 @@ begin
  for InFlightFrameIndex:=0 to Renderer.CountInFlightFrames-1 do begin
   FreeAndNil(fDepthMipmappedArray2DImages[InFlightFrameIndex]);
   FreeAndNil(fSceneMipmappedArray2DImages[InFlightFrameIndex]);
+  FreeAndNil(fHUDMipmappedArray2DImages[InFlightFrameIndex]);
  end;
 
  for InFlightFrameIndex:=0 to Renderer.CountInFlightFrames-1 do begin
@@ -2293,7 +2413,7 @@ begin
 end;
 
 procedure TpvScene3DRendererInstance.DrawUpdate(const aInFlightFrameIndex:TpvInt32;const aFrameCounter:TpvInt64);
-var Index:TpvSizeInt;
+var Index,HUDOffset:TpvSizeInt;
     InFlightFrameState:PInFlightFrameState;
     ViewLeft,ViewRight:TpvScene3D.TView;
     ViewMatrix:TpvMatrix4x4;
@@ -2303,7 +2423,7 @@ begin
 
  if fViews.Count=0 then begin
 
-  ViewMatrix:=fCameraMatrix.SimpleInverse;
+  ViewMatrix:=fCameraViewMatrix;
 
   if assigned(fVirtualReality) then begin
 
@@ -2313,6 +2433,20 @@ begin
    ViewLeft.InverseProjectionMatrix:=ViewLeft.ProjectionMatrix.Inverse;
 
    ViewRight.ViewMatrix:=ViewMatrix*fVirtualReality.GetPositionMatrix(1);
+   ViewRight.ProjectionMatrix:=AddTemporalAntialiasingJitter(fVirtualReality.GetProjectionMatrix(1),aFrameCounter);
+   ViewRight.InverseViewMatrix:=ViewRight.ViewMatrix.Inverse;
+   ViewRight.InverseProjectionMatrix:=ViewRight.ProjectionMatrix.Inverse;
+
+   fViews.Add([ViewLeft,ViewRight]);
+
+   HUDOffset:=2;
+
+   ViewLeft.ViewMatrix:=fVirtualReality.GetPositionMatrix(0);
+   ViewLeft.ProjectionMatrix:=AddTemporalAntialiasingJitter(fVirtualReality.GetProjectionMatrix(0),aFrameCounter);
+   ViewLeft.InverseViewMatrix:=ViewLeft.ViewMatrix.Inverse;
+   ViewLeft.InverseProjectionMatrix:=ViewLeft.ProjectionMatrix.Inverse;
+
+   ViewRight.ViewMatrix:=fVirtualReality.GetPositionMatrix(1);
    ViewRight.ProjectionMatrix:=AddTemporalAntialiasingJitter(fVirtualReality.GetProjectionMatrix(1),aFrameCounter);
    ViewRight.InverseViewMatrix:=ViewRight.ViewMatrix.Inverse;
    ViewRight.InverseProjectionMatrix:=ViewRight.ProjectionMatrix.Inverse;
@@ -2353,12 +2487,22 @@ begin
 
    fViews.Add(ViewLeft);
 
+   HUDOffset:=1;
+
+   ViewLeft.ViewMatrix:=TpvMatrix4x4.Identity;
+   ViewLeft.ProjectionMatrix:=AddTemporalAntialiasingJitter(ViewLeft.ProjectionMatrix*TpvMatrix4x4.FlipYClipSpace,aFrameCounter);
+   ViewLeft.InverseViewMatrix:=ViewLeft.ViewMatrix.Inverse;
+   ViewLeft.InverseProjectionMatrix:=ViewLeft.ProjectionMatrix.Inverse;
+
+   fViews.Add(ViewLeft);
+
   end;
 
  end;
 
  if fViews.Count>0 then begin
   InFlightFrameState^.FinalViewIndex:=Renderer.Scene3D.AddView(fViews.Items[0]);
+  InFlightFrameState^.HUDViewIndex:=InFlightFrameState^.FinalViewIndex+HUDOffset;
   for Index:=1 to fViews.Count-1 do begin
    Renderer.Scene3D.AddView(fViews.Items[Index]);
   end;

@@ -184,11 +184,7 @@ const SampleFixUp=1024;
       SPATIALIZATION_PSEUDO=1;
       SPATIALIZATION_HRTF=2;
 
-      ConeScale=1.0;
-      InnerAngle=360.0;
-      OuterAngle=360.0;
-      OuterGain=0.0;
-      OuterGainHF=1.0;
+      MaxAudioSpeakerLayoutListeners=8;
 
 type PpvAudioInt32=^TpvInt32;
 
@@ -228,6 +224,24 @@ type PpvAudioInt32=^TpvInt32;
 
      TpvAudio=class;
 
+     TpvAudioSpeakerLayoutListener=record
+      public
+       Index:TpvInt32;
+       YawAngle:TpvScalar;
+       DotScale:TpvScalar;
+       DotBias:TpvScalar;
+       AmbientVolume:TpvScalar;
+     end;
+     PpvAudioSpeakerLayoutListener=^TpvAudioSpeakerLayoutListener;
+
+     TpvAudioSpeakerLayout=record
+      public
+       Name:TpvUTF8String;
+       CountChannels:TpvInt32;
+       Listeners:array[0..MaxAudioSpeakerLayoutListeners-1] of TpvAudioSpeakerLayoutListener;
+     end;
+     PpvAudioSpeakerLayout=^TpvAudioSpeakerLayout;
+
      TpvAudioStringHashMap=class(TpvStringHashMap<TpvPointer>);
 
      TpvAudioHRTFCoefs=array[0..HRIR_MAX_LENGTH-1] of TpvInt32;
@@ -252,6 +266,7 @@ type PpvAudioInt32=^TpvInt32;
        Volume:TpvInt32;
        Panning:TpvInt32;
        Age:TpvInt64;
+       ListenerGeneration:TpvUInt64;
        Position:TpvInt64;
        Increment:TpvInt64;
        IncrementLast:TpvInt64;
@@ -329,6 +344,8 @@ type PpvAudioInt32=^TpvInt32;
        NewLastRight:TpvInt32;
        Rate:TpvFloat;
        DopplerRate:TpvFloat;
+       LastElevation:TpvFloat;
+       LastAzimuth:TpvFloat;
        VoiceIndexPointer:TpvPointer;
        procedure UpdateSpatialization;
        function GetSampleLength(CountSamplesValue:TpvInt32):TpvInt32;
@@ -490,7 +507,7 @@ type PpvAudioInt32=^TpvInt32;
       private
        fSample:TpvAudioSoundSample;
       public
-       constructor Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil); override;
+       constructor Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil;const aMetaResource:TpvMetaResource=nil); override;
        destructor Destroy; override;
        function BeginLoad(const aStream:TStream):boolean; override;
        procedure FixUp;
@@ -522,7 +539,7 @@ type PpvAudioInt32=^TpvInt32;
       private
        fMusic:TpvAudioSoundMusic;
       public
-       constructor Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil); override;
+       constructor Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil;const aMetaResource:TpvMetaResource=nil); override;
        destructor Destroy; override;
        function BeginLoad(const aStream:TStream):boolean; override;
        procedure Play(AVolume,APanning,ARate:TpvFloat;ALoop:boolean);
@@ -681,10 +698,10 @@ type PpvAudioInt32=^TpvInt32;
        AGCInterval:TpvInt32;
        CriticalSection:TCriticalSection;
        CubicSplineTable:TpvAudioResamplerCubicSplineArray;
-       ListenerOrigin:TpvVector3;
+       ListenerViewMatrix:TpvMatrix4x4;
        ListenerVelocity:TpvVector3;
-       ListenerMatrix:TpvMatrix4x4;
        ListenerUnderwater:LongBool;
+       ListenerGeneration:TpvUInt64;
        LowPassLeft:TpvInt32;
        LowPassRight:TpvInt32;
        LowPassLast:TpvInt32;
@@ -708,6 +725,11 @@ type PpvAudioInt32=^TpvInt32;
        IsReady:LongBool;
        IsMuted:LongBool;
        IsActive:LongBool;
+       ConeScale:TpvScalar;
+       InnerAngle:TpvScalar;
+       OuterAngle:TpvScalar;
+       OuterGain:TpvScalar;
+       OuterGainHF:TpvScalar;
        constructor Create(ASampleRate,AChannels,ABits,ABufferSamples:TpvInt32);
        destructor Destroy; override;
        procedure SetMixerMasterVolume(NewVolume:TpvFloat);
@@ -723,6 +745,86 @@ type PpvAudioInt32=^TpvInt32;
        procedure Mute;
        procedure Unmute;
      end;
+
+const AudioSpeakerLayoutMono:TpvAudioSpeakerLayout=
+       (
+        Name:'mono';
+        CountChannels:1;
+        Listeners:(
+         (Index:0;YawAngle:0.0;DotScale:0.0;DotBias:1.0;AmbientVolume:1.0),
+         (Index:0;YawAngle:0.0;DotScale:0.0;DotBias:0.0;AmbientVolume:0.0),
+         (Index:0;YawAngle:0.0;DotScale:0.0;DotBias:0.0;AmbientVolume:0.0),
+         (Index:0;YawAngle:0.0;DotScale:0.0;DotBias:0.0;AmbientVolume:0.0),
+         (Index:0;YawAngle:0.0;DotScale:0.0;DotBias:0.0;AmbientVolume:0.0),
+         (Index:0;YawAngle:0.0;DotScale:0.0;DotBias:0.0;AmbientVolume:0.0),
+         (Index:0;YawAngle:0.0;DotScale:0.0;DotBias:0.0;AmbientVolume:0.0),
+         (Index:0;YawAngle:0.0;DotScale:0.0;DotBias:0.0;AmbientVolume:0.0)
+        );
+       );
+
+      AudioSpeakerLayoutStereo:TpvAudioSpeakerLayout=
+       (
+        Name:'stereo';
+        CountChannels:2;
+        Listeners:(
+         (Index:0;YawAngle:90.0;DotScale:0.5;DotBias:0.5;AmbientVolume:1.0),
+         (Index:1;YawAngle:270.0;DotScale:0.5;DotBias:0.5;AmbientVolume:1.0),
+         (Index:0;YawAngle:0.0;DotScale:0.0;DotBias:0.0;AmbientVolume:0.0),
+         (Index:0;YawAngle:0.0;DotScale:0.0;DotBias:0.0;AmbientVolume:0.0),
+         (Index:0;YawAngle:0.0;DotScale:0.0;DotBias:0.0;AmbientVolume:0.0),
+         (Index:0;YawAngle:0.0;DotScale:0.0;DotBias:0.0;AmbientVolume:0.0),
+         (Index:0;YawAngle:0.0;DotScale:0.0;DotBias:0.0;AmbientVolume:0.0),
+         (Index:0;YawAngle:0.0;DotScale:0.0;DotBias:0.0;AmbientVolume:0.0)
+        );
+       );
+
+      AudioSpeakerLayoutSurround40:TpvAudioSpeakerLayout=
+       (
+        Name:'surround40';
+        CountChannels:4;
+        Listeners:(
+         (Index:0;YawAngle:45.0;DotScale:0.3;DotBias:0.3;AmbientVolume:0.8),
+         (Index:1;YawAngle:315.0;DotScale:0.3;DotBias:0.3;AmbientVolume:0.8),
+         (Index:2;YawAngle:135.0;DotScale:0.3;DotBias:0.3;AmbientVolume:0.8),
+         (Index:3;YawAngle:225.0;DotScale:0.3;DotBias:0.3;AmbientVolume:0.8),
+         (Index:0;YawAngle:0.0;DotScale:0.0;DotBias:0.0;AmbientVolume:0.0),
+         (Index:0;YawAngle:0.0;DotScale:0.0;DotBias:0.0;AmbientVolume:0.0),
+         (Index:0;YawAngle:0.0;DotScale:0.0;DotBias:0.0;AmbientVolume:0.0),
+         (Index:0;YawAngle:0.0;DotScale:0.0;DotBias:0.0;AmbientVolume:0.0)
+        );
+       );
+
+      AudioSpeakerLayoutSurround51:TpvAudioSpeakerLayout=
+       (
+        Name:'surround51';
+        CountChannels:6;
+        Listeners:(
+         (Index:0;YawAngle:45.0;DotScale:0.2;DotBias:0.2;AmbientVolume:0.5),
+         (Index:1;YawAngle:315.0;DotScale:0.2;DotBias:0.2;AmbientVolume:0.5),
+         (Index:2;YawAngle:135.0;DotScale:0.2;DotBias:0.2;AmbientVolume:0.5),
+         (Index:3;YawAngle:225.0;DotScale:0.2;DotBias:0.2;AmbientVolume:0.5),
+         (Index:4;YawAngle:0.0;DotScale:0.2;DotBias:0.2;AmbientVolume:0.5),
+         (Index:5;YawAngle:0.0;DotScale:0.0;DotBias:0.0;AmbientVolume:0.0),
+         (Index:0;YawAngle:0.0;DotScale:0.0;DotBias:0.0;AmbientVolume:0.0),
+         (Index:0;YawAngle:0.0;DotScale:0.0;DotBias:0.0;AmbientVolume:0.0)
+        );
+       );
+
+      AudioSpeakerLayoutSurround71:TpvAudioSpeakerLayout=
+       (
+        Name:'surround71';
+        CountChannels:8;
+        Listeners:(
+         (Index:0;YawAngle:45.0;DotScale:0.2;DotBias:0.2;AmbientVolume:0.5),
+         (Index:1;YawAngle:315.0;DotScale:0.2;DotBias:0.2;AmbientVolume:0.5),
+         (Index:2;YawAngle:135.0;DotScale:0.2;DotBias:0.2;AmbientVolume:0.5),
+         (Index:3;YawAngle:225.0;DotScale:0.2;DotBias:0.2;AmbientVolume:0.5),
+         (Index:4;YawAngle:0.0;DotScale:0.2;DotBias:0.2;AmbientVolume:0.5),
+         (Index:5;YawAngle:0.0;DotScale:0.0;DotBias:0.0;AmbientVolume:0.0),
+         (Index:6;YawAngle:90.0;DotScale:0.2;DotBias:0.2;AmbientVolume:0.5),
+         (Index:7;YawAngle:180.0;DotScale:0.2;DotBias:0.2;AmbientVolume:0.5)
+        );
+       );
 
 implementation
 
@@ -1047,7 +1149,10 @@ begin
  IncrementRampingRemain:=0;
  IncrementRampingStepRemain:=0;
  Age:=0;
+ ListenerGeneration:=High(TpvUInt64);
  Position:=0;
+ LastElevation:=1e+30;
+ LastAzimuth:=1e+30;
  if AudioEngine.SpatializationMode=SPATIALIZATION_HRTF then begin
   FillChar(HRTFLeftCoefs,SizeOf(TpvAudioHRTFCoefs),AnsiChar(#0));
   FillChar(HRTFRightCoefs,SizeOf(TpvAudioHRTFCoefs),AnsiChar(#0));
@@ -1121,8 +1226,8 @@ procedure TpvAudioSoundSampleVoice.UpdateSpatialization;
   end;
   if Gain<0.9999 then begin
    result:=((1.0-(Gain*cw))-sqrt((2.0*(Gain*(1.0-cw)))-(sqr(Gain)*(1.0-sqr(cw)))))/(1.0-Gain);
-   if result<-1.0 then begin
-    result:=-1.0;
+   if result<0.0 then begin
+    result:=0.0;
    end else if result>1.0 then begin
     result:=1.0;
    end;
@@ -1134,18 +1239,21 @@ const LeftSpeakerAngle=-(pi*0.5);
       RightSpeakerAngle=(pi*0.5);
 var Distance,ClampedDistance,AttenuationDistance,Attenuation,Spatialization,SpatializationVolume,SpatializationDelay,
     LeftHFGain,RightHFGain,Gain,Factor,SpeedOfSound,DopplerListener,DopplerSource,Angle,DirectionGain,
-    Elevation,Azimuth,Delta{,Scale,ConeVolume,ConeHF}:TpvFloat;
-    SourceVector,NormalizedSourceVector,RotatedSourceVector,Direction,SourceToListenerVector:TpvVector3;
+    Elevation,Azimuth,Delta{},Scale,ConeVolume,ConeHF{}:TpvFloat;
+    RelativeVector,NormalizedRelativeVector,Direction,SourceToListenerVector,ListenerOrigin:TpvVector3;
     Counter:TpvInt32;
     DoIt,IsLocal:boolean;
 begin
- SourceVector:=SpatializationOrigin-Sample.AudioEngine.ListenerOrigin;
 
- IsLocal:=SpatializationOrigin=Sample.AudioEngine.ListenerOrigin;
+ ListenerOrigin:=AudioEngine.ListenerViewMatrix.SimpleInverse.Translation.xyz;
 
- Distance:=SourceVector.Length;
+ RelativeVector:=AudioEngine.ListenerViewMatrix*SpatializationOrigin;
 
- NormalizedSourceVector:=SourceVector.Normalize;
+ NormalizedRelativeVector:=RelativeVector.Normalize;
+
+ IsLocal:=SpatializationOrigin=ListenerOrigin;
+
+ Distance:=RelativeVector.Length;
 
  ClampedDistance:=Clamp(Distance,Sample.MinDistance,Sample.MaxDistance);
  AttenuationDistance:=Sample.MinDistance+(Sample.AttenuationRollOff*(ClampedDistance-Sample.MinDistance));
@@ -1155,62 +1263,41 @@ begin
   Attenuation:=1.0;
  end;
 
-{Angle:=(ArcCos(Vector3Dot(NormalizedSourceVector,PVector3(TpvPointer(@Sample.AudioEngine.ListenerMatrix[2,0]))^)*ConeScale)*RAD2DEG)*2.0;
- if (Angle>InnerAngle) and (Angle<=OuterAngle) then begin
-  Scale:=(Angle-InnerAngle)/(OuterAngle-InnerAngle);
-  ConeVolume:=FloatLerp(1.0,OuterGain,Scale);
-  ConeHF:=FloatLerp(1.0,OuterGainHF,Scale);
- end else if Angle>OuterAngle then begin
-  ConeVolume:=OuterGain;
-  ConeHF:=OuterGainHF;
+ if AudioEngine.InnerAngle<360.0 then begin
+  Angle:=(ArcCos(NormalizedRelativeVector.z*AudioEngine.ConeScale)*RAD2DEG)*2.0;
+  if (Angle>AudioEngine.InnerAngle) and (Angle<=AudioEngine.OuterAngle) then begin
+   Scale:=(Angle-AudioEngine.InnerAngle)/(AudioEngine.OuterAngle-AudioEngine.InnerAngle);
+   ConeVolume:=FloatLerp(1.0,AudioEngine.OuterGain,Scale);
+   ConeHF:=FloatLerp(1.0,AudioEngine.OuterGainHF,Scale);
+  end else if Angle>AudioEngine.OuterAngle then begin
+   ConeVolume:=AudioEngine.OuterGain;
+   ConeHF:=AudioEngine.OuterGainHF;
+  end else begin
+   ConeVolume:=1.0;
+   ConeHF:=1.0;
+  end;
  end else begin
   ConeVolume:=1.0;
   ConeHF:=1.0;
- end;}
+ end;
 
- SpatializationVolume:=Attenuation{*ConeVolume};
+ SpatializationVolume:=Attenuation*ConeVolume;
  if SpatializationVolume<0.0 then begin
   SpatializationVolume:=0.0;
  end else if SpatializationVolume>1.0 then begin
   SpatializationVolume:=1.0;
  end;
 
- RotatedSourceVector:=Sample.AudioEngine.ListenerMatrix.MulBasis(NormalizedSourceVector).Normalize;
-
  RampingSamples:=AudioEngine.RampingSamples;
 
  if IsLocal then begin
   DirectionGain:=1.0;
  end else begin
-  DirectionGain:=sqrt(sqr(RotatedSourceVector.x)+sqr(RotatedSourceVector.z));
- end;
-
- if IsLocal then begin
-  Angle:=0.0;
- end else begin
-  if abs(RotatedSourceVector.x)>EPSILON then begin
-   // x<>0
-   if abs(RotatedSourceVector.z)>EPSILON then begin // x<>0 z<>0
-    Angle:=ArcTan2(RotatedSourceVector.x,-RotatedSourceVector.z);
-   end else begin // x<>0 z=0
-    if RotatedSourceVector.x<0 then begin
-     Angle:=pi*0.5;
-    end else begin
-     Angle:=-(pi*0.5);
-    end;
-   end;
-  end else begin
-   // x=0
-   if RotatedSourceVector.z>EPSILON then begin // x=0 z<0
-    Angle:=-pi;
-   end else begin // x=0 z>=0
-    Angle:=0.0;
-   end;
-  end;
+  DirectionGain:=sqrt(sqr(NormalizedRelativeVector.x)+sqr(NormalizedRelativeVector.z));
  end;
 
  DoIt:=false;
- Direction:=RotatedSourceVector;
+ Direction:=NormalizedRelativeVector;
  if Age=0 then begin
   SpatializationVolumeLast:=SpatializationVolume;
   LastDirection:=Direction;
@@ -1222,6 +1309,31 @@ begin
    SpatializationVolumeLast:=SpatializationVolume;
    LastDirection:=Direction;
   end;
+ end;
+
+{if IsLocal then begin
+  Angle:=0.0;
+ end else begin
+  Angle:=ArcTan2(NormalizedRelativeVector.x,-NormalizedRelativeVector.z);
+(*if abs(NormalizedRelativeVector.x)>EPSILON then begin
+   // x<>0
+   if abs(NormalizedRelativeVector.z)>EPSILON then begin // x<>0 z<>0
+    Angle:=ArcTan2(NormalizedRelativeVector.x,-NormalizedRelativeVector.z);
+   end else begin // x<>0 z=0
+    if NormalizedRelativeVector.x<0 then begin
+     Angle:=pi*0.5;
+    end else begin
+     Angle:=-(pi*0.5);
+    end;
+   end;
+  end else begin
+   // x=0
+   if NormalizedRelativeVector.z>EPSILON then begin // x=0 z<0
+    Angle:=-pi;
+   end else begin // x=0 z>=0
+    Angle:=0.0;
+   end;
+  end;//*)
  end;
 
  if IsLocal then begin
@@ -1237,14 +1349,18 @@ begin
     Spatialization:=(Angle-LeftSpeakerAngle)/((LeftSpeakerAngle-RightSpeakerAngle)+(pi*2.0));
    end;
   end;
- end;
+ end;//}
 
-//Spatialization:=RotatedSourceVector.x;
- if Spatialization<-1.0 then begin
-  Spatialization:=-1.0;
- end else if Spatialization>1.0 then begin
-  Spatialization:=1.0;
- end;
+ if IsLocal then begin
+  Spatialization:=0.0;
+ end else begin
+  Spatialization:=NormalizedRelativeVector.x;
+  if Spatialization<-1.0 then begin
+   Spatialization:=-1.0;
+  end else if Spatialization>1.0 then begin
+   Spatialization:=1.0;
+  end;
+ end;//}
  case AudioEngine.SpatializationMode of
   SPATIALIZATION_HRTF:begin
    MulLeft:=round(Clamp(SpatializationVolume,-1.0,1.0)*32768.0);
@@ -1268,28 +1384,32 @@ begin
    end else begin
     SpatializationDelay:=AudioEngine.SpatializationDelayAir;
    end;
-   if Spatialization<0 then begin
+   if Spatialization<0.0 then begin
     RightHFGain:=1.0+(Spatialization*HF_DAMP_HALF);
     SpatializationDelayRight:=round((SpatializationDelay*(-Spatialization))*SpatializationDelayLength);
-   end else if Spatialization>0 then begin
+   end else if Spatialization>0.0 then begin
     LeftHFGain:=1.0-(Spatialization*HF_DAMP_HALF);
     SpatializationDelayLeft:=round((SpatializationDelay*Spatialization)*SpatializationDelayLength);
    end;
-   if RotatedSourceVector.z>0 then begin
-    Gain:=1.0-(RotatedSourceVector.z*HF_DAMP);
+   if NormalizedRelativeVector.z>0 then begin
+    Gain:=1.0-(NormalizedRelativeVector.z*HF_DAMP);
     LeftHFGain:=LeftHFGain*Gain;
     RightHFGain:=RightHFGain*Gain;
    end;
   end;
   SPATIALIZATION_HRTF:begin
    if Distance>EPSILON then begin
-    Elevation:=ArcSin(Clamp(RotatedSourceVector.y,-1.0,1.0));
-    Azimuth:=Angle;
+    Elevation:=AngleClamp(ArcSin(Clamp(NormalizedRelativeVector.y,-1.0,1.0)));
+    Azimuth:=AngleClamp(ArcTan2(NormalizedRelativeVector.x,-NormalizedRelativeVector.z));
    end else begin
     Elevation:=0.0;
     Azimuth:=0.0;
    end;
-   if Age=0 then begin
+   if IsNaN(Elevation) or IsInfinite(Elevation) or IsNaN(Azimuth) or IsInfinite(Azimuth) then begin
+    Elevation:=0.0;
+    Azimuth:=0.0;
+   end;
+   if (Age=0) or (abs(LastElevation-Elevation)>=0.25) or (abs(LastAzimuth-Azimuth)>=0.25) then begin
     AudioEngine.GetLerpedHRTFCoefs(Elevation,Azimuth,HRTFLeftCoefs,HRTFRightCoefs,HRTFLeftDelay,HRTFRightDelay);
     HRTFRampingRemain:=0;
     HRTFLeftCoefsCurrent:=HRTFLeftCoefs;
@@ -1312,17 +1432,22 @@ begin
      SpatializationDelayRight:=HRTFRightDelay;
     end;
    end;
+   LastElevation:=Elevation;
+   LastAzimuth:=Azimuth;
   end;
  end;
 
  if AudioEngine.SpatializationMode in [SPATIALIZATION_PSEUDO,SPATIALIZATION_HRTF] then begin
-  if Distance>MinAbsorptionDistance then begin                                                     
-   Factor:=power(AirAbsorptionGainHF,AirAbsorptionFactor*((Clamp(Distance,MinAbsorptionDistance,MaxAbsorptionDistance)-MinAbsorptionDistance)*WorldUnitsToMeters));
+  if Distance>MinAbsorptionDistance then begin
+   Factor:=Clamp(power(AirAbsorptionGainHF,AirAbsorptionFactor*((Clamp(Distance,MinAbsorptionDistance,MaxAbsorptionDistance)-MinAbsorptionDistance)*WorldUnitsToMeters)),0.0,1.0);
+   if IsNaN(Factor) or IsInfinite(Factor) then begin
+    Factor:=1.0;
+   end;
    LeftHFGain:=LeftHFGain*Factor;
    RightHFGain:=RightHFGain*Factor;
   end;
-  SpatializationLowPassLeftCoef:=round(LowPassCoef(LeftHFGain,AudioEngine.SpatializationLowPassCW)*(LowPassLength shl LowPassShift));
-  SpatializationLowPassRightCoef:=round(LowPassCoef(RightHFGain,AudioEngine.SpatializationLowPassCW)*(LowPassLength shl LowPassShift));
+  SpatializationLowPassLeftCoef:=Min(Max(round(Clamp(LowPassCoef(LeftHFGain,AudioEngine.SpatializationLowPassCW),0.0,1.0)*(LowPassLength shl LowPassShift)),0),LowPassLength shl LowPassShift);
+  SpatializationLowPassRightCoef:=Min(Max(round(Clamp(LowPassCoef(RightHFGain,AudioEngine.SpatializationLowPassCW),0.0,1.0)*(LowPassLength shl LowPassShift)),0),LowPassLength shl LowPassShift);
  end;
 
  Factor:=DopplerFactor;
@@ -1337,7 +1462,7 @@ begin
    Factor:=Factor/SpeedOfSound;
    SpeedOfSound:=1.0;
   end;
-  SourceToListenerVector:=(SpatializationOrigin-Sample.AudioEngine.ListenerOrigin).Normalize;
+  SourceToListenerVector:=(SpatializationOrigin-ListenerOrigin).Normalize;
   DopplerListener:=Min(AudioEngine.ListenerVelocity.Dot(SourceToListenerVector)*Factor,SpeedOfSound/Factor);
   DopplerSource:=Min(SpatializationVelocity.Dot(SourceToListenerVector)*Factor,SpeedOfSound/Factor);
   DopplerRate:=Clamp(SpeedOfSound+DopplerListener,1.0,(SpeedOfSound*2.0)-1.0)/
@@ -1997,6 +2122,11 @@ begin
  PreClickRemoval(Buffer);
  if Active then begin
   Buf:=TpvPointer(Buffer);
+
+  if ListenerGeneration<>AudioEngine.ListenerGeneration then begin
+   ListenerGeneration:=AudioEngine.ListenerGeneration;
+   Age:=0;
+  end;
 
   if Spatialization then begin
    UpdateSpatialization;
@@ -2900,9 +3030,9 @@ begin
  result:=Active;
 end;
 
-constructor TpvAudioSoundSampleResource.Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil);
+constructor TpvAudioSoundSampleResource.Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil;const aMetaResource:TpvMetaResource=nil);
 begin
- inherited Create(aResourceManager,aParent);
+ inherited Create(aResourceManager,aParent,aMetaResource);
  fSample:=nil;
 end;
 
@@ -2990,9 +3120,9 @@ begin
  result:=fSample.IsVoicePlaying(VoiceNumber);
 end;
 
-constructor TpvAudioSoundMusicResource.Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil);
+constructor TpvAudioSoundMusicResource.Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil;const aMetaResource:TpvMetaResource=nil);
 begin
- inherited Create(aResourceManager,aParent);
+ inherited Create(aResourceManager,aParent,aMetaResource);
  fMusic:=nil;
 end;
 
@@ -4303,10 +4433,10 @@ begin
    CubicSplineTable[i,3]:=round(((0.5*x*x*x)-(0.5*x*x))*ResamplerCubicSplineValueLength);
   end;
  end;
- ListenerOrigin:=TpvVector3.Null;
+ ListenerViewMatrix:=TpvMatrix4x4.Identity;
  ListenerVelocity:=TpvVector3.Null;
- ListenerMatrix:=TpvMatrix4x4.Identity;
  ListenerUnderwater:=false;
+ ListenerGeneration:=0;
  LowPassLeft:=0;
  LowPassRight:=0;
  LowPassLast:=LowPassLength shl LowPassShift;
@@ -4330,6 +4460,11 @@ begin
   PanningLUT[i]:=round(sin(HalfPI*(i/high(PanningLUT)))*32768.0);
  end;
  PanningLUT[$10000]:=32768;
+ ConeScale:=1.0;
+ InnerAngle:=360.0;
+ OuterAngle:=360.0;
+ OuterGain:=0.0;
+ OuterGainHF:=1.0;
  RingBuffer:=TPasMPSingleProducerSingleConsumerRingBuffer.Create(OutputBufferSize*2);
  Thread:=TpvAudioThread.Create(self);
  IsReady:=true;
