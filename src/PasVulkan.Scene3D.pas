@@ -97,7 +97,7 @@ type EpvScene3D=class(Exception);
       public
        const MaxRenderPassIndices=32;
              MaxVisibleLights=65536;
-             MaxDebugPrimitiveVertices=262144;
+             MaxDebugPrimitiveVertices=1 shl 20;
              LightClusterSizeX=16;
              LightClusterSizeY=8;
              LightClusterSizeZ=32;
@@ -13350,7 +13350,7 @@ var BakedMesh:TpvScene3D.TBakedMesh;
          IndexIndex:=0;
          while (IndexIndex+2)<length(TemporaryTriangleIndices) do begin
           for SideIndex:=0 to ord(Primitive^.Material.fData.DoubleSided) and 1 do begin
-           BakedTriangle:=BakedMesh.fTriangles.AddNew;
+           BakedTriangle:=pointer(BakedMesh.fTriangles.AddNew);
            try
             if SideIndex>0 then begin
              BakedTriangle^.Positions[0]:=BakedVertices[TemporaryTriangleIndices[IndexIndex+2]].Position;
@@ -16078,7 +16078,7 @@ begin
                                      fDebugPrimitiveVertexDynamicArrays[aInFlightFrameIndex].ItemArray[0],
                                      fVulkanDebugPrimitiveVertexBuffers[aInFlightFrameIndex],
                                      0,
-                                     SizeOf(TpvScene3D.TDebugPrimitiveVertex)*fDebugPrimitiveVertexDynamicArrays[aInFlightFrameIndex].Count);
+                                     SizeOf(TpvScene3D.TDebugPrimitiveVertex)*Min(fDebugPrimitiveVertexDynamicArrays[aInFlightFrameIndex].Count,TpvScene3D.MaxDebugPrimitiveVertices));
  end;
 end;
 
@@ -16109,7 +16109,7 @@ begin
 
   aCommandBuffer.CmdBindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS,aGraphicsPipeline.Handle);
   aCommandBuffer.CmdBindVertexBuffers(0,1,@fVulkanDebugPrimitiveVertexBuffers[aInFlightFrameIndex].Handle,@Offsets);
-  aCommandBuffer.CmdDraw(fDebugPrimitiveVertexDynamicArrays[aInFlightFrameIndex].Count,1,0,0);
+  aCommandBuffer.CmdDraw(Min(fDebugPrimitiveVertexDynamicArrays[aInFlightFrameIndex].Count,TpvScene3D.MaxDebugPrimitiveVertices),1,0,0);
 
  end;
 end;
