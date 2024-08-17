@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -4162,7 +4162,7 @@ begin
      if assigned(CurrentTexture) then begin
       Descriptor.fDescriptorPool:=TpvVulkanDescriptorPool.Create(fDevice,
                                                                  TVkDescriptorPoolCreateFlags(VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT),
-                                                                1);
+                                                                 1);
       Descriptor.fDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1);
       Descriptor.fDescriptorPool.Initialize;
       Descriptor.fDescriptorSet:=TpvVulkanDescriptorSet.Create(Descriptor.fDescriptorPool,
@@ -4363,7 +4363,9 @@ begin
                                              0,
                                              0,
                                              0,
-                                             [TpvVulkanBufferFlag.PersistentMapped]
+                                             [TpvVulkanBufferFlag.PersistentMapped],
+                                             0,
+                                             pvAllocationGroupIDCanvas
                                             );
        end else begin
         VulkanBuffer:=TpvVulkanBuffer.Create(fDevice,
@@ -4379,7 +4381,9 @@ begin
                                              0,
                                              0,
                                              0,
-                                             []
+                                             [],
+                                             0,
+                                             pvAllocationGroupIDCanvas
                                             );
        end;
        CurrentBuffer^.fVulkanVertexBuffers[Index]:=VulkanBuffer;
@@ -4421,7 +4425,9 @@ begin
                                              0,
                                              0,
                                              0,
-                                             [TpvVulkanBufferFlag.PersistentMapped]
+                                             [TpvVulkanBufferFlag.PersistentMapped],
+                                             0,
+                                             pvAllocationGroupIDCanvas
                                             );
        end else begin
         VulkanBuffer:=TpvVulkanBuffer.Create(fDevice,
@@ -4437,7 +4443,9 @@ begin
                                              0,
                                              0,
                                              0,
-                                             []
+                                             [],
+                                             0,
+                                             pvAllocationGroupIDCanvas
                                             );
        end;
        CurrentBuffer^.fVulkanIndexBuffers[Index]:=VulkanBuffer;

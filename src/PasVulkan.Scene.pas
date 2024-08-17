@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2023, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -67,7 +67,8 @@ uses Classes,
      PasVulkan.Types,
      PasVulkan.Math,
      PasVulkan.Collections,
-     PasVulkan.Scene3D;
+     PasVulkan.Scene3D,
+     PasVulkan.Utils;
 
 {
 
@@ -95,14 +96,15 @@ BackgroundLoad is called in a background thread and should be used for loading o
 
 FinishLoad is called after the background loading of the scene graph. It's called in the main thread.
 
-WaitForLoaded waits until the scene graph or node is loaded.
+LoadSynchronizationPoint should be called every frame outside of Update and Render functions to have a synchronization point for the loading
+mechanism of the scene graph.
+
+WaitForLoaded waits until the scene graph or node is loaded, and should be only used with awareness, because it can block the main thread.
 
 IsLoaded returns true, if the scene graph or node is loaded.
 
-These loading functions should be called just once before the beginning of a level or game together with a loading screen, etc. For other
-resources, which are loaded during the game, like textures, meshes, etc. should be loaded in an other way, for example, with the
-resource manager of the PasVulkan framework, see the PasVulkan.Resources.pas unit. These loading functions here are just for to simplify 
-the initial loading of a level or game without the actual mess of loading of resources during the game with a resource manager, etc.  
+Check is called for checking outside and before the Update and Render functions in parallel lock-step, for doing stuff which needs to be 
+done sequentially in serial order, like creating or destroying of objects, or checking stuff, etc.
 
 Store and Interpolate are used for interpolation of the scene graph for the "Fix your timestep" pattern, which means, that the scene graph
 is updated with a fixed timestep, but rendered with a variable timestep, which is interpolated between the last and the current scene graph
@@ -118,6 +120,12 @@ UpdateAudio is called for updating audio and is called in the audio thread, so b
 FrameUpdate, which is called in the main thread, with a thread safe data ring buffer oder queue for audio data, which is filled in FrameUpdate
 and read in UpdateAudio. You can use the constructs from PasMP for that, see the PasMP.pas unit.
 
+Serialize and Deserialize are used for serialization and deserialization of the scene graph and can be used for saving and loading of the
+scene graph, for example for saving and loading of a game level, etc.
+
+And very important, avoid acyclic and circular dependencies as much as possible, because it can lead to deadlocks, etc. and can be very
+difficult to debug. If you have to use them, use them with awareness and be careful with them.
+
 }
 
 type TpvScene=class;
@@ -128,7 +136,26 @@ type TpvScene=class;
 
      TpvSceneNodes=TpvObjectGenericList<TpvSceneNode>;
 
+     TpvSceneNodeStack=TpvDynamicFastStack<TpvSceneNode>;
+
      TpvSceneNodeHashMap=TpvHashMap<TpvSceneNodeClass,TpvSceneNodes>;
+
+     TpvSceneNodeState=TPasMPInt32;
+     PpvSceneNodeState=^TpvSceneNodeState;
+
+     TpvSceneNodeStateHelper=record helper for TpvSceneNodeState
+      public
+       const Unused=TpvSceneNodeState(0);
+             Unloaded=TpvSceneNodeState(1);
+             StartLoading=TpvSceneNodeState(2);
+             StartLoaded=TpvSceneNodeState(3);
+             BackgroundLoading=TpvSceneNodeState(4);
+             BackgroundLoaded=TpvSceneNodeState(5);
+             Loading=TpvSceneNodeState(6);
+             Loaded=TpvSceneNodeState(7);
+             Failed=TpvSceneNodeState(8);
+             Unloading=TpvSceneNodeState(9);
+     end;
 
      { TpvSceneNode }
      TpvSceneNode=class      
@@ -137,30 +164,73 @@ type TpvScene=class;
        fScene:TpvScene;
        fParent:TpvSceneNode;
        fData:TObject;
+       fIndex:TpvSizeInt;
        fChildren:TpvSceneNodes;
+       fIncomingNodeDependencies:TpvSceneNodes;
+       fOutgoingNodeDependencies:TpvSceneNodes;
        fNodeHashMap:TpvSceneNodeHashMap;
        fLock:TpvInt32;
-       fLoadState:TPasMPInt32;
+       fState:TpvSceneNodeState;
        fDestroying:boolean;
+      public 
+       fStartLoadVisitGeneration:TpvUInt32;
+       fBackgroundLoadVisitGeneration:TpvUInt32;
+       fFinishLoadVisitGeneration:TpvUInt32;
       public
+       
        constructor Create(const aParent:TpvSceneNode;const aData:TObject=nil); reintroduce; virtual;
        destructor Destroy; override;
+       
+       procedure AfterConstruction; override;
+       procedure BeforeDestruction; override;
+       
+       procedure AddDependency(const aNode:TpvSceneNode);
+       procedure RemoveDependency(const aNode:TpvSceneNode);
+       
        procedure Add(const aNode:TpvSceneNode);
        procedure Remove(const aNode:TpvSceneNode);
+       
        function GetNodeListOf(const aNodeClass:TpvSceneNodeClass):TpvSceneNodes;
        function GetNodeOf(const aNodeClass:TpvSceneNodeClass;const aIndex:TpvSizeInt=0):TpvSceneNode;
        function GetNodeCountOf(const aNodeClass:TpvSceneNodeClass):TpvSizeInt;
+       
+       procedure BeforeStartLoad; virtual;
        procedure StartLoad; virtual;
+       procedure AfterStartLoad; virtual;
+       
+       procedure BeforeBackgroundLoad; virtual;
        procedure BackgroundLoad; virtual;
+       procedure AfterBackgroundLoad; virtual;
+       
+       procedure BeforeFinishLoad; virtual;
        procedure FinishLoad; virtual;
+       procedure AfterFinishLoad; virtual;
+       
        procedure WaitForLoaded; virtual;
+       
        function IsLoaded:boolean; virtual;
+              
+       procedure Check; virtual;
+
        procedure Store; virtual;
+
+       procedure BeginUpdate(const aDeltaTime:TpvDouble); virtual;
        procedure Update(const aDeltaTime:TpvDouble); virtual;
+       procedure EndUpdate(const aDeltaTime:TpvDouble); virtual;
+       
        procedure Interpolate(const aAlpha:TpvDouble); virtual;
+       
        procedure FrameUpdate; virtual;
+       
        procedure Render; virtual;
+       
        procedure UpdateAudio; virtual;
+       
+       function Serialize:TObject; virtual;       
+       procedure Deserialize(const aData:TObject); virtual;
+
+      public
+       property State:TpvSceneNodeState read fState;
       published
        property Scene:TpvScene read fScene;
        property Parent:TpvSceneNode read fParent;
@@ -170,9 +240,30 @@ type TpvScene=class;
 
      { TpvScene }
      TpvScene=class
+      public
+       type TBackgroundLoadThread=class(TPasMPThread)
+             private
+              fScene:TpvScene;
+              fEvent:TPasMPEvent;
+             protected
+              procedure Execute; override;
+             public
+              constructor Create(const aScene:TpvScene); reintroduce;
+              destructor Destroy; override;
+              procedure Shutdown;
+              procedure WakeUp;
+            end;
       private
        fRootNode:TpvSceneNode;
+       fAllNodesLock:TPasMPSlimReaderWriterLock;
+       fAllNodes:TpvSceneNodes;
+       fCountToLoadNodes:TPasMPInt32;
+       fBackgroundLoadThread:TBackgroundLoadThread;
        fData:TObject;
+      public 
+       fStartLoadVisitGeneration:TpvUInt32;
+       fBackgroundLoadVisitGeneration:TpvUInt32;
+       fFinishLoadVisitGeneration:TpvUInt32;
       public
        constructor Create(const aData:TObject=nil); reintroduce; virtual;
        destructor Destroy; override;
@@ -181,12 +272,18 @@ type TpvScene=class;
        procedure FinishLoad; virtual;
        procedure WaitForLoaded; virtual;
        function IsLoaded:boolean; virtual;
+       procedure LoadSynchronizationPoint; virtual;
+       procedure Check; virtual;
        procedure Store; virtual;
+       procedure BeginUpdate(const aDeltaTime:TpvDouble); virtual;
        procedure Update(const aDeltaTime:TpvDouble); virtual;
+       procedure EndUpdate(const aDeltaTime:TpvDouble); virtual;
        procedure Interpolate(const aAlpha:TpvDouble); virtual;
        procedure FrameUpdate; virtual;
        procedure Render; virtual;
        procedure UpdateAudio; virtual;
+       function Serialize:TObject; virtual;
+       procedure Deserialize(const aData:TObject); virtual;
       published
        property RootNode:TpvSceneNode read fRootNode;
        property Data:TObject read fData;
@@ -203,6 +300,8 @@ type TpvScene=class;
        fBounds:TpvAABB;
       protected
        procedure UpdateCachedWorldTransform; virtual;
+       procedure RecursiveUpdateCachedWorldTransform; virtual;
+       procedure SetTransform(const aValue:TpvMatrix4x4); virtual;
        function GetWorldTransform:TpvMatrix4x4; virtual;
        procedure SetWorldTransform(const aWorldTransform:TpvMatrix4x4); virtual;
        procedure UpdateBounds; virtual;
@@ -210,10 +309,12 @@ type TpvScene=class;
        constructor Create(const aParent:TpvSceneNode;const aData:TObject=nil); override;
        destructor Destroy; override;
        procedure Store; override;
+       procedure BeginUpdate(const aDeltaTime:TpvDouble); override;
        procedure Update(const aDeltaTime:TpvDouble); override;
+       procedure EndUpdate(const aDeltaTime:TpvDouble); override;
        procedure Interpolate(const aAlpha:TpvDouble); override;
       public
-       property Transform:TpvMatrix4x4 read fTransform write fTransform;
+       property Transform:TpvMatrix4x4 read fTransform write SetTransform;
        property WorldTransform:TpvMatrix4x4 read GetWorldTransform write SetWorldTransform;
        property CachedWorldTransform:TpvMatrix4x4 read fCachedWorldTransform;
        property LastCachedWorldTransform:TpvMatrix4x4 read fLastCachedWorldTransform;
@@ -222,6 +323,8 @@ type TpvScene=class;
      end;
 
 implementation
+
+uses PasVulkan.Application;
 
 { TpvSceneNode }
 
@@ -233,7 +336,7 @@ begin
 
  fParent:=aParent;
 
- if assigned(fScene) then begin
+ if assigned(fParent) then begin
   fScene:=fParent.fScene;
  end else begin
   fScene:=nil;
@@ -241,12 +344,24 @@ begin
 
  fData:=aData;
 
+ fIndex:=-1;
+
  fChildren:=TpvSceneNodes.Create;
  fChildren.OwnsObjects:=true;
 
+ fIncomingNodeDependencies:=TpvSceneNodes.Create;
+ fIncomingNodeDependencies.OwnsObjects:=false;
+
+ fOutgoingNodeDependencies:=TpvSceneNodes.Create;
+ fOutgoingNodeDependencies.OwnsObjects:=false;
+
  fDestroying:=false;
 
- TPasMPInterlocked.Write(fLoadState,0);
+ fStartLoadVisitGeneration:=0;
+ fBackgroundLoadVisitGeneration:=0;
+ fFinishLoadVisitGeneration:=0;
+
+ TPasMPInterlocked.Write(fState,TpvSceneNodeState.Unloaded);
 
  fNodeHashMap:=TpvSceneNodeHashMap.Create(nil);
 
@@ -282,6 +397,10 @@ begin
   end;
  end;
 
+ FreeAndNil(fOutgoingNodeDependencies);
+
+ FreeAndNil(fIncomingNodeDependencies);
+
  for ChildNodeIndex:=0 to fChildren.Count-1 do begin
   ChildNode:=fChildren[ChildNodeIndex];
   ChildNode.fDestroying:=true;
@@ -294,6 +413,118 @@ begin
  FreeAndNil(fNodeHashMap);
 
  inherited Destroy;
+end;
+
+procedure TpvSceneNode.AfterConstruction;
+begin
+ inherited AfterConstruction;
+ if assigned(fScene) then begin
+  fScene.fAllNodesLock.Acquire;
+  try
+   fIndex:=fScene.fAllNodes.Add(self);
+  finally
+   fScene.fAllNodesLock.Release;
+  end; 
+  TPasMPInterlocked.Increment(fScene.fCountToLoadNodes);
+ end;
+end;
+
+procedure TpvSceneNode.BeforeDestruction;
+var Index:TpvSizeInt;
+begin
+ if assigned(fScene) then begin
+  if fIndex>=0 then begin
+   try
+    fScene.fAllNodesLock.Acquire;
+    try
+     Index:=fIndex;
+     if Index=(fScene.fAllNodes.Count-1) then begin
+      fScene.fAllNodes.Delete(Index);
+     end else begin
+      fScene.fAllNodes.Exchange(Index,fScene.fAllNodes.Count-1);
+      fScene.fAllNodes.Delete(fScene.fAllNodes.Count-1);
+      fScene.fAllNodes[Index].fIndex:=Index;
+     end;
+    finally
+     fScene.fAllNodesLock.Release;
+    end;
+   finally
+    fIndex:=-1;
+   end; 
+  end;
+ end;
+ if fOutgoingNodeDependencies.Count>0 then begin
+  for Index:=fOutgoingNodeDependencies.Count-1 downto 0 do begin
+   fOutgoingNodeDependencies[Index].RemoveDependency(self);
+  end;
+ end;
+ if fIncomingNodeDependencies.Count>0 then begin
+  for Index:=fIncomingNodeDependencies.Count-1 downto 0 do begin
+   RemoveDependency(fIncomingNodeDependencies[Index]);
+  end;
+ end;
+ inherited BeforeDestruction;
+end;
+
+procedure TpvSceneNode.AddDependency(const aNode:TpvSceneNode);
+begin
+
+ if assigned(aNode) then begin
+
+  TPasMPMultipleReaderSingleWriterSpinLock.AcquireWrite(fLock);
+  try
+   if assigned(fIncomingNodeDependencies) and not fIncomingNodeDependencies.Contains(aNode) then begin
+    fIncomingNodeDependencies.Add(aNode);
+   end;
+  finally
+   TPasMPMultipleReaderSingleWriterSpinLock.ReleaseWrite(fLock);
+  end;
+
+  TPasMPMultipleReaderSingleWriterSpinLock.AcquireWrite(aNode.fLock);
+  try
+   if assigned(aNode.fOutgoingNodeDependencies) and not aNode.fOutgoingNodeDependencies.Contains(self) then begin
+    aNode.fOutgoingNodeDependencies.Add(self);
+   end;
+  finally
+   TPasMPMultipleReaderSingleWriterSpinLock.ReleaseWrite(aNode.fLock);
+  end;
+
+ end;
+
+end;
+
+procedure TpvSceneNode.RemoveDependency(const aNode:TpvSceneNode);
+var Index:TpvSizeInt;
+begin
+
+ if assigned(aNode) then begin
+
+  if assigned(fIncomingNodeDependencies) then begin
+   TPasMPMultipleReaderSingleWriterSpinLock.AcquireWrite(fLock);
+   try
+    Index:=fIncomingNodeDependencies.IndexOf(aNode);
+    if Index>=0 then begin
+     fIncomingNodeDependencies.Delete(Index);
+    end;
+   finally
+    TPasMPMultipleReaderSingleWriterSpinLock.ReleaseWrite(fLock);
+   end;
+  end;
+
+  TPasMPMultipleReaderSingleWriterSpinLock.AcquireWrite(aNode.fLock);
+  try
+   if assigned(aNode.fOutgoingNodeDependencies) then begin
+    Index:=aNode.fOutgoingNodeDependencies.IndexOf(self);
+    if Index>=0 then begin
+     aNode.fOutgoingNodeDependencies.Delete(Index);
+    end;
+   end;
+  finally
+   TPasMPMultipleReaderSingleWriterSpinLock.ReleaseWrite(aNode.fLock);
+  end;
+
+ end;
+
 end;
 
 procedure TpvSceneNode.Add(const aNode:TpvSceneNode);
@@ -388,52 +619,75 @@ begin
  end;
 end;
 
-procedure TpvSceneNode.StartLoad;
-var ChildNodeIndex:TpvSizeInt;
-    ChildNode:TpvSceneNode;
+procedure TpvSceneNode.BeforeStartLoad;
 begin
- for ChildNodeIndex:=0 to fChildren.Count-1 do begin
-  ChildNode:=fChildren[ChildNodeIndex];
-  ChildNode.StartLoad;
- end;
- TPasMPInterlocked.Write(fLoadState,1);
+end;
+
+procedure TpvSceneNode.StartLoad;
+begin
+end;
+
+procedure TpvSceneNode.AfterStartLoad;
+var OldState:TpvSceneNodeState;
+begin
+ OldState:=TPasMPInterlocked.Read(fState);
+ if (OldState=TpvSceneNodeState.Unloaded) or (OldState=TpvSceneNodeState.StartLoading) then begin
+  TPasMPInterlocked.CompareExchange(fState,TpvSceneNodeState.StartLoaded,OldState);
+ end;  
+end;
+
+procedure TpvSceneNode.BeforeBackgroundLoad;
+begin  
 end;
 
 procedure TpvSceneNode.BackgroundLoad;
-var ChildNodeIndex:TpvSizeInt;
-    ChildNode:TpvSceneNode;
 begin
- for ChildNodeIndex:=0 to fChildren.Count-1 do begin
-  ChildNode:=fChildren[ChildNodeIndex];
-  ChildNode.BackgroundLoad;
- end;
- TPasMPInterlocked.Write(fLoadState,2);
+end;
+
+procedure TpvSceneNode.AfterBackgroundLoad;
+var OldState:TpvSceneNodeState;
+begin
+ OldState:=TPasMPInterlocked.Read(fState);
+ if (OldState=TpvSceneNodeState.StartLoaded) or (OldState=TpvSceneNodeState.BackgroundLoading) then begin
+  TPasMPInterlocked.CompareExchange(fState,TpvSceneNodeState.BackgroundLoaded,OldState);
+ end;  
+end;
+
+procedure TpvSceneNode.BeforeFinishLoad;
+begin
 end;
 
 procedure TpvSceneNode.FinishLoad;
-var ChildNodeIndex:TpvSizeInt;
-    ChildNode:TpvSceneNode;
 begin
- for ChildNodeIndex:=0 to fChildren.Count-1 do begin
-  ChildNode:=fChildren[ChildNodeIndex];
-  ChildNode.FinishLoad;
+end;
+
+procedure TpvSceneNode.AfterFinishLoad;
+var OldState:TpvSceneNodeState;
+begin
+ OldState:=TPasMPInterlocked.Read(fState);
+ if ((OldState=TpvSceneNodeState.BackgroundLoaded) or (OldState=TpvSceneNodeState.Loading)) and
+    (TPasMPInterlocked.CompareExchange(fState,TpvSceneNodeState.Loaded,OldState)=OldState) then begin
+  if assigned(fScene) then begin
+   TPasMPInterlocked.Decrement(fScene.fCountToLoadNodes);
+  end;
  end;
- while TPasMPInterlocked.Read(fLoadState)<2 do begin
-  Sleep(1);
- end;
- TPasMPInterlocked.Write(fLoadState,3);
 end;
 
 procedure TpvSceneNode.WaitForLoaded;
 var ChildNodeIndex:TpvSizeInt;
     ChildNode:TpvSceneNode;
 begin
- for ChildNodeIndex:=0 to fChildren.Count-1 do begin
-  ChildNode:=fChildren[ChildNodeIndex];
-  ChildNode.WaitForLoaded;
- end;
- while TPasMPInterlocked.Read(fLoadState)<3 do begin
-  Sleep(1);
+ pvApplication.Log(LOG_DEBUG,ClassName+'.WaitForLoaded','Entering...');
+ try
+  for ChildNodeIndex:=0 to fChildren.Count-1 do begin
+   ChildNode:=fChildren[ChildNodeIndex];
+   ChildNode.WaitForLoaded;
+  end;
+  while TPasMPInterlocked.Read(fState)<TpvSceneNodeState.Loaded do begin
+   Sleep(1);
+  end;
+ finally
+  pvApplication.Log(LOG_DEBUG,ClassName+'.WaitForLoaded','Leaving...');
  end;
 end;
 
@@ -448,16 +702,48 @@ begin
    exit;
   end;
  end;
- result:=TPasMPInterlocked.Read(fLoadState)>=3;
+ result:=TPasMPInterlocked.Read(fState)>=TpvSceneNodeState.Loaded;
+end;
+
+procedure TpvSceneNode.Check;
+var ChildNodeIndex:TpvSizeInt;
+    ChildNode:TpvSceneNode;
+begin
+ if fState=TpvSceneNodeState.Loaded then begin
+  for ChildNodeIndex:=0 to fChildren.Count-1 do begin
+   ChildNode:=fChildren[ChildNodeIndex];
+   if assigned(ChildNode) and (ChildNode.fState=TpvSceneNodeState.Loaded) then begin
+    ChildNode.Check;
+   end;
+  end;
+ end;
 end;
 
 procedure TpvSceneNode.Store;
 var ChildNodeIndex:TpvSizeInt;
     ChildNode:TpvSceneNode;
 begin
- for ChildNodeIndex:=0 to fChildren.Count-1 do begin
-  ChildNode:=fChildren[ChildNodeIndex];
-  ChildNode.Store;
+ if fState=TpvSceneNodeState.Loaded then begin
+  for ChildNodeIndex:=0 to fChildren.Count-1 do begin
+   ChildNode:=fChildren[ChildNodeIndex];
+   if assigned(ChildNode) and (ChildNode.fState=TpvSceneNodeState.Loaded) then begin
+    ChildNode.Store;
+   end;
+  end;
+ end;
+end;
+
+procedure TpvSceneNode.BeginUpdate(const aDeltaTime:TpvDouble);
+var ChildNodeIndex:TpvSizeInt;
+    ChildNode:TpvSceneNode;
+begin
+ if fState=TpvSceneNodeState.Loaded then begin
+  for ChildNodeIndex:=0 to fChildren.Count-1 do begin
+   ChildNode:=fChildren[ChildNodeIndex];
+   if assigned(ChildNode) and (ChildNode.fState=TpvSceneNodeState.Loaded) then begin
+    ChildNode.BeginUpdate(aDeltaTime);
+   end;
+  end;
  end;
 end;
 
@@ -465,9 +751,27 @@ procedure TpvSceneNode.Update(const aDeltaTime:TpvDouble);
 var ChildNodeIndex:TpvSizeInt;
     ChildNode:TpvSceneNode;
 begin
- for ChildNodeIndex:=0 to fChildren.Count-1 do begin
-  ChildNode:=fChildren[ChildNodeIndex];
-  ChildNode.Update(aDeltaTime);
+ if fState=TpvSceneNodeState.Loaded then begin
+  for ChildNodeIndex:=0 to fChildren.Count-1 do begin
+   ChildNode:=fChildren[ChildNodeIndex];
+   if assigned(ChildNode) and (ChildNode.fState=TpvSceneNodeState.Loaded) then begin
+    ChildNode.Update(aDeltaTime);
+   end;
+  end;
+ end;
+end;
+
+procedure TpvSceneNode.EndUpdate(const aDeltaTime:TpvDouble);
+var ChildNodeIndex:TpvSizeInt;
+    ChildNode:TpvSceneNode;
+begin
+ if fState=TpvSceneNodeState.Loaded then begin
+  for ChildNodeIndex:=0 to fChildren.Count-1 do begin
+   ChildNode:=fChildren[ChildNodeIndex];
+   if assigned(ChildNode) and (ChildNode.fState=TpvSceneNodeState.Loaded) then begin
+    ChildNode.EndUpdate(aDeltaTime);
+   end;
+  end;
  end;
 end;
 
@@ -475,9 +779,13 @@ procedure TpvSceneNode.Interpolate(const aAlpha:TpvDouble);
 var ChildNodeIndex:TpvSizeInt;
     ChildNode:TpvSceneNode;
 begin
- for ChildNodeIndex:=0 to fChildren.Count-1 do begin
-  ChildNode:=fChildren[ChildNodeIndex];
-  ChildNode.Interpolate(aAlpha);
+ if fState=TpvSceneNodeState.Loaded then begin
+  for ChildNodeIndex:=0 to fChildren.Count-1 do begin
+   ChildNode:=fChildren[ChildNodeIndex];
+   if assigned(ChildNode) and (ChildNode.fState=TpvSceneNodeState.Loaded) then begin
+    ChildNode.Interpolate(aAlpha);
+   end;
+  end;
  end;
 end;
 
@@ -485,9 +793,13 @@ procedure TpvSceneNode.FrameUpdate;
 var ChildNodeIndex:TpvSizeInt;
     ChildNode:TpvSceneNode;
 begin
- for ChildNodeIndex:=0 to fChildren.Count-1 do begin
-  ChildNode:=fChildren[ChildNodeIndex];
-  ChildNode.FrameUpdate;
+ if fState=TpvSceneNodeState.Loaded then begin
+  for ChildNodeIndex:=0 to fChildren.Count-1 do begin
+   ChildNode:=fChildren[ChildNodeIndex];
+   if assigned(ChildNode) and (ChildNode.fState=TpvSceneNodeState.Loaded) then begin
+    ChildNode.FrameUpdate;
+   end;
+  end;
  end;
 end;
 
@@ -495,9 +807,13 @@ procedure TpvSceneNode.Render;
 var ChildNodeIndex:TpvSizeInt;
     ChildNode:TpvSceneNode;
 begin
- for ChildNodeIndex:=0 to fChildren.Count-1 do begin
-  ChildNode:=fChildren[ChildNodeIndex];
-  ChildNode.Render;
+ if fState=TpvSceneNodeState.Loaded then begin
+  for ChildNodeIndex:=0 to fChildren.Count-1 do begin
+   ChildNode:=fChildren[ChildNodeIndex];
+   if assigned(ChildNode) and (ChildNode.fState=TpvSceneNodeState.Loaded) then begin
+    ChildNode.Render;
+   end;
+  end;
  end;
 end;
 
@@ -505,9 +821,68 @@ procedure TpvSceneNode.UpdateAudio;
 var ChildNodeIndex:TpvSizeInt;
     ChildNode:TpvSceneNode;
 begin
- for ChildNodeIndex:=0 to fChildren.Count-1 do begin
-  ChildNode:=fChildren[ChildNodeIndex];
-  ChildNode.UpdateAudio;
+ if fState=TpvSceneNodeState.Loaded then begin
+  for ChildNodeIndex:=0 to fChildren.Count-1 do begin
+   ChildNode:=fChildren[ChildNodeIndex];
+   if assigned(ChildNode) and (ChildNode.fState=TpvSceneNodeState.Loaded) then begin
+    ChildNode.UpdateAudio;
+   end;
+  end;
+ end;
+end;
+
+function TpvSceneNode.Serialize:TObject;
+begin
+ result:=nil;
+end;
+
+procedure TpvSceneNode.Deserialize(const aData:TObject);
+begin
+end;
+
+{ TpvScene.TBackgroundLoadThread }
+
+constructor TpvScene.TBackgroundLoadThread.Create(const aScene:TpvScene);
+begin
+ fScene:=aScene;
+ fEvent:=TPasMPEvent.Create(nil,false,false,'');
+ inherited Create(false);
+end;
+
+destructor TpvScene.TBackgroundLoadThread.Destroy;
+begin
+ Shutdown;
+ FreeAndNil(fEvent);
+ inherited Destroy;
+end;
+
+procedure TpvScene.TBackgroundLoadThread.Shutdown;
+begin
+ if not Finished then begin
+  Terminate;
+  fEvent.SetEvent;
+  WaitFor;
+ end;
+end;
+
+procedure TpvScene.TBackgroundLoadThread.WakeUp;
+begin
+ fEvent.SetEvent;
+end;
+
+procedure TpvScene.TBackgroundLoadThread.Execute;
+begin
+ while not Terminated do begin
+  fEvent.WaitFor;
+  if Terminated then begin
+   break;
+  end else begin 
+   if TPasMPInterlocked.Read(fScene.fCountToLoadNodes)>0 then begin
+    fScene.BackgroundLoad;
+   end else begin
+    Sleep(0);
+   end;
+  end;
  end;
 end;
 
@@ -516,30 +891,304 @@ end;
 constructor TpvScene.Create(const aData:TObject=nil);
 begin
  inherited Create;
+
+ fAllNodesLock:=TPasMPSlimReaderWriterLock.Create;
+
+ fAllNodes:=TpvSceneNodes.Create(false);
+
  fRootNode:=TpvSceneNode.Create(nil);
  fRootNode.fScene:=self;
+
+ fCountToLoadNodes:=1;
+
  fData:=aData;
+
+ fStartLoadVisitGeneration:=1;
+ fBackgroundLoadVisitGeneration:=1;
+ fFinishLoadVisitGeneration:=1;
+
+ fBackgroundLoadThread:=TBackgroundLoadThread.Create(self);
+
 end;
 
 destructor TpvScene.Destroy;
 begin
+ fBackgroundLoadThread.Shutdown;
+ FreeAndNil(fBackgroundLoadThread);
  FreeAndNil(fRootNode);
+ FreeAndNil(fAllNodes);
+ FreeAndNil(fAllNodesLock);
  inherited Destroy;
 end;
 
 procedure TpvScene.StartLoad;
+type TStackItem=record
+      Node:TpvSceneNode;
+      Pass:TpvSizeInt;
+     end;
+     PStackItem=^TStackItem;
+     TStack=TpvDynamicFastStack<TStackItem>;
+var Index,Pass:TpvSizeInt;
+    Stack:TStack;
+    NewStackItem:PStackItem;
+    CurrentStackItem:TStackItem;
+    Node:TpvSceneNode;
 begin
- fRootNode.StartLoad;
+ Stack.Initialize;
+ try
+  NewStackItem:=Pointer(Stack.PushIndirect);
+  NewStackItem^.Node:=fRootNode;
+  NewStackItem^.Pass:=0;
+  while Stack.Pop(CurrentStackItem) do begin
+   Node:=CurrentStackItem.Node;
+   Pass:=CurrentStackItem.Pass;
+   repeat
+    case Pass of
+     0:begin
+      if Node.fStartLoadVisitGeneration<>fStartLoadVisitGeneration then begin
+       Node.fStartLoadVisitGeneration:=fStartLoadVisitGeneration;
+       if Node.fIncomingNodeDependencies.Count>0 then begin
+        NewStackItem:=Pointer(Stack.PushIndirect);
+        NewStackItem^.Node:=Node;
+        NewStackItem^.Pass:=1;
+        for Index:=Node.fIncomingNodeDependencies.Count-1 downto 0 do begin
+         NewStackItem:=Pointer(Stack.PushIndirect);
+         NewStackItem^.Node:=Node.fIncomingNodeDependencies[Index];
+         NewStackItem^.Pass:=0;
+        end;       
+       end else begin
+        Pass:=1;
+        continue;
+       end;
+      end; 
+     end;
+     1:begin     
+      if TPasMPInterlocked.Read(Node.fState)=TpvSceneNodeState.Unloaded then begin
+       NewStackItem:=Pointer(Stack.PushIndirect);
+       NewStackItem^.Node:=Node;
+       NewStackItem^.Pass:=2;
+       try
+        Node.BeforeStartLoad;
+       except
+        on e:Exception do begin
+         pvApplication.Log(LOG_ERROR,ClassName+'.StartLoad',DumpExceptionCallStack(e));
+         if TPasMPInterlocked.CompareExchange(Node.fState,TpvSceneNodeState.Failed,TpvSceneNodeState.Unloaded)=TpvSceneNodeState.Unloaded then begin
+          TPasMPInterlocked.Decrement(fCountToLoadNodes);
+         end;
+        end;
+       end;
+      end;
+      if Node.Children.Count>0 then begin
+       for Index:=Node.Children.Count-1 downto 0 do begin
+        NewStackItem:=Pointer(Stack.PushIndirect);
+        NewStackItem^.Node:=Node.Children[Index];
+        NewStackItem^.Pass:=0;
+       end;
+      end;
+     end;
+     2:begin
+      if TPasMPInterlocked.CompareExchange(Node.fState,TpvSceneNodeState.StartLoading,TpvSceneNodeState.Unloaded)=TpvSceneNodeState.Unloaded then begin
+       try
+        Node.StartLoad;
+        Node.AfterStartLoad;
+       except
+        on e:Exception do begin
+         pvApplication.Log(LOG_ERROR,ClassName+'.StartLoad',DumpExceptionCallStack(e));
+         if TPasMPInterlocked.CompareExchange(Node.fState,TpvSceneNodeState.Failed,TpvSceneNodeState.StartLoading)=TpvSceneNodeState.StartLoading then begin
+          TPasMPInterlocked.Decrement(fCountToLoadNodes);
+         end;
+        end;
+       end;
+      end;
+     end;    
+    end;
+    break;
+   until false;
+  end;
+ finally
+  Stack.Finalize;
+ end;
+ inc(fStartLoadVisitGeneration);
 end;
 
 procedure TpvScene.BackgroundLoad;
+type TStackItem=record
+      Node:TpvSceneNode;
+      Pass:TpvSizeInt;
+     end;
+     PStackItem=^TStackItem;
+     TStack=TpvDynamicFastStack<TStackItem>;
+var Index,Pass:TpvSizeInt;
+    Stack:TStack;
+    NewStackItem:PStackItem;
+    CurrentStackItem:TStackItem;
+    Node:TpvSceneNode;
 begin
- fRootNode.BackgroundLoad;
+ Stack.Initialize;
+ try
+  NewStackItem:=Pointer(Stack.PushIndirect);
+  NewStackItem^.Node:=fRootNode;
+  NewStackItem^.Pass:=0;
+  while Stack.Pop(CurrentStackItem) do begin
+   Node:=CurrentStackItem.Node;
+   Pass:=CurrentStackItem.Pass;
+   repeat
+    case Pass of
+     0:begin
+      if Node.fBackgroundLoadVisitGeneration<>fBackgroundLoadVisitGeneration then begin
+       Node.fBackgroundLoadVisitGeneration:=fBackgroundLoadVisitGeneration;
+       if Node.fIncomingNodeDependencies.Count>0 then begin
+        NewStackItem:=Pointer(Stack.PushIndirect);
+        NewStackItem^.Node:=Node;
+        NewStackItem^.Pass:=1;
+        for Index:=Node.fIncomingNodeDependencies.Count-1 downto 0 do begin
+         NewStackItem:=Pointer(Stack.PushIndirect);
+         NewStackItem^.Node:=Node.fIncomingNodeDependencies[Index];
+         NewStackItem^.Pass:=0;
+        end;       
+       end else begin
+        Pass:=1;
+        continue;
+       end;
+      end; 
+     end;
+     1:begin     
+      if TPasMPInterlocked.Read(Node.fState)=TpvSceneNodeState.StartLoaded then begin
+       NewStackItem:=Pointer(Stack.PushIndirect);
+       NewStackItem^.Node:=Node;
+       NewStackItem^.Pass:=2;
+       try
+        Node.BeforeBackgroundLoad;
+       except
+        on e:Exception do begin
+         pvApplication.Log(LOG_ERROR,ClassName+'.BackgroundLoad',DumpExceptionCallStack(e));
+         if TPasMPInterlocked.CompareExchange(Node.fState,TpvSceneNodeState.Failed,TpvSceneNodeState.StartLoaded)=TpvSceneNodeState.StartLoaded then begin
+          TPasMPInterlocked.Decrement(fCountToLoadNodes);
+         end;
+        end;
+       end;
+      end;
+      if Node.Children.Count>0 then begin
+       for Index:=Node.Children.Count-1 downto 0 do begin
+        NewStackItem:=Pointer(Stack.PushIndirect);
+        NewStackItem^.Node:=Node.Children[Index];
+        NewStackItem^.Pass:=0;
+       end;
+      end;
+     end;
+     2:begin
+      if TPasMPInterlocked.CompareExchange(Node.fState,TpvSceneNodeState.BackgroundLoading,TpvSceneNodeState.StartLoaded)=TpvSceneNodeState.StartLoaded then begin
+       try
+        Node.BackgroundLoad;
+        Node.AfterBackgroundLoad;
+       except
+        on e:Exception do begin
+         pvApplication.Log(LOG_ERROR,ClassName+'.BackgroundLoad',DumpExceptionCallStack(e));
+         if TPasMPInterlocked.CompareExchange(Node.fState,TpvSceneNodeState.Failed,TpvSceneNodeState.BackgroundLoading)=TpvSceneNodeState.BackgroundLoading then begin
+          TPasMPInterlocked.Decrement(fCountToLoadNodes);
+         end;
+        end;
+       end;
+      end;
+     end;
+    end;
+    break;
+   until false;
+  end;
+ finally
+  Stack.Finalize;
+ end;
+ inc(fBackgroundLoadVisitGeneration);
 end;
 
 procedure TpvScene.FinishLoad;
+type TStackItem=record
+      Node:TpvSceneNode;
+      Pass:TpvSizeInt;
+     end;
+     PStackItem=^TStackItem;
+     TStack=TpvDynamicFastStack<TStackItem>;
+var Index,Pass:TpvSizeInt;
+    Stack:TStack;
+    NewStackItem:PStackItem;
+    CurrentStackItem:TStackItem;
+    Node:TpvSceneNode;
 begin
- fRootNode.FinishLoad;
+ Stack.Initialize;
+ try
+  NewStackItem:=Pointer(Stack.PushIndirect);
+  NewStackItem^.Node:=fRootNode;
+  NewStackItem^.Pass:=0;
+  while Stack.Pop(CurrentStackItem) do begin
+   Node:=CurrentStackItem.Node;
+   Pass:=CurrentStackItem.Pass;
+   repeat
+    case Pass of
+     0:begin
+      if Node.fFinishLoadVisitGeneration<>fFinishLoadVisitGeneration then begin
+       Node.fFinishLoadVisitGeneration:=fFinishLoadVisitGeneration;
+       if Node.fIncomingNodeDependencies.Count>0 then begin
+        NewStackItem:=Pointer(Stack.PushIndirect);
+        NewStackItem^.Node:=Node;
+        NewStackItem^.Pass:=1;
+        for Index:=Node.fIncomingNodeDependencies.Count-1 downto 0 do begin
+         NewStackItem:=Pointer(Stack.PushIndirect);
+         NewStackItem^.Node:=Node.fIncomingNodeDependencies[Index];
+         NewStackItem^.Pass:=0;
+        end;       
+       end else begin
+        Pass:=1;
+        continue;
+       end;
+      end;
+     end;
+     1:begin     
+      if TPasMPInterlocked.Read(Node.fState)=TpvSceneNodeState.BackgroundLoaded then begin
+       NewStackItem:=Pointer(Stack.PushIndirect);
+       NewStackItem^.Node:=Node;
+       NewStackItem^.Pass:=2;
+       try
+        Node.BeforeFinishLoad;
+       except
+        on e:Exception do begin
+         pvApplication.Log(LOG_ERROR,ClassName+'.FinishLoad',DumpExceptionCallStack(e));
+         if TPasMPInterlocked.CompareExchange(Node.fState,TpvSceneNodeState.Failed,TpvSceneNodeState.BackgroundLoaded)=TpvSceneNodeState.BackgroundLoaded then begin
+          TPasMPInterlocked.Decrement(fCountToLoadNodes);
+         end;
+        end;
+       end;
+      end;
+      if Node.Children.Count>0 then begin
+       for Index:=Node.Children.Count-1 downto 0 do begin
+        NewStackItem:=Pointer(Stack.PushIndirect);
+        NewStackItem^.Node:=Node.Children[Index];
+        NewStackItem^.Pass:=0;
+       end;
+      end;
+     end;
+     2:begin
+      if TPasMPInterlocked.CompareExchange(Node.fState,TpvSceneNodeState.Loading,TpvSceneNodeState.BackgroundLoaded)=TpvSceneNodeState.BackgroundLoaded then begin
+       try
+        Node.FinishLoad;
+        Node.AfterFinishLoad;
+       except
+        on e:Exception do begin
+         pvApplication.Log(LOG_ERROR,ClassName+'.FinishLoad',DumpExceptionCallStack(e));
+         if TPasMPInterlocked.CompareExchange(Node.fState,TpvSceneNodeState.Failed,TpvSceneNodeState.Loading)=TpvSceneNodeState.Loading then begin
+          TPasMPInterlocked.Decrement(fCountToLoadNodes);
+         end;
+        end;
+       end;
+      end;
+     end;
+    end;
+    break;
+   until false;
+  end;
+ finally
+  Stack.Finalize;
+ end;
+ inc(fFinishLoadVisitGeneration);
 end;
 
 procedure TpvScene.WaitForLoaded;
@@ -552,14 +1201,38 @@ begin
  result:=fRootNode.IsLoaded;
 end;
 
+procedure TpvScene.LoadSynchronizationPoint;
+begin
+ if TPasMPInterlocked.Read(fCountToLoadNodes)>0 then begin
+  StartLoad;
+  fBackgroundLoadThread.WakeUp;
+  FinishLoad;
+ end;
+end;
+
+procedure TpvScene.Check;
+begin
+ fRootNode.Check;
+end;
+
 procedure TpvScene.Store;
 begin
  fRootNode.Store;
 end;
 
+procedure TpvScene.BeginUpdate(const aDeltaTime:TpvDouble);
+begin
+ fRootNode.BeginUpdate(aDeltaTime);
+end;
+
 procedure TpvScene.Update(const aDeltaTime:TpvDouble);
 begin
  fRootNode.Update(aDeltaTime);
+end;
+
+procedure TpvScene.EndUpdate(const aDeltaTime:TpvDouble);
+begin
+ fRootNode.EndUpdate(aDeltaTime);
 end;
 
 procedure TpvScene.Interpolate(const aAlpha:TpvDouble);
@@ -580,6 +1253,15 @@ end;
 procedure TpvScene.UpdateAudio;
 begin
  fRootNode.UpdateAudio;
+end;
+
+function TpvScene.Serialize:TObject;
+begin
+ result:=nil;
+end;
+
+procedure TpvScene.Deserialize(const aData:TObject);
+begin
 end;
 
 { TpvSceneNode3D }
@@ -620,6 +1302,25 @@ begin
  end;
 end;
 
+procedure TpvSceneNode3D.RecursiveUpdateCachedWorldTransform;
+var Index:TpvSizeInt;
+    Node:TpvSceneNode;
+begin
+ UpdateCachedWorldTransform;
+ for Index:=0 to fChildren.Count-1 do begin
+  Node:=fChildren[Index];
+  if Node is TpvSceneNode3D then begin
+   TpvSceneNode3D(Node).RecursiveUpdateCachedWorldTransform;
+  end;
+ end;
+end;
+
+procedure TpvSceneNode3D.SetTransform(const aValue:TpvMatrix4x4);
+begin
+ fTransform:=aValue;
+ RecursiveUpdateCachedWorldTransform;
+end;
+
 function TpvSceneNode3D.GetWorldTransform:TpvMatrix4x4;
 begin
  if assigned(fLastNode3DParent) then begin
@@ -636,6 +1337,7 @@ begin
  end else begin
   fTransform:=aWorldTransform;
  end;
+ RecursiveUpdateCachedWorldTransform;
 end;
 
 procedure TpvSceneNode3D.UpdateBounds;
@@ -648,9 +1350,19 @@ begin
  fLastCachedWorldTransform:=fCachedWorldTransform;
 end;
 
-procedure TpvSceneNode3D.Update(const aDeltaTime:TpvDouble); // <- should call UpdateCachedWorldTransform on your own
+procedure TpvSceneNode3D.BeginUpdate(const aDeltaTime:TpvDouble);
+begin
+ inherited BeginUpdate(aDeltaTime);
+end;
+
+procedure TpvSceneNode3D.Update(const aDeltaTime:TpvDouble);
 begin
  inherited Update(aDeltaTime);
+end;
+
+procedure TpvSceneNode3D.EndUpdate(const aDeltaTime:TpvDouble);
+begin
+ inherited EndUpdate(aDeltaTime);
 end;
 
 procedure TpvSceneNode3D.Interpolate(const aAlpha:TpvDouble);

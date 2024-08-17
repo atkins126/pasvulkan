@@ -38,8 +38,9 @@ uses SysUtils,
      PasVulkan.TimerQuery,
      PasVulkan.Scene3D,
      PasVulkan.Scene3D.Renderer,
+     PasVulkan.Scene3D.Renderer.Globals,
      PasVulkan.Scene3D.Renderer.Instance,
-     PasVulkan.Scene3D.Renderer.SkyCubeMap;
+     PasVulkan.Scene3D.Renderer.EnvironmentCubeMap;
 
 type { TScreenMain }
      TScreenMain=class(TpvApplicationScreen)
@@ -150,8 +151,11 @@ uses PasGLTF,
 constructor TScreenMain.Create;
 var Center,Bounds:TpvVector3;
     CameraRotationX,CameraRotationY:TpvScalar;
+    Stream:TStream;
 begin
  inherited Create;
+
+///writeln(SizeOf(TpvScene3D.TMaterial.TShaderData));
 
  fCountInFlightFrames:=pvApplication.CountInFlightFrames;
 
@@ -159,7 +163,7 @@ begin
 
  fFPSTimeAccumulator:=0;
 
- fAnimationIndex:=0;
+ fAnimationIndex:=-2;
 
  fCameraMode:=TCameraMode.Orbit;
 
@@ -178,13 +182,60 @@ begin
 
  fUpdateLock:=TPasMPCriticalSection.Create;
 
- fScene3D:=TpvScene3D.Create(pvApplication.ResourceManager,nil,nil,pvApplication.VulkanDevice,TpvScene3DRenderer.CheckBufferDeviceAddress(pvApplication.VulkanDevice),fCountInFlightFrames);
+ fScene3D:=TpvScene3D.Create(pvApplication.ResourceManager,nil,nil,pvApplication.VulkanDevice,TpvScene3DRenderer.CheckBufferDeviceAddress(pvApplication.VulkanDevice),fCountInFlightFrames,nil,UnitApplication.Application.VirtualReality);
+
+ fScene3D.InitialCountVertices:=65536;
+ fScene3D.InitialCountIndices:=65536;
+ fScene3D.InitialCountMorphTargetVertices:=65536;
+ fScene3D.InitialCountJointBlocks:=65536;
+
+ fScene3D.Initialize;
+
+ fScene3D.EnvironmentMode:=TpvScene3DEnvironmentMode.Texture;
+
+ if pvApplication.Assets.ExistAsset('envmap.hdr') then begin
+  fScene3D.EnvironmentTextureImage:=TpvScene3D.TImage.Create(pvApplication.ResourceManager,fScene3D);
+  fScene3D.EnvironmentIntensityFactor:=1.0;
+  fScene3D.SkyBoxIntensityFactor:=1.0;
+  Stream:=pvApplication.Assets.GetAssetStream('envmap.hdr');
+  if assigned(Stream) then begin
+   try
+    fScene3D.EnvironmentTextureImage.AssignFromStream('$envmap$',Stream);
+   finally
+    FreeAndNil(Stream);
+   end;
+  end else begin
+   fScene3D.EnvironmentTextureImage.AssignFromWhiteTexture;
+  end;
+  fScene3D.EnvironmentTextureImage.IncRef;
+  fScene3D.EnvironmentTextureImage.Upload;
+
+  fScene3D.SkyBoxMode:=TpvScene3DEnvironmentMode.Texture;
+
+  if pvApplication.Assets.ExistAsset('skybox.hdr') then begin
+   fScene3D.SkyBoxTextureImage:=TpvScene3D.TImage.Create(pvApplication.ResourceManager,fScene3D);
+   fScene3D.SkyBoxIntensityFactor:=1.0;
+   Stream:=pvApplication.Assets.GetAssetStream('skybox.hdr');
+   if assigned(Stream) then begin
+    try
+     fScene3D.SkyBoxTextureImage.AssignFromStream('$skybox$',Stream);
+    finally
+     FreeAndNil(Stream);
+    end;
+   end else begin
+    fScene3D.SkyBoxTextureImage.AssignFromWhiteTexture;
+   end;
+   fScene3D.SkyBoxTextureImage.IncRef;
+   fScene3D.SkyBoxTextureImage.Upload;
+  end;
+
+ end;
 
  fPrimaryDirectionalLight:=TpvScene3D.TLight.Create(fScene3D);
  fPrimaryDirectionalLight.Type_:=TpvScene3D.TLightData.TType.PrimaryDirectional;
  fPrimaryDirectionalLight.Color:=TpvVector3.InlineableCreate(1.7,1.15,0.70);
  fPrimaryDirectionalLight.Matrix:=TpvMatrix4x4.CreateConstructZ(-fScene3D.PrimaryLightDirection);
- fPrimaryDirectionalLight.Intensity:=1.0;
+ fPrimaryDirectionalLight.Intensity:=10000.0*fScene3D.EnvironmentIntensityFactor;
  fPrimaryDirectionalLight.Range:=0.0;
  fPrimaryDirectionalLight.CastShadows:=true;
  fPrimaryDirectionalLight.DataPointer^.Visible:=true;
@@ -201,11 +252,23 @@ begin
  fRenderer.MaxMSAA:=UnitApplication.Application.MaxMSAA;
  fRenderer.MaxShadowMSAA:=UnitApplication.Application.MaxShadowMSAA;
  fRenderer.ShadowMapSize:=UnitApplication.Application.ShadowMapSize;
+ fRenderer.GlobalIlluminationCaching:=false;
+ fRenderer.ToneMappingMode:=TpvScene3DRendererToneMappingMode.AGXRec2020Punchy; //.KhronosPBRNeutral;
  fRenderer.Prepare;
 
  fRenderer.AcquirePersistentResources;
 
  fRendererInstance:=TpvScene3DRendererInstance.Create(fRenderer,UnitApplication.Application.VirtualReality);
+
+ fRendererInstance.PixelAmountFactor:=1.0;
+
+ fRendererInstance.UseDebugBlit:=false;
+
+ fRendererInstance.LuminanceExponent:=1.0;
+ fRendererInstance.LuminanceFactor:=4.0;
+
+ fRendererInstance.CameraPreset.MinLogLuminance:=-3.5;
+ fRendererInstance.CameraPreset.MaxLogLuminance:=8.0;
 
  fRendererInstance.Prepare;
 
@@ -223,8 +286,8 @@ begin
  fCameraIndex:=-1;
 
  fCameraMatrix:=TpvMatrix4x4.CreateLookAt(Center+(TpvVector3.Create(sin(CameraRotationX*PI*2.0)*cos(-CameraRotationY*PI*2.0),
-                                                                     sin(-CameraRotationY*PI*2.0),
-                                                                     cos(CameraRotationX*PI*2.0)*cos(-CameraRotationY*PI*2.0)).Normalize*
+                                                                    sin(-CameraRotationY*PI*2.0),
+                                                                    cos(CameraRotationX*PI*2.0)*cos(-CameraRotationY*PI*2.0)).Normalize*
                                                            (Max(Max(Bounds[0],Bounds[1]),Bounds[2])*2.0*1.0)),
                                            Center,
                                            TpvVector3.Create(0.0,1.0,0.0)).SimpleInverse;
@@ -329,6 +392,8 @@ begin
 
  fRendererInstance.AcquireVolatileResources;
 
+ fScene3D.ResetSurface;
+
 end;
 
 procedure TScreenMain.BeforeDestroySwapChain;
@@ -418,8 +483,42 @@ begin
 
    fGroupInstance.ModelMatrix:=ModelMatrix;
 
-   begin
-    BlendFactor:=1.0-exp(-(pvApplication.DeltaTime*4.0));
+   BlendFactor:=1.0-exp(-(pvApplication.DeltaTime*4.0));
+
+   if fAnimationIndex=-2 then begin
+    if fGroupInstance.Group.Animations.Count>0 then begin
+     fGroupInstance.Automations[-1].Time:=0;
+     fGroupInstance.Automations[-1].ShadowTime:=-0;
+     fGroupInstance.Automations[-1].Complete:=false;
+     Factor:=fGroupInstance.Automations[-1].Factor;
+     if Factor>0.0 then begin
+      Factor:=Factor*(1.0-BlendFactor);
+      if Factor<1e-5 then begin
+       Factor:=-1.0;
+      end;
+     end;
+     fGroupInstance.Automations[-1].Factor:=0.0;
+     for Index:=0 to fGroupInstance.Group.Animations.Count-1 do begin
+      t0:=fGroupInstance.Group.Animations[Index].GetAnimationBeginTime;
+      t1:=fGroupInstance.Group.Animations[Index].GetAnimationEndTime;
+      fGroupInstance.Automations[Index].Time:=fGroupInstance.Automations[Index].ShadowTime+t0;
+      fGroupInstance.Automations[Index].ShadowTime:=ModuloPos(fGroupInstance.Automations[Index].ShadowTime+(pvApplication.DeltaTime*1.0),t1-t0);
+      fGroupInstance.Automations[Index].Complete:=false;
+      Factor:=fGroupInstance.Automations[Index].Factor;
+      if Factor<0.0 then begin
+       Factor:=0.0;
+       fGroupInstance.Automations[Index].ShadowTime:=0.0;
+      end;
+      Factor:=(Factor*(1.0-BlendFactor))+(1.0*BlendFactor);
+      fGroupInstance.Automations[Index].Factor:=Factor;
+     end;
+    end else begin
+     fGroupInstance.Automations[-1].Time:=0;
+     fGroupInstance.Automations[-1].ShadowTime:=-0;
+     fGroupInstance.Automations[-1].Complete:=true;
+     fGroupInstance.Automations[-1].Factor:=0.0;
+    end;
+   end else begin
     for Index:=-1 to fGroupInstance.Group.Animations.Count-1 do begin
      Factor:=fGroupInstance.Automations[Index].Factor;
      if Index=fAnimationIndex then begin
@@ -450,7 +549,7 @@ begin
      end;
      fGroupInstance.Automations[Index].Factor:=Factor;
     end;
-   end;
+   end;//}
 
   end;
 
@@ -513,7 +612,19 @@ begin
   fUpdateLock.Release;
  end;
 
- fScene3D.PrepareGPUUpdate(InFlightFrameIndex);
+ fScene3D.ResetFrame(InFlightFrameIndex);
+
+ fScene3D.PrepareFrame(InFlightFrameIndex);
+
+ fRendererInstance.ResetFrame(InFlightFrameIndex);
+
+ fRendererInstance.CameraViewMatrices[InFlightFrameIndex]:=InFlightFrameState^.CameraViewMatrix;
+
+ if InFlightFrameState^.UseView then begin
+  fRendererInstance.AddView(InFlightFrameIndex,InFlightFrameState^.View);
+ end;
+
+ fRendererInstance.PrepareFrame(InFlightFrameIndex,pvApplication.DrawFrameCounter);
 
  TPasMPInterlocked.Write(InFlightFrameState^.Ready,true);
 
@@ -537,41 +648,29 @@ begin
 
  InFlightFrameState:=@fInFlightFrameStates[InFlightFrameIndex];
 
- fScene3D.ExecuteGPUUpdate(InFlightFrameIndex);
+ fScene3D.BeginFrame(InFlightFrameIndex,aWaitSemaphore,nil);
 
- fScene3D.TransferViewsToPreviousViews;
+ fRendererInstance.UploadFrame(InFlightFrameIndex);
 
- fScene3D.ClearViews;
+ fScene3D.UploadFrame(InFlightFrameIndex);
 
- fScene3D.ResetRenderPasses;
+ fScene3D.ProcessFrame(InFlightFrameIndex,aWaitSemaphore,nil);
 
- fRendererInstance.Reset;
+ fRendererInstance.DrawFrame(pvApplication.SwapChainImageIndex,
+                             pvApplication.DrawInFlightFrameIndex,
+                             pvApplication.DrawFrameCounter,
+                             aWaitSemaphore,
+                             nil);
 
- fRendererInstance.CameraViewMatrix:=InFlightFrameState^.CameraViewMatrix;
-
- if InFlightFrameState^.UseView then begin
-  fRendererInstance.AddView(InFlightFrameState^.View);
- end;
-
- fRendererInstance.DrawUpdate(InFlightFrameIndex,pvApplication.DrawFrameCounter);
-
- fScene3D.UpdateViews(InFlightFrameIndex);
-
- fRenderer.Flush(InFlightFrameIndex,aWaitSemaphore);
-
- fRendererInstance.Draw(pvApplication.SwapChainImageIndex,
-                        pvApplication.DrawInFlightFrameIndex,
-                        pvApplication.DrawFrameCounter,
-                        aWaitSemaphore,
-                        aWaitFence);
+ fScene3D.EndFrame(InFlightFrameIndex,aWaitSemaphore,aWaitFence);
 
  TPasMPInterlocked.Write(InFlightFrameState^.Ready,false);
 
 end;
 
 function TScreenMain.KeyEvent(const aKeyEvent:TpvApplicationInputKeyEvent):boolean;
-var MaxLen:TpvSizeInt;
-    Result_:TpvTimerQuery.TResult;
+var Index:TpvSizeInt;
+    StringList:TStringList;
 begin
  result:=inherited KeyEvent(aKeyEvent);
  if aKeyEvent.KeyEventType=TpvApplicationInputKeyEventType.Down then begin
@@ -580,18 +679,24 @@ begin
     pvApplication.Terminate;
    end;
    KEYCODE_F8:begin
-    if assigned(fRendererInstance.FrameGraph.LastTimerQueryResults) then begin
-     writeln('=================================================');
-     MaxLen:=1;
-     for Result_ in fRendererInstance.FrameGraph.LastTimerQueryResults do begin
-      if Result_.Valid then begin
-       MaxLen:=Max(MaxLen,length(Result_.Name));
+    if TpvApplicationInputKeyModifier.CTRL in aKeyEvent.KeyModifiers then begin
+     pvApplication.DumpVulkanMemoryManager;
+    end else if TpvApplicationInputKeyModifier.SHIFT in aKeyEvent.KeyModifiers then begin
+     if assigned(fScene3D) then begin
+      StringList:=TStringList.Create;
+      try
+       fScene3D.DumpMemoryUsage(StringList);
+       StringList.SaveToFile(IncludeTrailingPathDelimiter(ExtractFilePath(ParamStr(0)))+'scene3dmemoryusage.log');
+       for Index:=0 to StringList.Count-1 do begin
+        pvApplication.Log(LOG_VERBOSE,'TpvScene3D',StringList.Strings[Index]);
+       end;
+      finally
+       FreeAndNil(StringList);
       end;
      end;
-     for Result_ in fRendererInstance.FrameGraph.LastTimerQueryResults do begin
-      if Result_.Valid then begin
-       writeln(Result_.Name:MaxLen,': ',Result_.Duration*1000.0:1:5,' ms');
-      end;
+    end else begin
+     if assigned(fScene3D) then begin
+      fScene3D.DumpProfiler;
      end;
     end;
    end;
@@ -612,20 +717,20 @@ begin
     pvApplication.VisibleMouseCursor:=not pvApplication.CatchMouse;
     pvApplication.RelativeMouse:=pvApplication.CatchMouse;
    end;
-   KEYCODE_V,KEYCODE_B:begin
+   KEYCODE_B:begin
     if assigned(fGroupInstance) then begin
-     if fAnimationIndex<0 then begin
+     if fAnimationIndex<-1 then begin
       fAnimationIndex:=fGroupInstance.Group.Animations.Count-1;
      end else begin
       dec(fAnimationIndex);
      end;
     end;
    end;
-   KEYCODE_N,KEYCODE_M:begin
+   KEYCODE_N:begin
     if assigned(fGroupInstance) then begin
      inc(fAnimationIndex);
      if fAnimationIndex>=fGroupInstance.Group.Animations.Count then begin
-      fAnimationIndex:=-1;
+      fAnimationIndex:=-2;
      end;
     end;
    end;
@@ -634,6 +739,11 @@ begin
      if ((aKeyEvent.KeyCode-(KEYCODE_0+1))>=-1) and ((aKeyEvent.KeyCode-(KEYCODE_0+1))<fGroupInstance.Group.Animations.Count) then begin
       fAnimationIndex:=aKeyEvent.KeyCode-(KEYCODE_0+1);
      end;
+    end;
+   end;
+   KEYCODE_M:begin
+    if assigned(fGroupInstance) then begin
+     fAnimationIndex:=-2;
     end;
    end;
    KEYCODE_BACKSPACE:begin
@@ -792,6 +902,7 @@ begin
   end;
 
   fGroup:=TpvScene3D.TGroup(aResource);
+//fGroup.DynamicAABBTreeCulling:=true;
 
   fGroupInstance:=fGroup.CreateInstance;
 
@@ -847,6 +958,10 @@ begin
   fCameraRotationY:=0.0;
 
  end;
+
+{if fGroupInstance.Group.Animations.Count>=1 then begin
+  fAnimationIndex:=1;
+ end;}
 
 end;
 

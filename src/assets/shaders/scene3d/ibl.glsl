@@ -4,24 +4,7 @@
 const float PI = 3.1415926535897932384626433832795;
 const float INV_PI = 1.0 / PI;
 
-/* clang-format off */
-vec3 getCubeMapDirection(in vec2 uv,
-                         in int faceIndex){                        
-  vec3 zDir = vec3(ivec3((faceIndex <= 1) ? 1 : 0,
-                         (faceIndex & 2) >> 1,
-                         (faceIndex & 4) >> 2)) *
-             (((faceIndex & 1) == 1) ? -1.0 : 1.0),
-       yDir = (faceIndex == 2)
-                ? vec3(0.0, 0.0, 1.0)
-                : ((faceIndex == 3)
-                     ? vec3(0.0, 0.0, -1.0)
-                     : vec3(0.0, -1.0, 0.0)),
-       xDir = cross(zDir, yDir);
-  return normalize((mix(-1.0, 1.0, uv.x) * xDir) +
-                   (mix(-1.0, 1.0, uv.y) * yDir) +
-                   zDir);
-}
-/* clang-format on */
+#include "cubemap.glsl"
 
 vec2 Hammersley(const in int index, const in int numSamples) {
 #if 1

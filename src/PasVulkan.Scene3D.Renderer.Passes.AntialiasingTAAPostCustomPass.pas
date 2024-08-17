@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -200,15 +200,15 @@ begin
  ImageBlit.srcOffsets[0].x:=0;
  ImageBlit.srcOffsets[0].y:=0;
  ImageBlit.srcOffsets[0].z:=0;
- ImageBlit.srcOffsets[1].x:=fInstance.Width;
- ImageBlit.srcOffsets[1].y:=fInstance.Height;
+ ImageBlit.srcOffsets[1].x:=fResourceColor.Width;
+ ImageBlit.srcOffsets[1].y:=fResourceColor.Height;
  ImageBlit.srcOffsets[1].z:=1;
  ImageBlit.dstSubresource:=TVkImageSubresourceLayers.Create(TVkImageAspectFlags(VK_IMAGE_ASPECT_COLOR_BIT),0,0,1);
  ImageBlit.dstOffsets[0].x:=0;
  ImageBlit.dstOffsets[0].y:=0;
  ImageBlit.dstOffsets[0].z:=0;
- ImageBlit.dstOffsets[1].x:=fInstance.Width;
- ImageBlit.dstOffsets[1].y:=fInstance.Height;
+ ImageBlit.dstOffsets[1].x:=fInstance.TAAHistoryColorImages[aInFlightFrameIndex].Width;
+ ImageBlit.dstOffsets[1].y:=fInstance.TAAHistoryColorImages[aInFlightFrameIndex].Height;
  ImageBlit.dstOffsets[1].z:=1;
 
  aCommandBuffer.CmdBlitImage(fResourceColor.VulkanImages[aInFlightFrameIndex].Handle,
@@ -224,15 +224,15 @@ begin
  ImageBlit.srcOffsets[0].x:=0;
  ImageBlit.srcOffsets[0].y:=0;
  ImageBlit.srcOffsets[0].z:=0;
- ImageBlit.srcOffsets[1].x:=fInstance.Width;
- ImageBlit.srcOffsets[1].y:=fInstance.Height;
+ ImageBlit.srcOffsets[1].x:=fResourceDepth.Width;
+ ImageBlit.srcOffsets[1].y:=fResourceDepth.Height;
  ImageBlit.srcOffsets[1].z:=1;
  ImageBlit.dstSubresource:=TVkImageSubresourceLayers.Create(TVkImageAspectFlags(VK_IMAGE_ASPECT_DEPTH_BIT),0,0,1);
  ImageBlit.dstOffsets[0].x:=0;
  ImageBlit.dstOffsets[0].y:=0;
  ImageBlit.dstOffsets[0].z:=0;
- ImageBlit.dstOffsets[1].x:=fInstance.Width;
- ImageBlit.dstOffsets[1].y:=fInstance.Height;
+ ImageBlit.dstOffsets[1].x:=fInstance.TAAHistoryDepthImages[aInFlightFrameIndex].Width;
+ ImageBlit.dstOffsets[1].y:=fInstance.TAAHistoryDepthImages[aInFlightFrameIndex].Height;
  ImageBlit.dstOffsets[1].z:=1;
 
  aCommandBuffer.CmdBlitImage(fResourceDepth.VulkanImages[aInFlightFrameIndex].Handle,

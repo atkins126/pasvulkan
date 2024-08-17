@@ -11,19 +11,36 @@ layout(location = 0) out vec4 outColor;
 layout(input_attachment_index = 0, set = 0, binding = 0) uniform subpassInput uSubpassInputOpaque;
 
 #ifdef MSAA
-layout(input_attachment_index = 1, set = 0, binding = 1) uniform subpassInputMS uSubpassInputTransparent;
+
+#ifdef NO_MSAA_WATER
+layout(input_attachment_index = 1, set = 0, binding = 1) uniform subpassInput uSubpassInputWater;
 #else
-layout(input_attachment_index = 1, set = 0, binding = 1) uniform subpassInput uSubpassInputTransparent;
+layout(input_attachment_index = 1, set = 0, binding = 1) uniform subpassInputMS uSubpassInputWater;
 #endif
 
-layout(std140, set = 0, binding = 2) uniform uboOIT {
+layout(input_attachment_index = 2, set = 0, binding = 2) uniform subpassInputMS uSubpassInputTransparent;
+#else
+
+layout(input_attachment_index = 1, set = 0, binding = 1) uniform subpassInput uSubpassInputWater;
+
+layout(input_attachment_index = 2, set = 0, binding = 2) uniform subpassInput uSubpassInputTransparent;
+
+#endif
+
+layout(set = 0, binding = 3, std140) uniform uboOIT {
   uvec4 oitViewPort;  //
 } uOIT;
 
-layout(set = 0, binding = 3, rg32ui) uniform readonly uimageBuffer uOITImgABuffer;
+layout(set = 0, binding = 4, rg32ui) uniform readonly uimageBuffer uOITImgABuffer;
 
 #if defined(MSAA)
-layout(set = 0, binding = 4, r32ui) uniform readonly uimageBuffer uOITImgSBuffer;
+layout(set = 0, binding = 5, r32ui) uniform readonly uimageBuffer uOITImgSBuffer;
+
+layout(set = 0, binding = 6, std430) buffer HistogramLuminanceBuffer {
+  float histogramLuminance;
+  float luminanceFactor; 
+} histogramLuminanceBuffer;
+
 #endif
 
 /* clang-format on */
@@ -33,14 +50,15 @@ layout(set = 0, binding = 4, r32ui) uniform readonly uimageBuffer uOITImgSBuffer
 #include "premultiplied_alpha.glsl"
 #endif
 
-void blend(inout vec4 target, const in vec4 source) {                  //
-  target += (1.0 - target.a) * vec4(source.xyz * source.a, source.a);  //
+void blend(inout vec4 target, const in vec4 source) {       
+  target += (1.0 - target.a) * source;  // Source is already premultiplied
 }
 
 #define MAX_MSAA 16
 #define MAX_OIT_LAYERS 16
 
 void main() {
+  
   vec4 color = vec4(0.0);
 
 #if 1
@@ -111,10 +129,10 @@ void main() {
       }
 #endif
     }
-    for (int oitMSAASampleIndex = 0; oitMSAASampleIndex < oitMSAA; oitMSAASampleIndex++) {  //
-      color += ApplyToneMapping(oitMSAAColors[oitMSAASampleIndex]);                         //
+    for (int oitMSAASampleIndex = 0; oitMSAASampleIndex < oitMSAA; oitMSAASampleIndex++) {                     //
+      color += ApplyToneMapping(oitMSAAColors[oitMSAASampleIndex] * histogramLuminanceBuffer.luminanceFactor); //
     }
-    color = ApplyInverseToneMapping(color / oitMSAA);
+    color = ApplyInverseToneMapping(color / oitMSAA) / histogramLuminanceBuffer.luminanceFactor;
 #else
     for (int oitMSAASampleIndex = 0; oitMSAASampleIndex < oitMSAA; oitMSAASampleIndex++) {
       vec4 sampleColor = vec4(0.0);
@@ -125,9 +143,9 @@ void main() {
           blend(sampleColor, fragmentColor);                                                                                      //
         }
       }
-      color += ApplyToneMapping(sampleColor);
+      color += ApplyToneMapping(sampleColor * histogramLuminanceBuffer.luminanceFactor);
     }
-    color = ApplyInverseToneMapping(color / float(oitMSAA));
+    color = ApplyInverseToneMapping(color / float(oitMSAA)) / histogramLuminanceBuffer.luminanceFactor;
 #endif
 #else
     for (int oitFragmentIndex = 0; oitFragmentIndex < oitCountFragments; oitFragmentIndex++) {                                //
@@ -144,16 +162,33 @@ void main() {
   {
     vec4 sampleColor = vec4(0.0);  
     for (int oitMSAASampleIndex = 0; oitMSAASampleIndex < oitMSAA; oitMSAASampleIndex++) {
-      sampleColor += ApplyToneMapping(subpassLoad(uSubpassInputTransparent, oitMSAASampleIndex));
+      sampleColor += ApplyToneMapping(subpassLoad(uSubpassInputTransparent, oitMSAASampleIndex) * histogramLuminanceBuffer.luminanceFactor);
     }
-    blend(color, ApplyInverseToneMapping(sampleColor / oitMSAA));   
+    blend(color, ApplyInverseToneMapping(sampleColor / float(oitMSAA)) / histogramLuminanceBuffer.luminanceFactor);   
   }
 #else
   blend(color, subpassLoad(uSubpassInputTransparent));
 #endif
 
-  blend(color, subpassLoad(uSubpassInputOpaque));
+  vec4 waterColor;  
+#if defined(MSAA) && !defined(NO_MSAA_WATER)
+  {
+    vec4 sampleColor = vec4(0.0);  
+    for (int oitMSAASampleIndex = 0; oitMSAASampleIndex < oitMSAA; oitMSAASampleIndex++) {
+      sampleColor += ApplyToneMapping(subpassLoad(uSubpassInputWater, oitMSAASampleIndex) * histogramLuminanceBuffer.luminanceFactor);
+    }
+    waterColor = ApplyInverseToneMapping(sampleColor / float(oitMSAA)) / histogramLuminanceBuffer.luminanceFactor;   
+  }
+#else
+  waterColor = subpassLoad(uSubpassInputWater); // Already premultiplied alpha
+#endif
+  bool hasWaterTransparency = waterColor.w > 1e-4;
+  blend(color, waterColor);
 
-  outColor = vec4(color.xyz, (oitCountFragments == 0) ? 1.0 : 0.0);
+  vec4 temporary = subpassLoad(uSubpassInputOpaque);
+  temporary.xyz *= temporary.w; // Premultiply alpha for opaque fragments
+  blend(color, temporary);
+
+  outColor = vec4(clamp(color.xyz, vec3(-65504.0), vec3(65504.0)), ((oitCountFragments == 0) && !hasWaterTransparency) ? 1.0 : 0.0);
   
 }

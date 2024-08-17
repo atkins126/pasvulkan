@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2021, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -101,7 +101,9 @@ uses SysUtils,
      PasVulkan.Math,
      PasVulkan.Collections;
 
-type { TpvBVHDynamicAABBTree }
+type EpvBVHDynamicAABBTree=class(Exception);
+
+     { TpvBVHDynamicAABBTree }
      TpvBVHDynamicAABBTree=class
       public
        const NULLNODE=-1;
@@ -123,9 +125,11 @@ type { TpvBVHDynamicAABBTree }
             end;
             PTreeNode=^TTreeNode;
             TTreeNodes=array of TTreeNode;
+            TTreeNodeList=TpvDynamicArrayList<PTreeNode>;
             TState=record
              TreeNodes:TTreeNodes;
              Root:TpvSizeInt;
+             Generation:TpvUInt64;
             end;
             PState=^TState;
             TUserDataArray=array of TpvPtrInt;
@@ -143,6 +147,7 @@ type { TpvBVHDynamicAABBTree }
             PSkipListNode=^TSkipListNode;
             TSkipListNodes=array of TSkipListNode;
             TSkipListNodeArray=TpvDynamicArray<TSkipListNode>;
+            PSkipListNodeArray=^TSkipListNodeArray;
             TSkipListNodeMap=array of TpvSizeUInt;
             TSkipListNodeStackItem=record
              Pass:TpvSizeInt;
@@ -155,22 +160,38 @@ type { TpvBVHDynamicAABBTree }
             { TSkipList }
             TSkipList=class
              private
+              type TFileSignature=array[0..3] of ansichar;
+                   TFileHeader=packed record
+                    Signature:TFileSignature;
+                    Version:TpvUInt32;
+                    NodeCount:TpvUInt32;
+                   end;
+                   PFileHeader=^TFileHeader;
+              const FileSignature:TFileSignature=('B','V','H','L');
+                    FileFormatVersion:TpvUInt32=0; 
+             private
               fNodeArray:TSkipListNodeArray;
              public
-              constructor Create(const aFrom:TpvBVHDynamicAABBTree;const aGetUserDataIndex:TpvBVHDynamicAABBTree.TGetUserDataIndex); reintroduce;
+              constructor Create(const aFrom:TpvBVHDynamicAABBTree=nil;const aGetUserDataIndex:TpvBVHDynamicAABBTree.TGetUserDataIndex=nil); reintroduce;
               destructor Destroy; override;
               function IntersectionQuery(const aAABB:TpvAABB):TpvBVHDynamicAABBTree.TUserDataArray;
               function ContainQuery(const aAABB:TpvAABB):TpvBVHDynamicAABBTree.TUserDataArray; overload;
               function ContainQuery(const aPoint:TpvVector3):TpvBVHDynamicAABBTree.TUserDataArray; overload;
               function RayCast(const aRayOrigin,aRayDirection:TpvVector3;out aTime:TpvFloat;out aUserData:TpvUInt32;const aStopAtFirstHit:boolean;const aRayCastUserData:TpvBVHDynamicAABBTree.TRayCastUserData):boolean;
               function RayCastLine(const aFrom,aTo:TpvVector3;out aTime:TpvFloat;out aUserData:TpvUInt32;const aStopAtFirstHit:boolean;const aRayCastUserData:TpvBVHDynamicAABBTree.TRayCastUserData):boolean;
+              procedure LoadFromStream(const aStream:TStream);
+              procedure LoadFromFile(const aFileName:string);
+              procedure SaveToStream(const aStream:TStream);
+              procedure SaveToFile(const aFileName:string);
              public
               property NodeArray:TSkipListNodeArray read fNodeArray;
             end;
+            TGetDistance=function(const aTreeNode:PTreeNode;const aPoint:TpvVector3):TpvFloat of object;
       private
        fSkipListNodeLock:TPasMPSpinLock;
        fSkipListNodeMap:TSkipListNodeMap;
        fSkipListNodeStack:TSkipListNodeStack;
+       function GetDistance(const aTreeNode:PTreeNode;const aPoint:TpvVector3):TpvFloat;
       public
        Root:TpvSizeInt;
        Nodes:TTreeNodes;
@@ -179,8 +200,11 @@ type { TpvBVHDynamicAABBTree }
        FreeList:TpvSizeInt;
        Path:TpvSizeUInt;
        InsertionCount:TpvSizeInt;
+       Dirty:TPasMPBool32;
+       Generation:TpvUInt64;
        constructor Create;
        destructor Destroy; override;
+       procedure Clear;
        function AllocateNode:TpvSizeInt;
        procedure FreeNode(const aNodeID:TpvSizeInt);
        function Balance(const aNodeID:TpvSizeInt):TpvSizeInt;
@@ -188,11 +212,13 @@ type { TpvBVHDynamicAABBTree }
        procedure RemoveLeaf(const aLeaf:TpvSizeInt);
        function CreateProxy(const aAABB:TpvAABB;const aUserData:TpvPtrInt):TpvSizeInt;
        procedure DestroyProxy(const aNodeID:TpvSizeInt);
-       function MoveProxy(const aNodeID:TpvSizeInt;const aAABB:TpvAABB;const aDisplacement:TpvVector3):boolean;
+       function MoveProxy(const aNodeID:TpvSizeInt;const aAABB:TpvAABB;const aDisplacement,aMargin:TpvVector3):boolean; overload;
+       function MoveProxy(const aNodeID:TpvSizeInt;const aAABB:TpvAABB;const aDisplacement:TpvVector3):boolean; overload;
        procedure Rebalance(const aIterations:TpvSizeInt);
        procedure RebuildBottomUp;
        procedure RebuildTopDown;
        procedure Rebuild;
+       function UpdateGeneration:TpvUInt64;
        function ComputeHeight:TpvSizeInt;
        function GetHeight:TpvSizeInt;
        function GetAreaRatio:TpvDouble;
@@ -200,9 +226,13 @@ type { TpvBVHDynamicAABBTree }
        function ValidateStructure:boolean;
        function ValidateMetrics:boolean;
        function Validate:boolean;
-       function IntersectionQuery(const aAABB:TpvAABB):TpvBVHDynamicAABBTree.TUserDataArray;
+       function IntersectionQuery(const aAABB:TpvAABB):TpvBVHDynamicAABBTree.TUserDataArray; overload;
+       function IntersectionQuery(const aAABB:TpvAABB;const aTreeNodeList:TTreeNodeList):boolean; overload;
        function ContainQuery(const aAABB:TpvAABB):TpvBVHDynamicAABBTree.TUserDataArray; overload;
        function ContainQuery(const aPoint:TpvVector3):TpvBVHDynamicAABBTree.TUserDataArray; overload;
+       function ContainQuery(const aPoint:TpvVector3;const aTreeNodeList:TTreeNodeList):boolean; overload;
+       function FindClosest(const aPoint:TpvVector3):TpvBVHDynamicAABBTree.PTreeNode;
+       function LookupClosest(const aPoint:TpvVector3;const aTreeNodeList:TTreeNodeList;aGetDistance:TGetDistance=nil;const aMaxCount:TpvSizeInt=1;aMaxDistance:TpvFloat=-1.0):boolean;
        function RayCast(const aRayOrigin,aRayDirection:TpvVector3;out aTime:TpvFloat;out aUserData:TpvUInt32;const aStopAtFirstHit:boolean;const aRayCastUserData:TpvBVHDynamicAABBTree.TRayCastUserData):boolean;
        function RayCastLine(const aFrom,aTo:TpvVector3;out aTime:TpvFloat;out aUserData:TpvUInt32;const aStopAtFirstHit:boolean;const aRayCastUserData:TpvBVHDynamicAABBTree.TRayCastUserData):boolean;
        procedure GetSkipListNodes(var aSkipListNodeArray:TSkipListNodeArray;const aGetUserDataIndex:TpvBVHDynamicAABBTree.TGetUserDataIndex);
@@ -215,7 +245,9 @@ implementation
 constructor TpvBVHDynamicAABBTree.TSkipList.Create(const aFrom:TpvBVHDynamicAABBTree;const aGetUserDataIndex:TpvBVHDynamicAABBTree.TGetUserDataIndex);
 begin
  fNodeArray.Initialize;
- aFrom.GetSkipListNodes(fNodeArray,aGetUserDataIndex);
+ if assigned(aFrom) then begin
+  aFrom.GetSkipListNodes(fNodeArray,aGetUserDataIndex);
+ end; 
 end;
 
 destructor TpvBVHDynamicAABBTree.TSkipList.Destroy;
@@ -306,7 +338,7 @@ function TpvBVHDynamicAABBTree.TSkipList.RayCast(const aRayOrigin,aRayDirection:
 var Index,Count:TpvSizeInt;
     Node:TpvBVHDynamicAABBTree.PSkipListNode;
     RayEnd:TpvVector3;
-    Time:TpvScalar;
+    Time:TpvFloat;
     Stop:boolean;
 begin
  result:=false;
@@ -389,6 +421,60 @@ begin
  end;
 end;
 
+procedure TpvBVHDynamicAABBTree.TSkipList.LoadFromStream(const aStream:TStream);
+var FileHeader:TFileHeader;
+begin
+
+ aStream.ReadBuffer(FileHeader,SizeOf(TFileHeader));
+ if (FileHeader.Signature<>FileSignature) or (FileHeader.Version<>FileFormatVersion) then begin
+  raise EpvBVHDynamicAABBTree.Create('Invalid file format');
+ end;
+
+ fNodeArray.Clear;
+ fNodeArray.Resize(FileHeader.NodeCount);
+ if FileHeader.NodeCount>0 then begin
+  aStream.ReadBuffer(fNodeArray.Items[0],FileHeader.NodeCount*SizeOf(TSkipListNode));
+ end;
+ 
+end;
+
+procedure TpvBVHDynamicAABBTree.TSkipList.LoadFromFile(const aFileName:string);
+var FileStream:TFileStream;
+begin
+ FileStream:=TFileStream.Create(aFileName,fmOpenRead); // or fmShareDenyWrite);
+ try
+  LoadFromStream(FileStream);
+ finally
+  FreeAndNil(FileStream);
+ end;
+end;
+
+procedure TpvBVHDynamicAABBTree.TSkipList.SaveToStream(const aStream:TStream);
+var FileHeader:TFileHeader;
+begin
+ 
+ FileHeader.Signature:=FileSignature;
+ FileHeader.Version:=FileFormatVersion;
+ FileHeader.NodeCount:=fNodeArray.Count;
+ aStream.WriteBuffer(FileHeader,SizeOf(TFileHeader));
+ 
+ if FileHeader.NodeCount>0 then begin
+  aStream.WriteBuffer(fNodeArray.Items[0],FileHeader.NodeCount*SizeOf(TSkipListNode));
+ end;
+
+end;
+
+procedure TpvBVHDynamicAABBTree.TSkipList.SaveToFile(const aFileName:string);
+var FileStream:TFileStream;
+begin
+ FileStream:=TFileStream.Create(aFileName,fmCreate);
+ try
+  SaveToStream(FileStream);
+ finally
+  FreeAndNil(FileStream);
+ end;
+end;
+
 { TpvBVHDynamicAABBTree }
 
 constructor TpvBVHDynamicAABBTree.Create;
@@ -410,6 +496,8 @@ begin
  FreeList:=0;
  Path:=0;
  InsertionCount:=0;
+ Dirty:=false;
+ Generation:=0;
  fSkipListNodeLock:=TPasMPSpinLock.Create;
  fSkipListNodeMap:=nil;
  fSkipListNodeStack.Initialize;
@@ -422,6 +510,28 @@ begin
  FreeAndNil(fSkipListNodeLock);
  Nodes:=nil;
  inherited Destroy;
+end;
+
+procedure TpvBVHDynamicAABBTree.Clear;
+var i:TpvSizeInt;
+begin
+ fSkipListNodeStack.Count:=0;
+ fSkipListNodeMap:=nil;
+ Root:=NULLNODE;
+ Nodes:=nil;
+ NodeCount:=0;
+ NodeCapacity:=16;
+ SetLength(Nodes,NodeCapacity);
+ FillChar(Nodes[0],NodeCapacity*SizeOf(TTreeNode),#0);
+ for i:=0 to NodeCapacity-2 do begin
+  Nodes[i].Next:=i+1;
+  Nodes[i].Height:=-1;
+ end;
+ Nodes[NodeCapacity-1].Next:=NULLNODE;
+ Nodes[NodeCapacity-1].Height:=-1;
+ FreeList:=0;
+ Path:=0;
+ InsertionCount:=0;
 end;
 
 function TpvBVHDynamicAABBTree.AllocateNode:TpvSizeInt;
@@ -449,6 +559,7 @@ begin
  Node^.Height:=0;
  Node^.UserData:=0;
  inc(NodeCount);
+ Dirty:=true;
 end;
 
 procedure TpvBVHDynamicAABBTree.FreeNode(const aNodeID:TpvSizeInt);
@@ -459,6 +570,7 @@ begin
  Node^.Height:=-1;
  FreeList:=aNodeID;
  dec(NodeCount);
+ Dirty:=true;
 end;
 
 function TpvBVHDynamicAABBTree.Balance(const aNodeID:TpvSizeInt):TpvSizeInt;
@@ -548,6 +660,7 @@ begin
    result:=aNodeID;
   end;
  end;
+ Dirty:=true;
 end;
 
 procedure TpvBVHDynamicAABBTree.InsertLeaf(const aLeaf:TpvSizeInt);
@@ -638,6 +751,9 @@ begin
   end;
 
  end;
+
+ Dirty:=true;
+
 end;
 
 procedure TpvBVHDynamicAABBTree.RemoveLeaf(const aLeaf:TpvSizeInt);
@@ -675,6 +791,7 @@ begin
    Nodes[Sibling].Parent:=NULLNODE;
    FreeNode(Parent);
   end;
+  Dirty:=true;
  end;
 end;
 
@@ -688,15 +805,17 @@ begin
  Node^.UserData:=aUserData;
  Node^.Height:=0;
  InsertLeaf(result);
+ Dirty:=true;
 end;
 
 procedure TpvBVHDynamicAABBTree.DestroyProxy(const aNodeID:TpvSizeInt);
 begin
  RemoveLeaf(aNodeID);
  FreeNode(aNodeID);
+ Dirty:=true;
 end;
 
-function TpvBVHDynamicAABBTree.MoveProxy(const aNodeID:TpvSizeInt;const aAABB:TpvAABB;const aDisplacement:TpvVector3):boolean;
+function TpvBVHDynamicAABBTree.MoveProxy(const aNodeID:TpvSizeInt;const aAABB:TpvAABB;const aDisplacement,aMargin:TpvVector3):boolean;
 var Node:PTreeNode;
     b:TpvAABB;
     d:TpvVector3;
@@ -705,8 +824,9 @@ begin
  result:=not Node^.AABB.Contains(aAABB);
  if result then begin
   RemoveLeaf(aNodeID);
-  b.Min:=aAABB.Min-ThresholdAABBVector;
-  b.Max:=aAABB.Max+ThresholdAABBVector;
+  d:=ThresholdAABBVector+aMargin;
+  b.Min:=aAABB.Min-d;
+  b.Max:=aAABB.Max+d;
   d:=aDisplacement*AABBMULTIPLIER;
   if d.x<0.0 then begin
    b.Min.x:=b.Min.x+d.x;
@@ -725,7 +845,13 @@ begin
   end;
   Node^.AABB:=b;
   InsertLeaf(aNodeID);
+  Dirty:=true;
  end;
+end;
+
+function TpvBVHDynamicAABBTree.MoveProxy(const aNodeID:TpvSizeInt;const aAABB:TpvAABB;const aDisplacement:TpvVector3):boolean;
+begin
+ result:=MoveProxy(aNodeID,aAABB,aDisplacement,TpvVector3.Null);
 end;
 
 procedure TpvBVHDynamicAABBTree.Rebalance(const aIterations:TpvSizeInt);
@@ -757,7 +883,7 @@ var Count,IndexA,IndexB,IndexAMin,IndexBMin,Index1,Index2,ParentIndex:TpvSizeint
     NewNodes:array of TpvSizeInt;
     Children:array[0..1] of TpvBVHDynamicAABBTree.PTreeNode;
     Parent:TpvBVHDynamicAABBTree.PTreeNode;
-    MinCost,Cost:TpvScalar;
+    MinCost,Cost:TpvFloat;
     AABBa,AABBb:PpvAABB;
     AABB:TpvAABB;
     First:boolean;
@@ -822,6 +948,7 @@ begin
    NewNodes:=nil;
   end;
  end;
+ Dirty:=true;
 end;
 
 procedure TpvBVHDynamicAABBTree.RebuildTopDown;
@@ -831,16 +958,16 @@ type TLeafNodes=array of TpvSizeInt;
       Which:TpvSizeInt;
       LeafNodes:TLeafNodes;
      end;
-     TFillStack=TpvDynamicStack<TFillStackItem>;
+     TFillStack=TpvDynamicFastStack<TFillStackItem>;
      THeightStackItem=record
       Node:TpvSizeInt;
       Pass:TpvSizeInt;
      end;
-     THeightStack=TpvDynamicStack<THeightStackItem>;
+     THeightStack=TpvDynamicFastStack<THeightStackItem>;
 var Count,Index,MinPerSubTree,ParentIndex,NodeIndex,SplitAxis,TempIndex,
     LeftIndex,RightIndex,LeftCount,RightCount:TpvSizeint;
     LeafNodes:TLeafNodes;
-    SplitValue:TpvScalar;
+    SplitValue:TpvFloat;
     AABB:TpvAABB;
     Center:TpvVector3;
     VarianceX,VarianceY,VarianceZ,MeanX,MeanY,MeanZ:Double;
@@ -1063,6 +1190,8 @@ begin
 
  end;
 
+ Dirty:=true;
+
 end;
 
 procedure TpvBVHDynamicAABBTree.Rebuild;
@@ -1074,12 +1203,20 @@ begin
  end;
 end;
 
+function TpvBVHDynamicAABBTree.UpdateGeneration:TpvUInt64;
+begin
+ if TPasMPInterlocked.CompareExchange(Dirty,TPasMPBool32(false),TPasMPBool32(true)) then begin
+  inc(Generation);
+ end;
+ result:=Generation;
+end;
+
 function TpvBVHDynamicAABBTree.ComputeHeight:TpvSizeInt;
 type TStackItem=record
       NodeID:TpvSizeInt;
       Height:TpvSizeInt;
      end;
-     TStack=TpvDynamicStack<TStackItem>;
+     TStack=TpvDynamicFastStack<TStackItem>;
 var Stack:TStack;
     StackItem,NewStackItem:TStackItem;
     Node:TpvBVHDynamicAABBTree.PTreeNode;
@@ -1161,7 +1298,7 @@ type TStackItem=record
       NodeID:TpvSizeInt;
       Parent:TpvSizeInt;
      end;
-     TStack=TpvDynamicStack<TStackItem>;
+     TStack=TpvDynamicFastStack<TStackItem>;
 var Stack:TStack;
     StackItem,NewStackItem:TStackItem;
     Node:TpvBVHDynamicAABBTree.PTreeNode;
@@ -1201,7 +1338,7 @@ function TpvBVHDynamicAABBTree.ValidateMetrics:boolean;
 type TStackItem=record
       NodeID:TpvSizeInt;
      end;
-     TStack=TpvDynamicStack<TStackItem>;
+     TStack=TpvDynamicFastStack<TStackItem>;
 var Stack:TStack;
     StackItem,NewStackItem:TStackItem;
     Node:TpvBVHDynamicAABBTree.PTreeNode;
@@ -1261,7 +1398,7 @@ function TpvBVHDynamicAABBTree.IntersectionQuery(const aAABB:TpvAABB):TpvBVHDyna
 type TStackItem=record
       NodeID:TpvSizeInt;
      end;
-     TStack=TpvDynamicStack<TStackItem>;
+     TStack=TpvDynamicFastStack<TStackItem>;
 var Stack:TStack;
     StackItem,NewStackItem:TStackItem;
     Node:TpvBVHDynamicAABBTree.PTreeNode;
@@ -1294,11 +1431,49 @@ begin
  end;
 end;
 
+function TpvBVHDynamicAABBTree.IntersectionQuery(const aAABB:TpvAABB;const aTreeNodeList:TTreeNodeList):boolean;
+type TStackItem=record
+      NodeID:TpvSizeInt;
+     end;
+     TStack=TpvDynamicFastStack<TStackItem>;
+var Stack:TStack;
+    StackItem,NewStackItem:TStackItem;
+    Node:TpvBVHDynamicAABBTree.PTreeNode;
+begin
+ result:=false;
+ if (NodeCount>0) and (Root>=0) then begin
+  Stack.Initialize;
+  try
+   NewStackItem.NodeID:=Root;
+   Stack.Push(NewStackItem);
+   while Stack.Pop(StackItem) do begin
+    Node:=@Nodes[StackItem.NodeID];
+    if Node^.AABB.Intersect(aAABB) then begin
+     if Node^.UserData<>0 then begin
+      aTreeNodeList.Add(Node);
+      result:=true;
+     end;
+     if (Node^.Children[1]>=0) then begin
+      NewStackItem.NodeID:=Node^.Children[1];
+      Stack.Push(NewStackItem);
+     end;
+     if (Node^.Children[0]>=0) then begin
+      NewStackItem.NodeID:=Node^.Children[0];
+      Stack.Push(NewStackItem);
+     end;
+    end;
+   end;
+  finally
+   Stack.Finalize;
+  end;
+ end;
+end;
+
 function TpvBVHDynamicAABBTree.ContainQuery(const aAABB:TpvAABB):TpvBVHDynamicAABBTree.TUserDataArray;
 type TStackItem=record
       NodeID:TpvSizeInt;
      end;
-     TStack=TpvDynamicStack<TStackItem>;
+     TStack=TpvDynamicFastStack<TStackItem>;
 var Stack:TStack;
     StackItem,NewStackItem:TStackItem;
     Node:TpvBVHDynamicAABBTree.PTreeNode;
@@ -1335,7 +1510,7 @@ function TpvBVHDynamicAABBTree.ContainQuery(const aPoint:TpvVector3):TpvBVHDynam
 type TStackItem=record
       NodeID:TpvSizeInt;
      end;
-     TStack=TpvDynamicStack<TStackItem>;
+     TStack=TpvDynamicFastStack<TStackItem>;
 var Stack:TStack;
     StackItem,NewStackItem:TStackItem;
     Node:TpvBVHDynamicAABBTree.PTreeNode;
@@ -1368,11 +1543,291 @@ begin
  end;
 end;
 
+function TpvBVHDynamicAABBTree.ContainQuery(const aPoint:TpvVector3;const aTreeNodeList:TTreeNodeList):boolean;
+type TStackItem=record
+      NodeID:TpvSizeInt;
+     end;
+     TStack=TpvDynamicFastStack<TStackItem>;
+var Stack:TStack;
+    StackItem,NewStackItem:TStackItem;
+    Node:TpvBVHDynamicAABBTree.PTreeNode;
+begin
+ result:=false;
+ if (NodeCount>0) and (Root>=0) then begin
+  Stack.Initialize;
+  try
+   NewStackItem.NodeID:=Root;
+   Stack.Push(NewStackItem);
+   while Stack.Pop(StackItem) do begin
+    Node:=@Nodes[StackItem.NodeID];
+    if Node^.AABB.Contains(aPoint) then begin
+     if Node^.UserData<>0 then begin
+      aTreeNodeList.Add(Node);
+      result:=true;
+     end;
+     if (Node^.Children[1]>=0) then begin
+      NewStackItem.NodeID:=Node^.Children[1];
+      Stack.Push(NewStackItem);
+     end;
+     if (Node^.Children[0]>=0) then begin
+      NewStackItem.NodeID:=Node^.Children[0];
+      Stack.Push(NewStackItem);
+     end;
+    end;
+   end;
+  finally
+   Stack.Finalize;
+  end;
+ end;
+end;
+
+function TpvBVHDynamicAABBTree.FindClosest(const aPoint:TpvVector3):TpvBVHDynamicAABBTree.PTreeNode;
+type TStack=TpvDynamicFastStack<TpvSizeInt>;
+var Stack:TStack;
+    NodeIndex:TpvSizeInt;
+    BestDistance,Distance:TpvFloat;
+    TreeNode:TpvBVHDynamicAABBTree.PTreeNode;
+    ChildDistances:array[0..1] of TpvFloat;
+begin
+ result:=nil;
+ if Root>=0 then begin
+  BestDistance:=Infinity;
+  Stack.Initialize;
+  try
+   Stack.Push(Root);
+   while Stack.Pop(NodeIndex) do begin
+    TreeNode:=@Nodes[NodeIndex];
+    if TreeNode.UserData>0 then begin
+     if assigned(Pointer(TreeNode^.UserData)) then begin
+      Distance:=ClosestPointToAABB(TreeNode^.AABB,aPoint);
+      if (not assigned(result)) or (BestDistance>Distance) then begin
+       BestDistance:=Distance;
+       result:=TreeNode;
+       if IsZero(BestDistance) then begin
+        Stack.Clear;
+        break;
+       end;
+      end;
+     end;
+    end;
+    if (TreeNode.Children[0]>=0) and
+       (TreeNode.Children[1]>=0) then begin
+     ChildDistances[0]:=ClosestPointToAABB(Nodes[TreeNode.Children[0]].AABB,aPoint);
+     ChildDistances[1]:=ClosestPointToAABB(Nodes[TreeNode.Children[1]].AABB,aPoint);
+     if ChildDistances[0]<ChildDistances[1] then begin
+      if ChildDistances[0]<=BestDistance then begin
+       if ChildDistances[1]<=BestDistance then begin
+        Stack.Push(TreeNode.Children[1]);
+       end;
+       Stack.Push(TreeNode.Children[0]);
+      end;
+     end else begin
+      if ChildDistances[1]<=BestDistance then begin
+       if ChildDistances[0]<=BestDistance then begin
+        Stack.Push(TreeNode.Children[0]);
+       end;
+       Stack.Push(TreeNode.Children[1]);
+      end;
+     end;
+    end else begin
+     if TreeNode.Children[0]>=0 then begin
+      if ClosestPointToAABB(Nodes[TreeNode.Children[0]].AABB,aPoint)<=BestDistance then begin
+       Stack.Push(TreeNode.Children[0]);
+      end;
+     end;
+     if TreeNode.Children[1]>=0 then begin
+      if ClosestPointToAABB(Nodes[TreeNode.Children[1]].AABB,aPoint)<=BestDistance then begin
+       Stack.Push(TreeNode.Children[1]);
+      end;
+     end;
+    end;
+   end;
+  finally
+   Stack.Finalize;
+  end;
+ end;
+end;
+
+function TpvBVHDynamicAABBTree.GetDistance(const aTreeNode:PTreeNode;const aPoint:TpvVector3):TpvFloat;
+begin
+ result:=ClosestPointToAABB(aTreeNode^.AABB,aPoint);
+end;
+
+function TpvBVHDynamicAABBTree.LookupClosest(const aPoint:TpvVector3;const aTreeNodeList:TTreeNodeList;aGetDistance:TGetDistance;const aMaxCount:TpvSizeInt;aMaxDistance:TpvFloat):boolean;
+type TStackItem=record
+      NodeID:TpvSizeInt;
+      Distance:TpvFloat;
+     end;
+     PStackItem=^TStackItem;
+     TStack=TpvDynamicFastStack<TStackItem>;
+     TResultItem=record
+      Node:TpvBVHDynamicAABBTree.PTreeNode;
+      Distance:TpvFloat;
+     end;
+     PResultItem=^TResultItem;
+     TResultItemArray=TpvDynamicArray<TResultItem>;
+var Stack:TStack;
+    NewStackItem:PStackItem;
+    StackItem:TStackItem;
+    Node:TpvBVHDynamicAABBTree.PTreeNode;
+    Index,LowIndex,MidIndex,HighIndex:TpvSizeInt;
+    ResultItemArray:TResultItemArray;
+    ResultItem:TResultItem;
+    DistanceA,DistanceB:TpvFloat;
+begin
+ 
+ // If aMaxDistance is less than or equal to zero, then set it to infinity as default
+ if aMaxDistance<=0.0 then begin
+  aMaxDistance:=Infinity;
+ end;
+ 
+ // If the GetDistance function is not assigned, then assign the default one 
+ if not assigned(aGetDistance) then begin
+  aGetDistance:=GetDistance;
+ end;
+
+ result:=false;
+
+ ResultItemArray.Initialize;
+ try
+
+  NewStackItem:=Pointer(Stack.PushIndirect);
+  NewStackItem^.NodeID:=Root;
+  NewStackItem^.Distance:=ClosestPointToAABB(Nodes[Root].AABB,aPoint);
+
+  while Stack.Pop(StackItem) do begin
+
+   // If this subtree is further away than we care about, or if we've already found enough locations, and the furthest one is closer
+   // than this subtree possibly could be, then skip it.
+   if (StackItem.Distance<=aMaxDistance) and
+      (not ((ResultItemArray.Count=aMaxCount) and (ResultItemArray.Items[ResultItemArray.Count-1].Distance<StackItem.Distance))) then begin
+
+    Node:=@Nodes[StackItem.NodeID];
+    if Node^.UserData<>0 then begin
+
+     // Add the node to the result list in a sorted way
+     ResultItem.Node:=Node;
+     ResultItem.Distance:=aGetDistance(Node,aPoint);
+     if ResultItem.Distance<=aMaxDistance then begin
+      
+      if ResultItemArray.Count>0 then begin
+
+       // Binary insertion into the sorted list
+       LowIndex:=0;
+       HighIndex:=ResultItemArray.Count-1;
+       while LowIndex<=HighIndex do begin
+        MidIndex:=LowIndex+((HighIndex-LowIndex) shr 1);
+        if ResultItemArray.Items[MidIndex].Distance<ResultItem.Distance then begin
+         LowIndex:=MidIndex+1;
+        end else begin
+         HighIndex:=MidIndex-1;
+        end;
+       end;
+       if (LowIndex>=0) and (LowIndex<ResultItemArray.Count) then begin
+        ResultItemArray.Insert(LowIndex,ResultItem);
+       end else begin
+        ResultItemArray.Add(ResultItem);
+       end;
+
+      end else begin
+
+       // Add the node to the result list directly if the list is empty
+       ResultItemArray.Add(ResultItem);
+
+      end;
+
+{     // Sort the list so that the closest is first for just to be sure. It should just a linear search check, when the binary search based
+      // insertion is working correctly
+      Index:=0;
+      while (Index+1)<ResultItemArray.Count do begin
+       if ResultItemArray.Items[Index].Distance>ResultItemArray.Items[Index+1].Distance then begin
+        ResultItemArray.Exchange(Index,Index+1);
+        if Index>0 then begin
+         dec(Index);
+        end else begin
+         inc(Index);
+        end;
+       end else begin
+        inc(Index);
+       end;
+      end;//}
+
+      // Maintain the sorted list within the max count
+      while ResultItemArray.Count>aMaxCount do begin
+       ResultItemArray.Delete(ResultItemArray.Count-1);
+      end;
+
+      result:=true;
+
+     end;
+
+    end;
+
+    // Add the children to the stack in the order of the closest one first
+    if Node^.Children[0]>=0 then begin
+     DistanceA:=ClosestPointToAABB(Nodes[Node^.Children[0]].AABB,aPoint);
+     if Node^.Children[1]>=0 then begin
+      DistanceB:=ClosestPointToAABB(Nodes[Node^.Children[1]].AABB,aPoint);
+      if DistanceA<DistanceB then begin
+       if DistanceB<=aMaxDistance then begin
+        NewStackItem:=Pointer(Stack.PushIndirect);
+        NewStackItem^.NodeID:=Node^.Children[1];
+        NewStackItem^.Distance:=DistanceB;
+       end;
+       if DistanceA<=aMaxDistance then begin
+        NewStackItem:=Pointer(Stack.PushIndirect);
+        NewStackItem^.NodeID:=Node^.Children[0];
+        NewStackItem^.Distance:=DistanceA;
+       end; 
+      end else begin
+       if DistanceA<=aMaxDistance then begin
+        NewStackItem:=Pointer(Stack.PushIndirect);
+        NewStackItem^.NodeID:=Node^.Children[0];
+        NewStackItem^.Distance:=DistanceA;
+       end; 
+       if DistanceB<=aMaxDistance then begin
+        NewStackItem:=Pointer(Stack.PushIndirect);
+        NewStackItem^.NodeID:=Node^.Children[1];
+        NewStackItem^.Distance:=DistanceB;
+       end;
+      end; 
+     end else begin
+      if DistanceA<=aMaxDistance then begin
+       NewStackItem:=Pointer(Stack.PushIndirect);
+       NewStackItem^.NodeID:=Node^.Children[0];
+       NewStackItem^.Distance:=DistanceA;
+      end; 
+     end;
+    end else if Node^.Children[1]>=0 then begin
+     DistanceB:=ClosestPointToAABB(Nodes[Node^.Children[1]].AABB,aPoint);
+     if DistanceB<=aMaxDistance then begin
+      NewStackItem:=Pointer(Stack.PushIndirect);
+      NewStackItem^.NodeID:=Node^.Children[1];
+      NewStackItem^.Distance:=DistanceB;
+     end;
+    end;
+
+   end;
+
+  end;
+
+  // Copy the result items to the output list
+  aTreeNodeList.Clear;
+  for Index:=0 to ResultItemArray.Count-1 do begin
+   aTreeNodeList.Add(ResultItemArray.Items[Index].Node);
+  end;
+
+ finally
+  ResultItemArray.Finalize;
+ end;
+
+end;
+
 function TpvBVHDynamicAABBTree.RayCast(const aRayOrigin,aRayDirection:TpvVector3;out aTime:TpvFloat;out aUserData:TpvUInt32;const aStopAtFirstHit:boolean;const aRayCastUserData:TpvBVHDynamicAABBTree.TRayCastUserData):boolean;
 type TStackItem=record
       NodeID:TpvSizeInt;
      end;
-     TStack=TpvDynamicStack<TStackItem>;
+     TStack=TpvDynamicFastStack<TStackItem>;
 var Stack:TStack;
     StackItem,NewStackItem:TStackItem;
     Node:TpvBVHDynamicAABBTree.PTreeNode;
@@ -1425,7 +1880,7 @@ function TpvBVHDynamicAABBTree.RayCastLine(const aFrom,aTo:TpvVector3;out aTime:
 type TStackItem=record
       NodeID:TpvSizeInt;
      end;
-     TStack=TpvDynamicStack<TStackItem>;
+     TStack=TpvDynamicFastStack<TStackItem>;
 var Stack:TStack;
     StackItem,NewStackItem:TStackItem;
     Node:TpvBVHDynamicAABBTree.PTreeNode;
@@ -1487,7 +1942,7 @@ begin
  try
   if Root>=0 then begin
    if length(fSkipListNodeMap)<length(Nodes) then begin
-    SetLength(fSkipListNodeMap,(length(Nodes)*3) shr 1);
+    SetLength(fSkipListNodeMap,length(Nodes)+((length(Nodes)+1) shr 1));
    end;
    aSkipListNodeArray.Count:=0;
    NewStackItem.Pass:=0;

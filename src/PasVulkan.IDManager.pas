@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -102,6 +102,8 @@ type EpvIDManager=class(Exception);
        fGenerationArray:TIDManagerGenerationArray;
        fTypeArray:TIDManagerTypeArray;
        fUsedBitmap:TIDManagerUsedBitmap;
+{$else}
+       fGenerationCounter:TpvUInt32;
 {$endif}
       public
        constructor Create;
@@ -198,6 +200,8 @@ begin
  fGenerationArray:=nil;
  fTypeArray:=nil;
  fUsedBitmap:=nil;
+{$else}
+ fGenerationCounter:=0;
 {$endif}
 end;
 
@@ -308,7 +312,7 @@ begin
    Index:=TPasMPInterlocked.Increment(fIDCounter);
   end;
  end;
- result:=Index;
+ result:=Index or (TpvUInt64(TPasMPInterlocked.Increment(fGenerationCounter)) shl 32);
 end;
 {$endif}
 

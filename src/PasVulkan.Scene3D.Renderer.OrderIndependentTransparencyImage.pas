@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -75,13 +75,13 @@ type { TpvScene3DRendererOrderIndependentTransparencyImage }
      TpvScene3DRendererOrderIndependentTransparencyImage=class
       private
        fVulkanImage:TpvVulkanImage;
-       fVulkanSampler:TpvVulkanSampler;
+       //fVulkanSampler:TpvVulkanSampler;
        fVulkanImageView:TpvVulkanImageView;
        fMemoryBlock:TpvVulkanDeviceMemoryBlock;
        fDescriptorImageInfo:TVkDescriptorImageInfo;
       public
 
-       constructor Create(const aWidth,aHeight,aLayers:TpvInt32;const aFormat:TVkFormat;const aSampleBits:TVkSampleCountFlagBits=TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT));
+       constructor Create(const aDevice:TpvVulkanDevice;const aWidth,aHeight,aLayers:TpvInt32;const aVulkanSampler:TpvVulkanSampler;const aFormat:TVkFormat;const aSampleBits:TVkSampleCountFlagBits=TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT));
 
        destructor Destroy; override;
 
@@ -89,7 +89,7 @@ type { TpvScene3DRendererOrderIndependentTransparencyImage }
 
        property VulkanImage:TpvVulkanImage read fVulkanImage;
 
-       property VulkanSampler:TpvVulkanSampler read fVulkanSampler;
+       //property VulkanSampler:TpvVulkanSampler read fVulkanSampler;
 
        property VulkanImageView:TpvVulkanImageView read fVulkanImageView;
 
@@ -103,7 +103,7 @@ implementation
 
 { TpvScene3DRendererOrderIndependentTransparencyImage }
 
-constructor TpvScene3DRendererOrderIndependentTransparencyImage.Create(const aWidth,aHeight,aLayers:TpvInt32;const aFormat:TVkFormat;const aSampleBits:TVkSampleCountFlagBits);
+constructor TpvScene3DRendererOrderIndependentTransparencyImage.Create(const aDevice:TpvVulkanDevice;const aWidth,aHeight,aLayers:TpvInt32;const aVulkanSampler:TpvVulkanSampler;const aFormat:TVkFormat;const aSampleBits:TVkSampleCountFlagBits);
 var MemoryRequirements:TVkMemoryRequirements;
     RequiresDedicatedAllocation,
     PrefersDedicatedAllocation:boolean;
@@ -116,7 +116,7 @@ var MemoryRequirements:TVkMemoryRequirements;
 begin
  inherited Create;
 
- fVulkanImage:=TpvVulkanImage.Create(pvApplication.VulkanDevice,
+ fVulkanImage:=TpvVulkanImage.Create(aDevice,
                                      0, //TVkImageCreateFlags(VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT),
                                      VK_IMAGE_TYPE_2D,
                                      aFormat,
@@ -135,9 +135,9 @@ begin
                                      VK_IMAGE_LAYOUT_UNDEFINED
                                     );
 
- MemoryRequirements:=pvApplication.VulkanDevice.MemoryManager.GetImageMemoryRequirements(fVulkanImage.Handle,
-                                                                                         RequiresDedicatedAllocation,
-                                                                                         PrefersDedicatedAllocation);
+ MemoryRequirements:=aDevice.MemoryManager.GetImageMemoryRequirements(fVulkanImage.Handle,
+                                                                      RequiresDedicatedAllocation,
+                                                                      PrefersDedicatedAllocation);
 
  MemoryBlockFlags:=[];
 
@@ -145,42 +145,43 @@ begin
   Include(MemoryBlockFlags,TpvVulkanDeviceMemoryBlockFlag.DedicatedAllocation);
  end;
 
- fMemoryBlock:=pvApplication.VulkanDevice.MemoryManager.AllocateMemoryBlock(MemoryBlockFlags,
-                                                                            MemoryRequirements.size,
-                                                                            MemoryRequirements.alignment,
-                                                                            MemoryRequirements.memoryTypeBits,
-                                                                            TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
-                                                                            0,
-                                                                            0,
-                                                                            0,
-                                                                            0,
-                                                                            0,
-                                                                            0,
-                                                                            0,
-                                                                            TpvVulkanDeviceMemoryAllocationType.ImageOptimal,
-                                                                            @fVulkanImage.Handle);
+ fMemoryBlock:=aDevice.MemoryManager.AllocateMemoryBlock(MemoryBlockFlags,
+                                                         MemoryRequirements.size,
+                                                         MemoryRequirements.alignment,
+                                                         MemoryRequirements.memoryTypeBits,
+                                                         TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+                                                         0,
+                                                         0,
+                                                         0,
+                                                         0,
+                                                         0,
+                                                         0,
+                                                         0,
+                                                         TpvVulkanDeviceMemoryAllocationType.ImageOptimal,
+                                                         @fVulkanImage.Handle,
+                                                         pvAllocationGroupIDScene3DSurface);
  if not assigned(fMemoryBlock) then begin
   raise EpvVulkanMemoryAllocationException.Create('Memory for texture couldn''t be allocated!');
  end;
 
  fMemoryBlock.AssociatedObject:=self;
 
- VulkanCheckResult(pvApplication.VulkanDevice.Commands.BindImageMemory(pvApplication.VulkanDevice.Handle,
+ VulkanCheckResult(aDevice.Commands.BindImageMemory(aDevice.Handle,
                                                                        fVulkanImage.Handle,
                                                                        fMemoryBlock.MemoryChunk.Handle,
                                                                        fMemoryBlock.Offset));
 
- Queue:=pvApplication.VulkanDevice.GraphicsQueue;
+ Queue:=aDevice.GraphicsQueue;
 
- CommandPool:=TpvVulkanCommandPool.Create(pvApplication.VulkanDevice,
-                                          pvApplication.VulkanDevice.GraphicsQueueFamilyIndex,
+ CommandPool:=TpvVulkanCommandPool.Create(aDevice,
+                                          aDevice.GraphicsQueueFamilyIndex,
                                           TVkCommandPoolCreateFlags(VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT));
  try
 
   CommandBuffer:=TpvVulkanCommandBuffer.Create(CommandPool,VK_COMMAND_BUFFER_LEVEL_PRIMARY);
   try
 
-   Fence:=TpvVulkanFence.Create(pvApplication.VulkanDevice);
+   Fence:=TpvVulkanFence.Create(aDevice);
    try
 
     FillChar(ImageSubresourceRange,SizeOf(TVkImageSubresourceRange),#0);
@@ -198,7 +199,7 @@ begin
                            Fence,
                            true);
 
-    fVulkanSampler:=TpvVulkanSampler.Create(pvApplication.VulkanDevice,
+{   fVulkanSampler:=TpvVulkanSampler.Create(aDevice,
                                             TVkFilter(VK_FILTER_LINEAR),
                                             TVkFilter(VK_FILTER_LINEAR),
                                             TVkSamplerMipmapMode(VK_SAMPLER_MIPMAP_MODE_LINEAR),
@@ -213,9 +214,9 @@ begin
                                             0.0,
                                             1,
                                             TVkBorderColor(VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK),
-                                            false);
+                                            false);}
 
-    fVulkanImageView:=TpvVulkanImageView.Create(pvApplication.VulkanDevice,
+    fVulkanImageView:=TpvVulkanImageView.Create(aDevice,
                                                 fVulkanImage,
                                                 TVkImageViewType(VK_IMAGE_VIEW_TYPE_2D_ARRAY),
                                                 aFormat,
@@ -229,7 +230,7 @@ begin
                                                 0,
                                                 aLayers);
 
-    fDescriptorImageInfo:=TVkDescriptorImageInfo.Create(fVulkanSampler.Handle,
+    fDescriptorImageInfo:=TVkDescriptorImageInfo.Create(aVulkanSampler.Handle,
                                                         fVulkanImageView.Handle,
                                                         VK_IMAGE_LAYOUT_GENERAL);
 
@@ -252,7 +253,7 @@ destructor TpvScene3DRendererOrderIndependentTransparencyImage.Destroy;
 begin
  FreeAndNil(fMemoryBlock);
  FreeAndNil(fVulkanImageView);
- FreeAndNil(fVulkanSampler);
+//FreeAndNil(fVulkanSampler);
  FreeAndNil(fVulkanImage);
  inherited Destroy;
 end;

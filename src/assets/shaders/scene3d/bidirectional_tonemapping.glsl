@@ -18,7 +18,9 @@
 #define BIDIRECTIONAL_TONEMAPPING_VARIANT_JIM_HEJL_RICHARD_BURGESS_DAWSON 4 // http://filmicworlds.com/blog/filmic-tonemapping-operators/ - Also a good tonemapping operator, but it costs also more than the others in terms of calculations for the inverse tonemapping, since it has a square root in it.
 #define BIDIRECTIONAL_TONEMAPPING_VARIANT_UNCHARTED2 5 // http://filmicworlds.com/blog/filmic-tonemapping-operators/ - Also a good tonemapping operator, but it costs also more than the others in terms of calculations for the inverse tonemapping, since it has a square root in it. 
 
-#define BIDIRECTIONAL_TONEMAPPING_VARIANT BIDIRECTIONAL_TONEMAPPING_VARIANT_AMD
+// AMD has black-artefacts at too bright values at MSAA resolving, so it's not used here.
+
+#define BIDIRECTIONAL_TONEMAPPING_VARIANT BIDIRECTIONAL_TONEMAPPING_VARIANT_BRIAN_KARIS 
 
 vec3 ApplyToneMapping(vec3 color){
 #if BIDIRECTIONAL_TONEMAPPING_VARIANT == BIDIRECTIONAL_TONEMAPPING_VARIANT_ACES
@@ -31,7 +33,8 @@ vec3 ApplyToneMapping(vec3 color){
   return color / (max(max(color.x, color.y), color.z) + 1.0);
 #elif BIDIRECTIONAL_TONEMAPPING_VARIANT == BIDIRECTIONAL_TONEMAPPING_VARIANT_BRIAN_KARIS
   // http://graphicrants.blogspot.com/2013/12/tone-mapping.html
-  return color / (dot(color, vec3(0.2125, 0.7154, 0.0721)) + 1.0);
+  return color / (abs(dot(color, vec3(0.2125, 0.7154, 0.0721))) + 1.0); // abs is used to avoid negative values, since the dot product can be negative for scRGB values (extended sRGB for HDR).
+  //return color / (dot(color, vec3(0.2125, 0.7154, 0.0721)) + 1.0); // This is the original version, but it can produce wrong very bright white-point-artefacts results at negative values, since the dot product can be negative for scRGB values (extended sRGB for HDR).
 #elif BIDIRECTIONAL_TONEMAPPING_VARIANT == BIDIRECTIONAL_TONEMAPPING_VARIANT_JIM_HEJL_RICHARD_BURGESS_DAWSON
   // Jim Hejl and Richard Burgess-Dawson - http://filmicworlds.com/blog/filmic-tonemapping-operators/
   // (y * (6.2 * y + 0.5)) / (y * (6.2 * y + 1.7) + 0.06)
@@ -80,7 +83,8 @@ vec3 ApplyInverseToneMapping(vec3 color){
   return color / max(1.0 - max(max(color.x, color.y), color.z), 1e-5);
 #elif BIDIRECTIONAL_TONEMAPPING_VARIANT == BIDIRECTIONAL_TONEMAPPING_VARIANT_BRIAN_KARIS
   // http://graphicrants.blogspot.com/2013/12/tone-mapping.html
-  return color / max(1.0 - dot(color, vec3(0.2125, 0.7154, 0.0721)), 1e-5);
+  return color / max(1.0 - abs(dot(color, vec3(0.2125, 0.7154, 0.0721))), 1e-5); // Even here, abs is used to avoid negative values, since the dot product can be negative for scRGB values (extended sRGB for HDR). 
+  //return color / max(1.0 - dot(color, vec3(0.2125, 0.7154, 0.0721)), 1e-5);  // This is the original version, but it can produce wrong very bright white-point-artefacts results at negative values, since the dot product can be negative for scRGB values (extended sRGB for HDR).
 #elif BIDIRECTIONAL_TONEMAPPING_VARIANT == BIDIRECTIONAL_TONEMAPPING_VARIANT_JIM_HEJL_RICHARD_BURGESS_DAWSON
   // Jim Hejl and Richard Burgess-Dawson - https://www.wolframalpha.com/input?i=%28y+*+%286.2+*+y+%2B+0.5%29%29+%2F+%28y+*+%286.2+*+y+%2B+1.7%29+%2B+0.06%29+%3D+x+solve+for+y
   // y = (-0.137097 sqrt(701 x^2 - 106 x + 125) - 2.5282 x + 1.53279)/(sqrt(701 x^2 - 106 x + 125) - 26.8328) 

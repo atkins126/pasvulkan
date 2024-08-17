@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -1214,6 +1214,7 @@ const SDL2LibName={$if defined(Win32)}
       SDL_HINT_ANDROID_HIDE_SYSTEM_BARS='SDL_ANDROID_HIDE_SYSTEM_BARS';
       SDL_HINT_MOUSE_NORMAL_SPEED_SCALE='SDL_MOUSE_NORMAL_SPEED_SCALE';
       SDL_HINT_MOUSE_RELATIVE_SPEED_SCALE='SDL_MOUSE_RELATIVE_SPEED_SCALE';
+      SDL_HINT_VIDEO_DRIVER='SDL_VIDEO_DRIVER';
 
       SDL_MESSAGEBOX_ERROR=$00000010;   //**< error dialog */
       SDL_MESSAGEBOX_WARNING=$00000020;   //**< warning dialog */

@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -83,6 +83,7 @@ type { TpvScene3DRendererPassesDeepAndFastApproximateOrderIndependentTransparenc
        fInstance:TpvScene3DRendererInstance;
        fVulkanRenderPass:TpvVulkanRenderPass;
        fResourceOpaque:TpvFrameGraph.TPass.TUsedImageResource;
+       fResourceWater:TpvFrameGraph.TPass.TUsedImageResource;
        fResourceTransparent:TpvFrameGraph.TPass.TUsedImageResource;
        fResourceSurface:TpvFrameGraph.TPass.TUsedImageResource;
        fVulkanTransferCommandBuffer:TpvVulkanCommandBuffer;
@@ -129,8 +130,8 @@ begin
 //SeparateCommandBuffer:=true;
 
  Size:=TpvFrameGraph.TImageSize.Create(TpvFrameGraph.TImageSize.TKind.SurfaceDependent,
-                                       1.0,
-                                       1.0,
+                                       fInstance.SizeFactor,
+                                       fInstance.SizeFactor,
                                        1.0,
                                        fInstance.CountSurfaceViews);
 
@@ -141,6 +142,13 @@ begin
                                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                                  [TpvFrameGraph.TResourceTransition.TFlag.Attachment]
                                 );
+
+
+  fResourceWater:=AddImageInput('resourcetype_color',
+                                'resource_water_color',
+                                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                [TpvFrameGraph.TResourceTransition.TFlag.Attachment]
+                               );
 
   fResourceTransparent:=AddImageInput('resourcetype_color',
                                       'resource_orderindependenttransparency_tailblending_color',
@@ -163,6 +171,20 @@ begin
                                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                                  [TpvFrameGraph.TResourceTransition.TFlag.Attachment]
                                 );
+
+  if fInstance.Renderer.SupersampleWaterWhenMSAA then begin
+   fResourceWater:=AddImageInput('resourcetype_msaa_color',
+                                 'resource_water_msaa_color',
+                                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                 [TpvFrameGraph.TResourceTransition.TFlag.Attachment]
+                                 );
+  end else begin
+   fResourceWater:=AddImageInput('resourcetype_color',
+                                 'resource_water_color',
+                                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                 [TpvFrameGraph.TResourceTransition.TFlag.Attachment]
+                                 );
+  end;
 
   fResourceTransparent:=AddImageInput('resourcetype_msaa_color',
                                       'resource_orderindependenttransparency_tailblending_msaa_color',
@@ -213,11 +235,19 @@ begin
    Stream:=pvScene3DShaderVirtualFileSystem.GetFile('dfaoit_resolve_frag.spv');
   end;
  end else begin
-  if fInstance.ZFar<0.0 then begin
-   Stream:=pvScene3DShaderVirtualFileSystem.GetFile('dfaoit_resolve_reversedz_msaa_frag.spv');
+  if fInstance.Renderer.SupersampleWaterWhenMSAA then begin 
+   if fInstance.ZFar<0.0 then begin
+    Stream:=pvScene3DShaderVirtualFileSystem.GetFile('dfaoit_resolve_reversedz_msaa_frag.spv');
+   end else begin
+    Stream:=pvScene3DShaderVirtualFileSystem.GetFile('dfaoit_resolve_msaa_frag.spv');
+   end;
   end else begin
-   Stream:=pvScene3DShaderVirtualFileSystem.GetFile('dfaoit_resolve_msaa_frag.spv');
-  end;
+   if fInstance.ZFar<0.0 then begin
+    Stream:=pvScene3DShaderVirtualFileSystem.GetFile('dfaoit_resolve_reversedz_msaa_no_msaa_water_frag.spv');
+   end else begin
+    Stream:=pvScene3DShaderVirtualFileSystem.GetFile('dfaoit_resolve_msaa_no_msaa_water_frag.spv');
+   end; 
+  end; 
  end;
  try
   fVulkanFragmentShaderModule:=TpvVulkanShaderModule.Create(fInstance.Renderer.VulkanDevice,Stream);
@@ -254,7 +284,7 @@ begin
  fVulkanDescriptorPool:=TpvVulkanDescriptorPool.Create(fInstance.Renderer.VulkanDevice,
                                                        TVkDescriptorPoolCreateFlags(VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT),
                                                        fInstance.Renderer.CountInFlightFrames);
- fVulkanDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT,1*fInstance.Renderer.CountInFlightFrames);
+ fVulkanDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT,2*fInstance.Renderer.CountInFlightFrames);
  fVulkanDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,4*fInstance.Renderer.CountInFlightFrames);
  fVulkanDescriptorPool.Initialize;
 
@@ -265,7 +295,7 @@ begin
                                        TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
                                        []);
  fVulkanDescriptorSetLayout.AddBinding(1,
-                                       VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+                                       VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT,
                                        1,
                                        TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
                                        []);
@@ -280,6 +310,11 @@ begin
                                        TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
                                        []);
  fVulkanDescriptorSetLayout.AddBinding(4,
+                                       VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+                                       1,
+                                       TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
+                                       []);
+ fVulkanDescriptorSetLayout.AddBinding(5,
                                        VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
                                        1,
                                        TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
@@ -303,8 +338,10 @@ begin
   fVulkanDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(1,
                                                                  0,
                                                                  1,
-                                                                 TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE),
-                                                                 [fInstance.DeepAndFastApproximateOrderIndependentTransparencyFragmentCounterFragmentDepthsSampleMaskImages[InFlightFrameIndex].DescriptorImageInfo],
+                                                                 TVkDescriptorType(VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT),
+                                                                 [TVkDescriptorImageInfo.Create(VK_NULL_HANDLE,
+                                                                                                fResourceWater.VulkanImageViews[InFlightFrameIndex].Handle,
+                                                                                                fResourceWater.ResourceTransition.Layout)],// TVkImageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))],
                                                                  [],
                                                                  [],
                                                                  false
@@ -313,7 +350,7 @@ begin
                                                                  0,
                                                                  1,
                                                                  TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE),
-                                                                 [fInstance.DeepAndFastApproximateOrderIndependentTransparencyAccumulationImages[InFlightFrameIndex].DescriptorImageInfo],
+                                                                 [fInstance.DeepAndFastApproximateOrderIndependentTransparencyFragmentCounterFragmentDepthsSampleMaskImage.DescriptorImageInfo],
                                                                  [],
                                                                  [],
                                                                  false
@@ -322,7 +359,7 @@ begin
                                                                  0,
                                                                  1,
                                                                  TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE),
-                                                                 [fInstance.DeepAndFastApproximateOrderIndependentTransparencyAverageImages[InFlightFrameIndex].DescriptorImageInfo],
+                                                                 [fInstance.DeepAndFastApproximateOrderIndependentTransparencyAccumulationImage.DescriptorImageInfo],
                                                                  [],
                                                                  [],
                                                                  false
@@ -331,7 +368,16 @@ begin
                                                                  0,
                                                                  1,
                                                                  TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE),
-                                                                 [fInstance.DeepAndFastApproximateOrderIndependentTransparencyBucketImages[InFlightFrameIndex].DescriptorImageInfo],
+                                                                 [fInstance.DeepAndFastApproximateOrderIndependentTransparencyAverageImage.DescriptorImageInfo],
+                                                                 [],
+                                                                 [],
+                                                                 false
+                                                                );
+  fVulkanDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(5,
+                                                                 0,
+                                                                 1,
+                                                                 TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE),
+                                                                 [fInstance.DeepAndFastApproximateOrderIndependentTransparencyBucketImage.DescriptorImageInfo],
                                                                  [],
                                                                  [],
                                                                  false
@@ -359,8 +405,8 @@ begin
  fVulkanGraphicsPipeline.InputAssemblyState.Topology:=VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
  fVulkanGraphicsPipeline.InputAssemblyState.PrimitiveRestartEnable:=false;
 
- fVulkanGraphicsPipeline.ViewPortState.AddViewPort(0.0,0.0,fInstance.Width,fInstance.Height,0.0,1.0);
- fVulkanGraphicsPipeline.ViewPortState.AddScissor(0,0,fInstance.Width,fInstance.Height);
+ fVulkanGraphicsPipeline.ViewPortState.AddViewPort(0.0,0.0,fResourceSurface.Width,fResourceSurface.Height,0.0,1.0);
+ fVulkanGraphicsPipeline.ViewPortState.AddScissor(0,0,fResourceSurface.Width,fResourceSurface.Height);
 
  fVulkanGraphicsPipeline.RasterizationState.DepthClampEnable:=false;
  fVulkanGraphicsPipeline.RasterizationState.RasterizerDiscardEnable:=false;

@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -74,7 +74,8 @@ uses SysUtils,
      PasVulkan.Scene3D,
      PasVulkan.Scene3D.Renderer.Globals,
      PasVulkan.Scene3D.Renderer,
-     PasVulkan.Scene3D.Renderer.Instance;
+     PasVulkan.Scene3D.Renderer.Instance,
+     PasVulkan.Scene3D.Renderer.IBLDescriptor;
 
 type { TpvScene3DRendererPassesLoopOrderIndependentTransparencyPass2RenderPass }
      TpvScene3DRendererPassesLoopOrderIndependentTransparencyPass2RenderPass=class(TpvFrameGraph.TRenderPass)
@@ -82,6 +83,7 @@ type { TpvScene3DRendererPassesLoopOrderIndependentTransparencyPass2RenderPass }
        fOnSetRenderPassResourcesDone:boolean;
        procedure OnSetRenderPassResources(const aCommandBuffer:TpvVulkanCommandBuffer;
                                           const aPipelineLayout:TpvVulkanPipelineLayout;
+                                          const aRendererInstance:TObject;
                                           const aRenderPassIndex:TpvSizeInt;
                                           const aPreviousInFlightFrameIndex:TpvSizeInt;
                                           const aInFlightFrameIndex:TpvSizeInt);
@@ -95,14 +97,20 @@ type { TpvScene3DRendererPassesLoopOrderIndependentTransparencyPass2RenderPass }
        fMeshVertexShaderModule:TpvVulkanShaderModule;
        fMeshFragmentShaderModule:TpvVulkanShaderModule;
        fMeshMaskedFragmentShaderModule:TpvVulkanShaderModule;
-       fGlobalVulkanDescriptorSetLayout:TpvVulkanDescriptorSetLayout;
-       fGlobalVulkanDescriptorPool:TpvVulkanDescriptorPool;
-       fGlobalVulkanDescriptorSets:array[0..MaxInFlightFrames-1] of TpvVulkanDescriptorSet;
+       fPassVulkanDescriptorSetLayout:TpvVulkanDescriptorSetLayout;
+       fPassVulkanDescriptorPool:TpvVulkanDescriptorPool;
+       fPassVulkanDescriptorSets:array[0..MaxInFlightFrames-1] of TpvVulkanDescriptorSet;
+       fIBLDescriptors:array[0..MaxInFlightFrames-1] of TpvScene3DRendererIBLDescriptor;
        fVulkanPipelineShaderStageMeshVertex:TpvVulkanPipelineShaderStage;
        fVulkanPipelineShaderStageMeshFragment:TpvVulkanPipelineShaderStage;
        fVulkanPipelineShaderStageMeshMaskedFragment:TpvVulkanPipelineShaderStage;
        fVulkanGraphicsPipelines:array[TpvScene3D.TMaterial.TAlphaMode] of TpvScene3D.TGraphicsPipelines;
        fVulkanPipelineLayout:TpvVulkanPipelineLayout;
+       fParticleVertexShaderModule:TpvVulkanShaderModule;
+       fParticleFragmentShaderModule:TpvVulkanShaderModule;
+       fVulkanPipelineShaderStageParticleVertex:TpvVulkanPipelineShaderStage;
+       fVulkanPipelineShaderStageParticleFragment:TpvVulkanPipelineShaderStage;
+       fVulkanParticleGraphicsPipeline:TpvVulkanGraphicsPipeline;
       public
        constructor Create(const aFrameGraph:TpvFrameGraph;const aInstance:TpvScene3DRendererInstance); reintroduce;
        destructor Destroy; override;
@@ -131,8 +139,8 @@ inherited Create(aFrameGraph);
  Queue:=aFrameGraph.UniversalQueue;
 
  Size:=TpvFrameGraph.TImageSize.Create(TpvFrameGraph.TImageSize.TKind.SurfaceDependent,
-                                       1.0,
-                                       1.0,
+                                       fInstance.SizeFactor,
+                                       fInstance.SizeFactor,
                                        1.0,
                                        fInstance.CountSurfaceViews);
 
@@ -142,11 +150,15 @@ inherited Create(aFrameGraph);
                                            []
                                           );
 
- fResourceSSAO:=AddImageInput('resourcetype_ssao_final',
-                              'resource_ssao_data_final',
-                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                              []
-                             );
+ if fInstance.Renderer.ScreenSpaceAmbientOcclusion then begin
+  fResourceSSAO:=AddImageInput('resourcetype_ambientocclusion_final',
+                               'resource_ambientocclusion_data_final',
+                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                               []
+                              );
+ end else begin
+  fResourceSSAO:=nil;
+ end;
 
  if fInstance.Renderer.SurfaceSampleCountFlagBits=TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT) then begin
 
@@ -216,15 +228,15 @@ begin
 
  if fInstance.Renderer.SurfaceSampleCountFlagBits=TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT) then begin
   if fInstance.ZFar<0.0 then begin
-   Stream:=pvScene3DShaderVirtualFileSystem.GetFile('mesh_'+fInstance.Renderer.MeshFragTypeName+'_'+fInstance.Renderer.MeshFragShadowTypeName+'_loopoit_reversedz_pass2_frag.spv');
+   Stream:=pvScene3DShaderVirtualFileSystem.GetFile('mesh_'+fInstance.Renderer.MeshFragTypeName+'_reversedz_shading_'+fInstance.Renderer.MeshFragGlobalIlluminationTypeName+fInstance.Renderer.MeshFragShadowTypeName+'_loopoit_pass2_frag.spv');
   end else begin
-   Stream:=pvScene3DShaderVirtualFileSystem.GetFile('mesh_'+fInstance.Renderer.MeshFragTypeName+'_'+fInstance.Renderer.MeshFragShadowTypeName+'_loopoit_pass2_frag.spv');
+   Stream:=pvScene3DShaderVirtualFileSystem.GetFile('mesh_'+fInstance.Renderer.MeshFragTypeName+'_shading_'+fInstance.Renderer.MeshFragGlobalIlluminationTypeName+fInstance.Renderer.MeshFragShadowTypeName+'_loopoit_pass2_frag.spv');
   end;
  end else begin
   if fInstance.ZFar<0.0 then begin
-   Stream:=pvScene3DShaderVirtualFileSystem.GetFile('mesh_'+fInstance.Renderer.MeshFragTypeName+'_'+fInstance.Renderer.MeshFragShadowTypeName+'_loopoit_msaa_reversedz_pass2_frag.spv');
+   Stream:=pvScene3DShaderVirtualFileSystem.GetFile('mesh_'+fInstance.Renderer.MeshFragTypeName+'_reversedz_shading_'+fInstance.Renderer.MeshFragGlobalIlluminationTypeName+'msaa_'+fInstance.Renderer.MeshFragShadowTypeName+'_loopoit_pass2_frag.spv');
   end else begin
-   Stream:=pvScene3DShaderVirtualFileSystem.GetFile('mesh_'+fInstance.Renderer.MeshFragTypeName+'_'+fInstance.Renderer.MeshFragShadowTypeName+'_loopoit_msaa_frag.spv');
+   Stream:=pvScene3DShaderVirtualFileSystem.GetFile('mesh_'+fInstance.Renderer.MeshFragTypeName+'_shading_'+fInstance.Renderer.MeshFragGlobalIlluminationTypeName+'msaa_'+fInstance.Renderer.MeshFragShadowTypeName+'_loopoit_pass2_frag.spv');
   end;
  end;
  try
@@ -236,15 +248,15 @@ begin
 
  if fInstance.Renderer.SurfaceSampleCountFlagBits=TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT) then begin
   if fInstance.ZFar<0.0 then begin
-   Stream:=pvScene3DShaderVirtualFileSystem.GetFile('mesh_'+fInstance.Renderer.MeshFragTypeName+'_'+fInstance.Renderer.MeshFragShadowTypeName+'_loopoit_masked_reversedz_pass2_frag.spv');
+   Stream:=pvScene3DShaderVirtualFileSystem.GetFile('mesh_'+fInstance.Renderer.MeshFragTypeName+'_reversedz_shading_'+fInstance.Renderer.MeshFragGlobalIlluminationTypeName+fInstance.Renderer.MeshFragShadowTypeName+'_loopoit_pass2_alphatest_frag.spv');
   end else begin
-   Stream:=pvScene3DShaderVirtualFileSystem.GetFile('mesh_'+fInstance.Renderer.MeshFragTypeName+'_'+fInstance.Renderer.MeshFragShadowTypeName+'_loopoit_masked_pass2_frag.spv');
+   Stream:=pvScene3DShaderVirtualFileSystem.GetFile('mesh_'+fInstance.Renderer.MeshFragTypeName+'_shading_'+fInstance.Renderer.MeshFragGlobalIlluminationTypeName+fInstance.Renderer.MeshFragShadowTypeName+'_loopoit_pass2_alphatest_frag.spv');
   end;
  end else begin
   if fInstance.ZFar<0.0 then begin
-   Stream:=pvScene3DShaderVirtualFileSystem.GetFile('mesh_'+fInstance.Renderer.MeshFragTypeName+'_'+fInstance.Renderer.MeshFragShadowTypeName+'_loopoit_msaa_masked_reversedz_pass2_frag.spv');
+   Stream:=pvScene3DShaderVirtualFileSystem.GetFile('mesh_'+fInstance.Renderer.MeshFragTypeName+'_reversedz_shading_'+fInstance.Renderer.MeshFragGlobalIlluminationTypeName+'msaa_'+fInstance.Renderer.MeshFragShadowTypeName+'_loopoit_pass2_alphatest_frag.spv');
   end else begin
-   Stream:=pvScene3DShaderVirtualFileSystem.GetFile('mesh_'+fInstance.Renderer.MeshFragTypeName+'_'+fInstance.Renderer.MeshFragShadowTypeName+'_loopoit_msaa_masked_pass2_frag.spv');
+   Stream:=pvScene3DShaderVirtualFileSystem.GetFile('mesh_'+fInstance.Renderer.MeshFragTypeName+'_shading_'+fInstance.Renderer.MeshFragGlobalIlluminationTypeName+'msaa_'+fInstance.Renderer.MeshFragShadowTypeName+'_loopoit_pass2_alphatest_frag.spv');
   end;
  end;
  try
@@ -261,6 +273,61 @@ begin
 
  fVulkanPipelineShaderStageMeshMaskedFragment:=TpvVulkanPipelineShaderStage.Create(VK_SHADER_STAGE_FRAGMENT_BIT,fMeshMaskedFragmentShaderModule,'main');
  MeshFragmentSpecializationConstants.SetPipelineShaderStage(fVulkanPipelineShaderStageMeshMaskedFragment);
+
+ /// --
+
+ if fInstance.Renderer.Scene3D.RaytracingActive then begin
+  Stream:=pvScene3DShaderVirtualFileSystem.GetFile('particle_raytracing_vert.spv');
+ end else begin
+  Stream:=pvScene3DShaderVirtualFileSystem.GetFile('particle_vert.spv');
+ end;
+ try
+  fParticleVertexShaderModule:=TpvVulkanShaderModule.Create(fInstance.Renderer.VulkanDevice,Stream);
+//fFrameGraph.VulkanDevice.DebugMarker.SetObjectName(fParticleVertexShaderModule.Handle,TVkDebugReportObjectTypeEXT.VK_DEBUG_REPORT_OBJECT_TYPE_SHADER_MODULE_EXT,'fParticleVertexShaderModule');
+ finally
+  Stream.Free;
+ end;
+
+ if fInstance.Renderer.Scene3D.RaytracingActive then begin
+  if fInstance.Renderer.SurfaceSampleCountFlagBits=TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT) then begin
+   if fInstance.ZFar<0.0 then begin
+    Stream:=pvScene3DShaderVirtualFileSystem.GetFile('particle_raytracing_reversedz_loopoit_pass2_frag.spv');
+   end else begin
+    Stream:=pvScene3DShaderVirtualFileSystem.GetFile('particle_raytracing_loopoit_pass2_frag.spv');
+   end;
+  end else begin
+   if fInstance.ZFar<0.0 then begin
+    Stream:=pvScene3DShaderVirtualFileSystem.GetFile('particle_raytracing_reversedz_msaa_loopoit_pass2_frag.spv');
+   end else begin
+    Stream:=pvScene3DShaderVirtualFileSystem.GetFile('particle_raytracing_msaa_loopoit_pass2_frag.spv');
+   end;
+  end;
+ end else begin
+  if fInstance.Renderer.SurfaceSampleCountFlagBits=TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT) then begin
+   if fInstance.ZFar<0.0 then begin
+    Stream:=pvScene3DShaderVirtualFileSystem.GetFile('particle_reversedz_loopoit_pass2_frag.spv');
+   end else begin
+    Stream:=pvScene3DShaderVirtualFileSystem.GetFile('particle_loopoit_pass2_frag.spv');
+   end;
+  end else begin
+   if fInstance.ZFar<0.0 then begin
+    Stream:=pvScene3DShaderVirtualFileSystem.GetFile('particle_reversedz_msaa_loopoit_pass2_frag.spv');
+   end else begin
+    Stream:=pvScene3DShaderVirtualFileSystem.GetFile('particle_msaa_loopoit_pass2_frag.spv');
+   end;
+  end;
+ end;
+ try
+  fParticleFragmentShaderModule:=TpvVulkanShaderModule.Create(fInstance.Renderer.VulkanDevice,Stream);
+//fFrameGraph.VulkanDevice.DebugMarker.SetObjectName(fParticleFragmentShaderModule.Handle,TVkDebugReportObjectTypeEXT.VK_DEBUG_REPORT_OBJECT_TYPE_SHADER_MODULE_EXT,'fParticleFragmentShaderModule');
+ finally
+  Stream.Free;
+ end;
+
+ fVulkanPipelineShaderStageParticleVertex:=TpvVulkanPipelineShaderStage.Create(VK_SHADER_STAGE_VERTEX_BIT,fParticleVertexShaderModule,'main');
+
+ fVulkanPipelineShaderStageParticleFragment:=TpvVulkanPipelineShaderStage.Create(VK_SHADER_STAGE_FRAGMENT_BIT,fParticleFragmentShaderModule,'main');
+//ParticleFragmentSpecializationConstants.SetPipelineShaderStage(fVulkanPipelineShaderStageParticleFragment);
 
 end;
 
@@ -279,6 +346,14 @@ begin
 
  FreeAndNil(fMeshMaskedFragmentShaderModule);
 
+ FreeAndNil(fVulkanPipelineShaderStageParticleVertex);
+
+ FreeAndNil(fVulkanPipelineShaderStageParticleFragment);
+
+ FreeAndNil(fParticleVertexShaderModule);
+
+ FreeAndNil(fParticleFragmentShaderModule);
+
  inherited ReleasePersistentResources;
 end;
 
@@ -294,88 +369,101 @@ begin
 
  fVulkanRenderPass:=VulkanRenderPass;
 
- fGlobalVulkanDescriptorSetLayout:=TpvVulkanDescriptorSetLayout.Create(fInstance.Renderer.VulkanDevice);
- fGlobalVulkanDescriptorSetLayout.AddBinding(0,
+ fPassVulkanDescriptorSetLayout:=TpvVulkanDescriptorSetLayout.Create(fInstance.Renderer.VulkanDevice);
+ fPassVulkanDescriptorSetLayout.AddBinding(0,
+                                             VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                                             1,
+                                             TVkShaderStageFlags(VK_SHADER_STAGE_VERTEX_BIT) or TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
+                                             []);
+ fPassVulkanDescriptorSetLayout.AddBinding(1,
                                              VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                                              3,
                                              TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
                                              []);
- fGlobalVulkanDescriptorSetLayout.AddBinding(1,
+ fPassVulkanDescriptorSetLayout.AddBinding(2,
+                                             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                             6,
+                                             TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
+                                             []);
+ fPassVulkanDescriptorSetLayout.AddBinding(3,
+                                             VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                                             1,
+                                             TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
+                                             []);
+ fPassVulkanDescriptorSetLayout.AddBinding(4,
+                                             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                             1,
+                                             TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
+                                             []);
+ fPassVulkanDescriptorSetLayout.AddBinding(5,
                                              VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
                                              3,
                                              TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
                                              []);
- fGlobalVulkanDescriptorSetLayout.AddBinding(2,
+ fPassVulkanDescriptorSetLayout.AddBinding(6,
                                              VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
                                              1,
                                              TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
                                              []);
- fGlobalVulkanDescriptorSetLayout.AddBinding(3,
-                                             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                                             1,
-                                             TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
-                                             []);
- fGlobalVulkanDescriptorSetLayout.AddBinding(4,
-                                             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                                             2,
-                                             TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
-                                             []);
- fGlobalVulkanDescriptorSetLayout.AddBinding(5,
-                                             VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-                                             1,
-                                             TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
-                                             []);
- fGlobalVulkanDescriptorSetLayout.AddBinding(6,
+ fPassVulkanDescriptorSetLayout.AddBinding(7,
                                              VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                                              1,
                                              TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
                                              []);
- fGlobalVulkanDescriptorSetLayout.AddBinding(7,
+ fPassVulkanDescriptorSetLayout.AddBinding(8,
                                              VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                                              1,
                                              TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
                                              []);
- fGlobalVulkanDescriptorSetLayout.AddBinding(8,
+ fPassVulkanDescriptorSetLayout.AddBinding(9,
                                              VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
                                              1,
                                              TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
                                              []);
- fGlobalVulkanDescriptorSetLayout.AddBinding(9,
+ fPassVulkanDescriptorSetLayout.AddBinding(10,
                                              VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT,
                                              1,
                                              TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
                                              []);
- fGlobalVulkanDescriptorSetLayout.AddBinding(10,
+ fPassVulkanDescriptorSetLayout.AddBinding(11,
                                              VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER,
                                              1,
                                              TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
                                              []);
- fGlobalVulkanDescriptorSetLayout.AddBinding(11,
+ fPassVulkanDescriptorSetLayout.AddBinding(12,
                                              VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER,
                                              1,
                                              TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
                                              []);
  if fInstance.Renderer.SurfaceSampleCountFlagBits<>TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT) then begin
-  fGlobalVulkanDescriptorSetLayout.AddBinding(12,
+  fPassVulkanDescriptorSetLayout.AddBinding(13,
                                               VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER,
                                               1,
                                               TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
                                               []);
  end;
- fGlobalVulkanDescriptorSetLayout.Initialize;
+ fPassVulkanDescriptorSetLayout.Initialize;
 
- fGlobalVulkanDescriptorPool:=TpvVulkanDescriptorPool.Create(fInstance.Renderer.VulkanDevice,TVkDescriptorPoolCreateFlags(VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT),fInstance.Renderer.CountInFlightFrames);
- fGlobalVulkanDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,9*fInstance.Renderer.CountInFlightFrames);
- fGlobalVulkanDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT,fInstance.Renderer.CountInFlightFrames);
- fGlobalVulkanDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,3*fInstance.Renderer.CountInFlightFrames);
- fGlobalVulkanDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,2*fInstance.Renderer.CountInFlightFrames);
- fGlobalVulkanDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER,3*fInstance.Renderer.CountInFlightFrames);
- fGlobalVulkanDescriptorPool.Initialize;
+ fPassVulkanDescriptorPool:=TpvVulkanDescriptorPool.Create(fInstance.Renderer.VulkanDevice,TVkDescriptorPoolCreateFlags(VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT),fInstance.Renderer.CountInFlightFrames);
+ fPassVulkanDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,13*fInstance.Renderer.CountInFlightFrames);
+ fPassVulkanDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT,fInstance.Renderer.CountInFlightFrames);
+ fPassVulkanDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,4*fInstance.Renderer.CountInFlightFrames);
+ fPassVulkanDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,2*fInstance.Renderer.CountInFlightFrames);
+ fPassVulkanDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER,3*fInstance.Renderer.CountInFlightFrames);
+ fPassVulkanDescriptorPool.Initialize;
 
  for InFlightFrameIndex:=0 to FrameGraph.CountInFlightFrames-1 do begin
-  fGlobalVulkanDescriptorSets[InFlightFrameIndex]:=TpvVulkanDescriptorSet.Create(fGlobalVulkanDescriptorPool,
-                                                                                 fGlobalVulkanDescriptorSetLayout);
-  fGlobalVulkanDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(0,
+  fPassVulkanDescriptorSets[InFlightFrameIndex]:=TpvVulkanDescriptorSet.Create(fPassVulkanDescriptorPool,
+                                                                                 fPassVulkanDescriptorSetLayout);
+  fPassVulkanDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(0,
+                                                                       0,
+                                                                       1,
+                                                                       TVkDescriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER),
+                                                                       [],
+                                                                       [fInstance.VulkanViewUniformBuffers[InFlightFrameIndex].DescriptorBufferInfo],
+                                                                       [],
+                                                                       false);
+  fPassVulkanDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(1,
                                                                        0,
                                                                        3,
                                                                        TVkDescriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER),
@@ -385,17 +473,20 @@ begin
                                                                        [],
                                                                        [],
                                                                        false);
-  fGlobalVulkanDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(1,
+  fPassVulkanDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(2,
                                                                        0,
-                                                                       3,
+                                                                       6,
                                                                        TVkDescriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER),
                                                                        [fInstance.Renderer.ImageBasedLightingEnvMapCubeMaps.GGXDescriptorImageInfo,
+                                                                        fInstance.Renderer.ImageBasedLightingEnvMapCubeMaps.CharlieDescriptorImageInfo,
+                                                                        fInstance.Renderer.ImageBasedLightingEnvMapCubeMaps.LambertianDescriptorImageInfo,
+                                                                        fInstance.Renderer.ImageBasedLightingEnvMapCubeMaps.GGXDescriptorImageInfo,
                                                                         fInstance.Renderer.ImageBasedLightingEnvMapCubeMaps.CharlieDescriptorImageInfo,
                                                                         fInstance.Renderer.ImageBasedLightingEnvMapCubeMaps.LambertianDescriptorImageInfo],
                                                                        [],
                                                                        [],
                                                                        false);
-  fGlobalVulkanDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(2,
+  fPassVulkanDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(3,
                                                                        0,
                                                                        1,
                                                                        TVkDescriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER),
@@ -403,7 +494,7 @@ begin
                                                                        [fInstance.CascadedShadowMapVulkanUniformBuffers[InFlightFrameIndex].DescriptorBufferInfo],
                                                                        [],
                                                                        false);
-  fGlobalVulkanDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(3,
+  fPassVulkanDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(4,
                                                                        0,
                                                                        1,
                                                                        TVkDescriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER),
@@ -413,42 +504,66 @@ begin
                                                                        [],
                                                                        [],
                                                                        false);
-  fGlobalVulkanDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(4,
-                                                                       0,
-                                                                       2,
-                                                                       TVkDescriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER),
-                                                                       [TVkDescriptorImageInfo.Create(fInstance.Renderer.SSAOSampler.Handle,
-                                                                                                      fResourceSSAO.VulkanImageViews[InFlightFrameIndex].Handle,
-                                                                                                      fResourceSSAO.ResourceTransition.Layout), // TVkImageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))],
-                                                                        fInstance.SceneMipmappedArray2DImages[InFlightFrameIndex].ArrayDescriptorImageInfo],
-                                                                       [],
-                                                                       [],
-                                                                       false);
-  fGlobalVulkanDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(5,
+  if fInstance.Renderer.ScreenSpaceAmbientOcclusion then begin
+   fPassVulkanDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(5,
+                                                                        0,
+                                                                        3,
+                                                                        TVkDescriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER),
+                                                                        [TVkDescriptorImageInfo.Create(fInstance.Renderer.AmbientOcclusionSampler.Handle,
+                                                                                                       fResourceSSAO.VulkanImageViews[InFlightFrameIndex].Handle,
+                                                                                                       fResourceSSAO.ResourceTransition.Layout),// TVkImageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL))],
+                                                                         TVkDescriptorImageInfo.Create(fInstance.Renderer.ClampedSampler.Handle,
+                                                                                                       fInstance.SceneMipmappedArray2DImage.VulkanArrayImageView.Handle,
+                                                                                                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
+                                                                         TVkDescriptorImageInfo.Create(fInstance.Renderer.ClampedNearestSampler.Handle,
+                                                                                                       fInstance.DepthMipmappedArray2DImage.VulkanArrayImageView.Handle,
+                                                                                                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)],
+                                                                        [],
+                                                                        [],
+                                                                        false);
+  end else begin
+   fPassVulkanDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(5,
+                                                                        0,
+                                                                        3,
+                                                                        TVkDescriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER),
+                                                                        [TVkDescriptorImageInfo.Create(fInstance.Renderer.AmbientOcclusionSampler.Handle,
+                                                                                                       fInstance.Renderer.EmptyAmbientOcclusionTexture.ImageView.Handle,
+                                                                                                       TVkImageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)),
+                                                                         TVkDescriptorImageInfo.Create(fInstance.Renderer.ClampedSampler.Handle,
+                                                                                                       fInstance.SceneMipmappedArray2DImage.VulkanArrayImageView.Handle,
+                                                                                                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
+                                                                         TVkDescriptorImageInfo.Create(fInstance.Renderer.ClampedNearestSampler.Handle,
+                                                                                                       fInstance.DepthMipmappedArray2DImage.VulkanArrayImageView.Handle,
+                                                                                                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)],
+                                                                        [],
+                                                                        [],
+                                                                        false);
+  end;
+  fPassVulkanDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(6,
                                                                        0,
                                                                        1,
                                                                        TVkDescriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER),
                                                                        [],
-                                                                       [fInstance.LightGridGlobalsVulkanBuffers[InFlightFrameIndex].DescriptorBufferInfo],
+                                                                       [fInstance.FrustumClusterGridGlobalsVulkanBuffers[InFlightFrameIndex].DescriptorBufferInfo],
                                                                        [],
                                                                        false);
-  fGlobalVulkanDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(6,
+  fPassVulkanDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(7,
                                                                        0,
                                                                        1,
                                                                        TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
                                                                        [],
-                                                                       [fInstance.LightGridIndexListVulkanBuffers[InFlightFrameIndex].DescriptorBufferInfo],
+                                                                       [fInstance.FrustumClusterGridIndexListVulkanBuffers[InFlightFrameIndex].DescriptorBufferInfo],
                                                                        [],
                                                                        false);
-  fGlobalVulkanDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(7,
+  fPassVulkanDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(8,
                                                                        0,
                                                                        1,
                                                                        TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
                                                                        [],
-                                                                       [fInstance.LightGridClustersVulkanBuffers[InFlightFrameIndex].DescriptorBufferInfo],
+                                                                       [fInstance.FrustumClusterGridDataVulkanBuffers[InFlightFrameIndex].DescriptorBufferInfo],
                                                                        [],
                                                                        false);
-  fGlobalVulkanDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(8,
+  fPassVulkanDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(9,
                                                                        0,
                                                                        1,
                                                                        TVkDescriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER),
@@ -456,7 +571,7 @@ begin
                                                                        [fInstance.LoopOrderIndependentTransparentUniformVulkanBuffer.DescriptorBufferInfo],
                                                                        [],
                                                                        false);
-  fGlobalVulkanDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(9,
+  fPassVulkanDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(10,
                                                                        0,
                                                                        1,
                                                                        TVkDescriptorType(VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT),
@@ -466,39 +581,53 @@ begin
                                                                        [],
                                                                        [],
                                                                        false);
-  fGlobalVulkanDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(10,
+  fPassVulkanDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(11,
                                                                        0,
                                                                        1,
                                                                        TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER),
                                                                        [],
                                                                        [],
-                                                                       [fInstance.LoopOrderIndependentTransparencyZBufferBuffers[InFlightFrameIndex].VulkanBufferView.Handle],
+                                                                       [fInstance.LoopOrderIndependentTransparencyZBufferBuffer.VulkanBufferView.Handle],
                                                                        false);
-  fGlobalVulkanDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(11,
+  fPassVulkanDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(12,
                                                                        0,
                                                                        1,
                                                                        TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER),
                                                                        [],
                                                                        [],
-                                                                       [fInstance.LoopOrderIndependentTransparencyABufferBuffers[InFlightFrameIndex].VulkanBufferView.Handle],
+                                                                       [fInstance.LoopOrderIndependentTransparencyABufferBuffer.VulkanBufferView.Handle],
                                                                        false);
   if fInstance.Renderer.SurfaceSampleCountFlagBits<>TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT) then begin
-   fGlobalVulkanDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(12,
+   fPassVulkanDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(13,
                                                                         0,
                                                                         1,
                                                                         TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER),
                                                                         [],
                                                                         [],
-                                                                        [fInstance.LoopOrderIndependentTransparencySBufferBuffers[InFlightFrameIndex].VulkanBufferView.Handle],
+                                                                        [fInstance.LoopOrderIndependentTransparencySBufferBuffer.VulkanBufferView.Handle],
                                                                         false);
   end;
-  fGlobalVulkanDescriptorSets[InFlightFrameIndex].Flush;
+  fPassVulkanDescriptorSets[InFlightFrameIndex].Flush;
+  fIBLDescriptors[InFlightFrameIndex]:=TpvScene3DRendererIBLDescriptor.Create(fInstance.Renderer.VulkanDevice,
+                                                                              fPassVulkanDescriptorSets[InFlightFrameIndex],
+                                                                              2,
+                                                                              fInstance.Renderer.ClampedSampler.Handle);  
  end;
 
  fVulkanPipelineLayout:=TpvVulkanPipelineLayout.Create(fInstance.Renderer.VulkanDevice);
- fVulkanPipelineLayout.AddPushConstantRange(TVkShaderStageFlags(VK_SHADER_STAGE_VERTEX_BIT),0,SizeOf(TpvScene3D.TVertexStagePushConstants));
+ fVulkanPipelineLayout.AddPushConstantRange(TVkShaderStageFlags(VK_SHADER_STAGE_VERTEX_BIT) or TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),0,SizeOf(TpvScene3D.TMeshStagePushConstants));
  fVulkanPipelineLayout.AddDescriptorSetLayout(fInstance.Renderer.Scene3D.GlobalVulkanDescriptorSetLayout);
- fVulkanPipelineLayout.AddDescriptorSetLayout(fGlobalVulkanDescriptorSetLayout);
+ fVulkanPipelineLayout.AddDescriptorSetLayout(fPassVulkanDescriptorSetLayout);
+ case fInstance.Renderer.GlobalIlluminationMode of
+  TpvScene3DRendererGlobalIlluminationMode.CascadedRadianceHints:begin
+   fVulkanPipelineLayout.AddDescriptorSetLayout(fInstance.GlobalIlluminationRadianceHintsDescriptorSetLayout);
+  end;
+  TpvScene3DRendererGlobalIlluminationMode.CascadedVoxelConeTracing:begin
+   fVulkanPipelineLayout.AddDescriptorSetLayout(fInstance.GlobalIlluminationCascadedVoxelConeTracingDescriptorSetLayout);
+  end;
+  else begin
+  end;
+ end;
  fVulkanPipelineLayout.Initialize;
 
  for AlphaMode:=Low(TpvScene3D.TMaterial.TAlphaMode) to High(TpvScene3D.TMaterial.TAlphaMode) do begin
@@ -538,13 +667,13 @@ begin
       VulkanGraphicsPipeline.AddStage(fVulkanPipelineShaderStageMeshFragment);
      end;
 
-     VulkanGraphicsPipeline.InputAssemblyState.Topology:=TVkPrimitiveTopology(PrimitiveTopology);
+     VulkanGraphicsPipeline.InputAssemblyState.Topology:=TpvScene3D.VulkanPrimitiveTopologies[PrimitiveTopology];
      VulkanGraphicsPipeline.InputAssemblyState.PrimitiveRestartEnable:=false;
 
      fInstance.Renderer.Scene3D.InitializeGraphicsPipeline(VulkanGraphicsPipeline);
 
-     VulkanGraphicsPipeline.ViewPortState.AddViewPort(0.0,0.0,fInstance.Width,fInstance.Height,0.0,1.0);
-     VulkanGraphicsPipeline.ViewPortState.AddScissor(0,0,fInstance.Width,fInstance.Height);
+     VulkanGraphicsPipeline.ViewPortState.AddViewPort(0.0,0.0,fResourceColor.Width,fResourceColor.Height,0.0,1.0);
+     VulkanGraphicsPipeline.ViewPortState.AddScissor(0,0,fResourceColor.Width,fResourceColor.Height);
 
      VulkanGraphicsPipeline.RasterizationState.DepthClampEnable:=false;
      VulkanGraphicsPipeline.RasterizationState.RasterizerDiscardEnable:=false;
@@ -626,6 +755,87 @@ begin
 
  end;
 
+ FreeAndNil(fVulkanParticleGraphicsPipeline);
+
+ VulkanGraphicsPipeline:=TpvVulkanGraphicsPipeline.Create(fInstance.Renderer.VulkanDevice,
+                                                          fInstance.Renderer.VulkanPipelineCache,
+                                                          0,
+                                                          [],
+                                                          fVulkanPipelineLayout,
+                                                          fVulkanRenderPass,
+                                                          VulkanRenderPassSubpassIndex,
+                                                          nil,
+                                                          0);
+
+ try
+
+  VulkanGraphicsPipeline.AddStage(fVulkanPipelineShaderStageParticleVertex);
+  VulkanGraphicsPipeline.AddStage(fVulkanPipelineShaderStageParticleFragment);
+
+  VulkanGraphicsPipeline.InputAssemblyState.Topology:=VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+  VulkanGraphicsPipeline.InputAssemblyState.PrimitiveRestartEnable:=false;
+
+  fInstance.Renderer.Scene3D.InitializeParticleGraphicsPipeline(VulkanGraphicsPipeline);
+
+  VulkanGraphicsPipeline.ViewPortState.AddViewPort(0.0,0.0,fResourceColor.Width,fResourceColor.Height,0.0,1.0);
+  VulkanGraphicsPipeline.ViewPortState.AddScissor(0,0,fResourceColor.Width,fResourceColor.Height);
+
+  VulkanGraphicsPipeline.RasterizationState.DepthClampEnable:=false;
+  VulkanGraphicsPipeline.RasterizationState.RasterizerDiscardEnable:=false;
+  VulkanGraphicsPipeline.RasterizationState.PolygonMode:=VK_POLYGON_MODE_FILL;
+{ VulkanGraphicsPipeline.RasterizationState.CullMode:=TVkCullModeFlags(VK_CULL_MODE_BACK_BIT);
+  VulkanGraphicsPipeline.RasterizationState.FrontFace:=VK_FRONT_FACE_COUNTER_CLOCKWISE;}
+  VulkanGraphicsPipeline.RasterizationState.CullMode:=TVkCullModeFlags(VK_CULL_MODE_NONE);
+  VulkanGraphicsPipeline.RasterizationState.FrontFace:=VK_FRONT_FACE_COUNTER_CLOCKWISE;
+  VulkanGraphicsPipeline.RasterizationState.DepthBiasEnable:=false;
+  VulkanGraphicsPipeline.RasterizationState.DepthBiasConstantFactor:=0.0;
+  VulkanGraphicsPipeline.RasterizationState.DepthBiasClamp:=0.0;
+  VulkanGraphicsPipeline.RasterizationState.DepthBiasSlopeFactor:=0.0;
+  VulkanGraphicsPipeline.RasterizationState.LineWidth:=1.0;
+
+  VulkanGraphicsPipeline.MultisampleState.RasterizationSamples:=fInstance.Renderer.SurfaceSampleCountFlagBits;
+  VulkanGraphicsPipeline.MultisampleState.SampleShadingEnable:=false;
+  VulkanGraphicsPipeline.MultisampleState.MinSampleShading:=0.0;
+  VulkanGraphicsPipeline.MultisampleState.CountSampleMasks:=0;
+  VulkanGraphicsPipeline.MultisampleState.AlphaToCoverageEnable:=false;
+  VulkanGraphicsPipeline.MultisampleState.AlphaToOneEnable:=false;
+
+  VulkanGraphicsPipeline.ColorBlendState.LogicOpEnable:=false;
+  VulkanGraphicsPipeline.ColorBlendState.LogicOp:=VK_LOGIC_OP_COPY;
+  VulkanGraphicsPipeline.ColorBlendState.BlendConstants[0]:=0.0;
+  VulkanGraphicsPipeline.ColorBlendState.BlendConstants[1]:=0.0;
+  VulkanGraphicsPipeline.ColorBlendState.BlendConstants[2]:=0.0;
+  VulkanGraphicsPipeline.ColorBlendState.BlendConstants[3]:=0.0;
+  VulkanGraphicsPipeline.ColorBlendState.AddColorBlendAttachmentState(true,
+                                                                      VK_BLEND_FACTOR_ONE,
+                                                                      VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+                                                                      VK_BLEND_OP_ADD,
+                                                                      VK_BLEND_FACTOR_ONE,
+                                                                      VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+                                                                      VK_BLEND_OP_ADD,
+                                                                      TVkColorComponentFlags(VK_COLOR_COMPONENT_R_BIT) or
+                                                                      TVkColorComponentFlags(VK_COLOR_COMPONENT_G_BIT) or
+                                                                      TVkColorComponentFlags(VK_COLOR_COMPONENT_B_BIT) or
+                                                                      TVkColorComponentFlags(VK_COLOR_COMPONENT_A_BIT));
+
+  VulkanGraphicsPipeline.DepthStencilState.DepthTestEnable:=true;
+  VulkanGraphicsPipeline.DepthStencilState.DepthWriteEnable:=false;
+  if fInstance.ZFar<0.0 then begin
+   VulkanGraphicsPipeline.DepthStencilState.DepthCompareOp:=VK_COMPARE_OP_GREATER_OR_EQUAL;
+  end else begin
+   VulkanGraphicsPipeline.DepthStencilState.DepthCompareOp:=VK_COMPARE_OP_LESS_OR_EQUAL;
+  end;
+  VulkanGraphicsPipeline.DepthStencilState.DepthBoundsTestEnable:=false;
+  VulkanGraphicsPipeline.DepthStencilState.StencilTestEnable:=false;
+
+  VulkanGraphicsPipeline.Initialize;
+
+  VulkanGraphicsPipeline.FreeMemory;
+
+ finally
+  fVulkanParticleGraphicsPipeline:=VulkanGraphicsPipeline;
+ end;
+
 end;
 
 procedure TpvScene3DRendererPassesLoopOrderIndependentTransparencyPass2RenderPass.ReleaseVolatileResources;
@@ -634,6 +844,7 @@ var Index:TpvSizeInt;
     PrimitiveTopology:TpvScene3D.TPrimitiveTopology;
     FaceCullingMode:TpvScene3D.TFaceCullingMode;
 begin
+ FreeAndNil(fVulkanParticleGraphicsPipeline);
  for AlphaMode:=Low(TpvScene3D.TMaterial.TAlphaMode) to High(TpvScene3D.TMaterial.TAlphaMode) do begin
   for PrimitiveTopology:=Low(TpvScene3D.TPrimitiveTopology) to High(TpvScene3D.TPrimitiveTopology) do begin
    for FaceCullingMode:=Low(TpvScene3D.TFaceCullingMode) to High(TpvScene3D.TFaceCullingMode) do begin
@@ -643,10 +854,11 @@ begin
  end;
  FreeAndNil(fVulkanPipelineLayout);
  for Index:=0 to fInstance.Renderer.CountInFlightFrames-1 do begin
-  FreeAndNil(fGlobalVulkanDescriptorSets[Index]);
+  FreeAndNil(fPassVulkanDescriptorSets[Index]);
+  FreeAndNil(fIBLDescriptors[Index]);
  end;
- FreeAndNil(fGlobalVulkanDescriptorPool);
- FreeAndNil(fGlobalVulkanDescriptorSetLayout);
+ FreeAndNil(fPassVulkanDescriptorPool);
+ FreeAndNil(fPassVulkanDescriptorSetLayout);
  inherited ReleaseVolatileResources;
 end;
 
@@ -656,20 +868,48 @@ begin
 end;
 
 procedure TpvScene3DRendererPassesLoopOrderIndependentTransparencyPass2RenderPass.OnSetRenderPassResources(const aCommandBuffer:TpvVulkanCommandBuffer;
-                                                                                                const aPipelineLayout:TpvVulkanPipelineLayout;
-                                                                                                const aRenderPassIndex:TpvSizeInt;
-                                                                                                const aPreviousInFlightFrameIndex:TpvSizeInt;
-                                                                                                const aInFlightFrameIndex:TpvSizeInt);
+                                                                                                           const aPipelineLayout:TpvVulkanPipelineLayout;
+                                                                                                           const aRendererInstance:TObject;
+                                                                                                           const aRenderPassIndex:TpvSizeInt;
+                                                                                                           const aPreviousInFlightFrameIndex:TpvSizeInt;
+                                                                                                           const aInFlightFrameIndex:TpvSizeInt);
+var DescriptorSets:array[0..1] of TVkDescriptorSet;
 begin
  if not fOnSetRenderPassResourcesDone then begin
   fOnSetRenderPassResourcesDone:=true;
-  aCommandBuffer.CmdBindDescriptorSets(VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                       fVulkanPipelineLayout.Handle,
-                                       1,
-                                       1,
-                                       @fGlobalVulkanDescriptorSets[aInFlightFrameIndex].Handle,
-                                       0,
-                                       nil);
+  case fInstance.Renderer.GlobalIlluminationMode of
+   TpvScene3DRendererGlobalIlluminationMode.CascadedRadianceHints:begin
+    DescriptorSets[0]:=fPassVulkanDescriptorSets[aInFlightFrameIndex].Handle;
+    DescriptorSets[1]:=fInstance.GlobalIlluminationRadianceHintsDescriptorSets[aInFlightFrameIndex].Handle;
+    aCommandBuffer.CmdBindDescriptorSets(VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                         fVulkanPipelineLayout.Handle,
+                                         1,
+                                         2,
+                                         @DescriptorSets,
+                                         0,
+                                         nil);
+   end;
+   TpvScene3DRendererGlobalIlluminationMode.CascadedVoxelConeTracing:begin
+    DescriptorSets[0]:=fPassVulkanDescriptorSets[aInFlightFrameIndex].Handle;
+    DescriptorSets[1]:=fInstance.GlobalIlluminationCascadedVoxelConeTracingDescriptorSets[aInFlightFrameIndex].Handle;
+    aCommandBuffer.CmdBindDescriptorSets(VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                         fVulkanPipelineLayout.Handle,
+                                         1,
+                                         2,
+                                         @DescriptorSets[0],
+                                         0,
+                                         nil);
+   end;
+   else begin
+    aCommandBuffer.CmdBindDescriptorSets(VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                         fVulkanPipelineLayout.Handle,
+                                         1,
+                                         1,
+                                         @fPassVulkanDescriptorSets[aInFlightFrameIndex].Handle,
+                                         0,
+                                         nil);
+   end;
+  end;
  end;
 end;
 
@@ -685,31 +925,50 @@ begin
 
   fOnSetRenderPassResourcesDone:=false;
 
+  fIBLDescriptors[aInFlightFrameIndex].SetFrom(fInstance.Renderer.Scene3D,fInstance,aInFlightFrameIndex);
+  fIBLDescriptors[aInFlightFrameIndex].Update(true);
+
   if fInstance.Renderer.UseOITAlphaTest or fInstance.Renderer.Scene3D.HasTransmission then begin
-   fInstance.Renderer.Scene3D.Draw(fVulkanGraphicsPipelines[TpvScene3D.TMaterial.TAlphaMode.Mask],
+   fInstance.Renderer.Scene3D.Draw(fInstance,
+                                   fVulkanGraphicsPipelines[TpvScene3D.TMaterial.TAlphaMode.Mask],
                                    -1,
                                    aInFlightFrameIndex,
                                    InFlightFrameState^.ViewRenderPassIndex,
                                    InFlightFrameState^.FinalViewIndex,
-                                   InFlightFrameState^.CountViews,
+                                   InFlightFrameState^.CountFinalViews,
                                    FrameGraph.DrawFrameIndex,
                                    aCommandBuffer,
                                    fVulkanPipelineLayout,
                                    OnSetRenderPassResources,
-                                   [TpvScene3D.TMaterial.TAlphaMode.Mask]);
+                                   [TpvScene3D.TMaterial.TAlphaMode.Mask],
+                                   @InFlightFrameState^.Jitter);
   end;
 
-  fInstance.Renderer.Scene3D.Draw(fVulkanGraphicsPipelines[TpvScene3D.TMaterial.TAlphaMode.Blend],
+  fInstance.Renderer.Scene3D.Draw(fInstance,
+                                  fVulkanGraphicsPipelines[TpvScene3D.TMaterial.TAlphaMode.Blend],
                                   -1,
                                   aInFlightFrameIndex,
                                   InFlightFrameState^.ViewRenderPassIndex,
                                   InFlightFrameState^.FinalViewIndex,
-                                  InFlightFrameState^.CountViews,
+                                  InFlightFrameState^.CountFinalViews,
                                   FrameGraph.DrawFrameIndex,
                                   aCommandBuffer,
                                   fVulkanPipelineLayout,
                                   OnSetRenderPassResources,
-                                  [TpvScene3D.TMaterial.TAlphaMode.Blend]);
+                                  [TpvScene3D.TMaterial.TAlphaMode.Blend],
+                                  @InFlightFrameState^.Jitter);
+
+  fInstance.Renderer.Scene3D.DrawParticles(fInstance,
+                                           fVulkanParticleGraphicsPipeline,
+                                           -1,
+                                           aInFlightFrameIndex,
+                                           InFlightFrameState^.ViewRenderPassIndex,
+                                           InFlightFrameState^.FinalViewIndex,
+                                           InFlightFrameState^.CountFinalViews,
+                                           FrameGraph.DrawFrameIndex,
+                                           aCommandBuffer,
+                                           fVulkanPipelineLayout,
+                                           OnSetRenderPassResources);
 
  end;
 

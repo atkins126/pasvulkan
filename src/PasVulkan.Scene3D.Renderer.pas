@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -80,9 +80,10 @@ uses Classes,
      PasVulkan.Scene3D,
      PasVulkan.Scene3D.Renderer.Globals,
      PasVulkan.Scene3D.Renderer.SMAAData,
-     PasVulkan.Scene3D.Renderer.SkyCubeMap,
+     PasVulkan.Scene3D.Renderer.EnvironmentCubeMap,
      PasVulkan.Scene3D.Renderer.MipmappedArray2DImage,
      PasVulkan.Scene3D.Renderer.ImageBasedLighting.EnvMapCubeMaps,
+     PasVulkan.Scene3D.Renderer.ImageBasedLighting.SphericalHarmonics,
      PasVulkan.Scene3D.Renderer.Charlie.BRDF,
      PasVulkan.Scene3D.Renderer.GGX.BRDF,
      PasVulkan.Scene3D.Renderer.SheenE.BRDF,
@@ -118,27 +119,48 @@ type TpvScene3DRenderer=class;
 
      { TpvScene3DRenderer }
      TpvScene3DRenderer=class(TpvScene3DRendererBaseObject)
+      public
+       type TSphericalHarmonicsBufferData=record
+             Coefs:array[0..8] of TpvVector4;
+            end;
+            PSphericalHarmonicsBufferData=^TSphericalHarmonicsBufferData;
+            TSphericalHarmonicsMetaDataBufferData=TpvScene3DRendererImageBasedLightingSphericalHarmonics.TSphericalHarmonicsMetaDataBufferData;
+            PSphericalHarmonicsMetaDataBufferData=^TSphericalHarmonicsMetaDataBufferData;
       private
        fScene3D:TpvScene3D;
        fVulkanDevice:TpvVulkanDevice;
        fVulkanPipelineCache:TpvVulkanPipelineCache;
        fCountInFlightFrames:TpvSizeInt;
+       fVelocityBufferNeeded:Boolean;
+       fGPUCulling:Boolean;
+       fGPUShadowCulling:Boolean;
+       fEarlyDepthPrepassNeeded:Boolean;
+       fScreenSpaceAmbientOcclusion:Boolean;
        fAntialiasingMode:TpvScene3DRendererAntialiasingMode;
        fShadowMode:TpvScene3DRendererShadowMode;
        fTransparencyMode:TpvScene3DRendererTransparencyMode;
        fDepthOfFieldMode:TpvScene3DRendererDepthOfFieldMode;
        fLensMode:TpvScene3DRendererLensMode;
-       fMinLogLuminance:TpvFloat;
-       fMaxLogLuminance:TpvFloat;
+       fGlobalIlluminationMode:TpvScene3DRendererGlobalIlluminationMode;
+       fToneMappingMode:TpvScene3DRendererToneMappingMode;
+{      fMinLogLuminance:TpvFloat;
+       fMaxLogLuminance:TpvFloat;}
        fMaxMSAA:TpvInt32;
        fMaxShadowMSAA:TpvInt32;
        fShadowMapSize:TpvInt32;
        fVirtualRealityHUDWidth:TpvInt32;
        fVirtualRealityHUDHeight:TpvInt32;
        fBufferDeviceAddress:boolean;
+       fRaytracingActive:boolean;
        fMeshFragTypeName:TpvUTF8String;
+       fMeshFragGlobalIlluminationTypeName:TpvUTF8String;
        fMeshFragShadowTypeName:TpvUTF8String;
        fOptimizedNonAlphaFormat:TVkFormat;
+       fOptimizedCubeMapFormat:TVkFormat;
+       fFastSky:boolean;
+       fFastAerialPerspective:boolean;
+       fAtmosphereBlueNoise:boolean;
+       fAtmosphereShadows:boolean;
        fUseDepthPrepass:boolean;
        fUseDemote:boolean;
        fUseNoDiscard:boolean;
@@ -147,8 +169,18 @@ type TpvScene3DRenderer=class;
        fCountCascadedShadowMapMSAASamples:TpvSizeInt;
        fSurfaceSampleCountFlagBits:TVkSampleCountFlagBits;
        fCountSurfaceMSAASamples:TpvSizeInt;
+       fSupersampleWaterWhenMSAA:Boolean;
+       fGlobalIlluminationCaching:Boolean;
+       fGlobalIlluminationRadianceHintsSpread:TpvScalar;
+       fGlobalIlluminationVoxelGridSize:TpvInt32;
+       fGlobalIlluminationVoxelCountCascades:TpvInt32;
+       fGlobalIlluminationVoxelCountBounces:TpvInt32;
       private
-       fSkyCubeMap:TpvScene3DRendererSkyCubeMap;
+       fSkyBoxCubeMap:TpvScene3DRendererEnvironmentCubeMap;
+       fEnvironmentCubeMap:TpvScene3DRendererEnvironmentCubeMap;
+       fEnvironmentSphericalHarmonicsBuffer:TpvVulkanBuffer;
+       fEnvironmentSphericalHarmonicsMetaDataBuffer:TpvVulkanBuffer;
+       fEnvironmentSphericalHarmonics:TpvScene3DRendererImageBasedLightingSphericalHarmonics;
        fGGXBRDF:TpvScene3DRendererGGXBRDF;
        fCharlieBRDF:TpvScene3DRendererCharlieBRDF;
        fSheenEBRDF:TpvScene3DRendererSheenEBRDF;
@@ -157,18 +189,25 @@ type TpvScene3DRenderer=class;
        fLensStar:TpvScene3DRendererLensStar;
        fImageBasedLightingEnvMapCubeMaps:TpvScene3DRendererImageBasedLightingEnvMapCubeMaps;
        fShadowMapSampler:TpvVulkanSampler;
+       fCheckShadowMapSampler:TpvVulkanSampler;
        fGeneralSampler:TpvVulkanSampler;
-       fSSAOSampler:TpvVulkanSampler;
+       fOrderIndependentTransparencySampler:TpvVulkanSampler;
+       fMipMapMinFilterSampler:TpvVulkanSampler;
+       fMipMapMaxFilterSampler:TpvVulkanSampler;
+       fRepeatedSampler:TpvVulkanSampler;
+       fMirrorRepeatedSampler:TpvVulkanSampler;
+       fClampedSampler:TpvVulkanSampler;
+       fClampedNearestSampler:TpvVulkanSampler;
+       fAmbientOcclusionSampler:TpvVulkanSampler;
        fSMAAAreaTexture:TpvVulkanTexture;
        fSMAASearchTexture:TpvVulkanTexture;
+       fEmptyAmbientOcclusionTexture:TpvVulkanTexture;
 {      fLensColorTexture:TpvVulkanTexture;
        fLensDirtTexture:TpvVulkanTexture;
        fLensStarTexture:TpvVulkanTexture;}
-       fVulkanFlushQueue:TpvVulkanQueue;
-       fVulkanFlushCommandPool:TpvVulkanCommandPool;
-       fVulkanFlushCommandBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanCommandBuffer;
-       fVulkanFlushCommandBufferFences:array[0..MaxInFlightFrames-1] of TpvVulkanFence;
-       fVulkanFlushSemaphores:array[0..MaxInFlightFrames-1] of TpvVulkanSemaphore;
+       procedure SetGlobalIlluminationVoxelCountBounces(const aValue:TpvInt32);
+       procedure SetGlobalIlluminationVoxelCountCascades(const aValue:TpvInt32);
+       procedure SetGlobalIlluminationVoxelGridSize(const aValue:TpvInt32);
       public
        constructor Create(const aScene3D:TpvScene3D;const aVulkanDevice:TpvVulkanDevice=nil;const aVulkanPipelineCache:TpvVulkanPipelineCache=nil;const aCountInFlightFrames:TpvSizeInt=0); reintroduce;
        destructor Destroy; override;
@@ -177,28 +216,41 @@ type TpvScene3DRenderer=class;
        procedure Prepare;
        procedure AcquirePersistentResources;
        procedure ReleasePersistentResources;
-       procedure Flush(const aInFlightFrameIndex:TpvInt32;var aWaitSemaphore:TpvVulkanSemaphore;const aWaitFence:TpvVulkanFence=nil);
       published
        property Scene3D:TpvScene3D read fScene3D;
        property VulkanDevice:TpvVulkanDevice read fVulkanDevice;
        property VulkanPipelineCache:TpvVulkanPipelineCache read fVulkanPipelineCache;
        property CountInFlightFrames:TpvSizeInt read fCountInFlightFrames;
+       property VelocityBufferNeeded:Boolean read fVelocityBufferNeeded;
+       property GPUCulling:Boolean read fGPUCulling;
+       property GPUShadowCulling:Boolean read fGPUShadowCulling;
+       property EarlyDepthPrepassNeeded:Boolean read fEarlyDepthPrepassNeeded;
+       property ScreenSpaceAmbientOcclusion:Boolean read fScreenSpaceAmbientOcclusion write fScreenSpaceAmbientOcclusion;
        property AntialiasingMode:TpvScene3DRendererAntialiasingMode read fAntialiasingMode write fAntialiasingMode;
        property ShadowMode:TpvScene3DRendererShadowMode read fShadowMode write fShadowMode;
        property TransparencyMode:TpvScene3DRendererTransparencyMode read fTransparencyMode write fTransparencyMode;
        property DepthOfFieldMode:TpvScene3DRendererDepthOfFieldMode read fDepthOfFieldMode write fDepthOfFieldMode;
        property LensMode:TpvScene3DRendererLensMode read fLensMode write fLensMode;
-       property MinLogLuminance:TpvFloat read fMinLogLuminance write fMinLogLuminance;
-       property MaxLogLuminance:TpvFloat read fMaxLogLuminance write fMaxLogLuminance;
+       property GlobalIlluminationMode:TpvScene3DRendererGlobalIlluminationMode read fGlobalIlluminationMode write fGlobalIlluminationMode;
+       property ToneMappingMode:TpvScene3DRendererToneMappingMode read fToneMappingMode write fToneMappingMode;
+{      property MinLogLuminance:TpvFloat read fMinLogLuminance write fMinLogLuminance;
+       property MaxLogLuminance:TpvFloat read fMaxLogLuminance write fMaxLogLuminance;}
        property MaxMSAA:TpvInt32 read fMaxMSAA write fMaxMSAA;
        property MaxShadowMSAA:TpvInt32 read fMaxShadowMSAA write fMaxShadowMSAA;
        property ShadowMapSize:TpvInt32 read fShadowMapSize write fShadowMapSize;
        property VirtualRealityHUDWidth:TpvInt32 read fVirtualRealityHUDWidth write fVirtualRealityHUDWidth;
        property VirtualRealityHUDHeight:TpvInt32 read fVirtualRealityHUDHeight write fVirtualRealityHUDHeight;
        property BufferDeviceAddress:boolean read fBufferDeviceAddress;
+       property RaytracingActive:boolean read fRaytracingActive;
        property MeshFragTypeName:TpvUTF8String read fMeshFragTypeName;
+       property MeshFragGlobalIlluminationTypeName:TpvUTF8String read fMeshFragGlobalIlluminationTypeName;
        property MeshFragShadowTypeName:TpvUTF8String read fMeshFragShadowTypeName;
        property OptimizedNonAlphaFormat:TVkFormat read fOptimizedNonAlphaFormat;
+       property OptimizedCubeMapFormat:TVkFormat read fOptimizedCubeMapFormat;
+       property FastSky:boolean read fFastSky write fFastSky;
+       property FastAerialPerspective:boolean read fFastAerialPerspective write fFastAerialPerspective;
+       property AtmosphereBlueNoise:boolean read fAtmosphereBlueNoise write fAtmosphereBlueNoise;
+       property AtmosphereShadows:boolean read fAtmosphereShadows write fAtmosphereShadows;
        property UseDepthPrepass:boolean read fUseDepthPrepass;
        property UseDemote:boolean read fUseDemote;
        property UseNoDiscard:boolean read fUseNoDiscard;
@@ -207,8 +259,17 @@ type TpvScene3DRenderer=class;
        property CountCascadedShadowMapMSAASamples:TpvSizeInt read fCountCascadedShadowMapMSAASamples;
        property SurfaceSampleCountFlagBits:TVkSampleCountFlagBits read fSurfaceSampleCountFlagBits;
        property CountSurfaceMSAASamples:TpvSizeInt read fCountSurfaceMSAASamples;
+       property SupersampleWaterWhenMSAA:Boolean read fSupersampleWaterWhenMSAA;
+       property GlobalIlluminationCaching:Boolean read fGlobalIlluminationCaching write fGlobalIlluminationCaching;
+       property GlobalIlluminationRadianceHintsSpread:TpvScalar read fGlobalIlluminationRadianceHintsSpread write fGlobalIlluminationRadianceHintsSpread;
+       property GlobalIlluminationVoxelGridSize:TpvInt32 read fGlobalIlluminationVoxelGridSize write SetGlobalIlluminationVoxelGridSize;
+       property GlobalIlluminationVoxelCountCascades:TpvInt32 read fGlobalIlluminationVoxelCountCascades write SetGlobalIlluminationVoxelCountCascades;
+       property GlobalIlluminationVoxelCountBounces:TpvInt32 read fGlobalIlluminationVoxelCountBounces write SetGlobalIlluminationVoxelCountBounces;
       published
-       property SkyCubeMap:TpvScene3DRendererSkyCubeMap read fSkyCubeMap;
+       property SkyBoxCubeMap:TpvScene3DRendererEnvironmentCubeMap read fSkyBoxCubeMap;
+       property EnvironmentCubeMap:TpvScene3DRendererEnvironmentCubeMap read fEnvironmentCubeMap;
+       property EnvironmentSphericalHarmonicsBuffer:TpvVulkanBuffer read fEnvironmentSphericalHarmonicsBuffer;
+       property EnvironmentSphericalHarmonicsMetaDataBuffer:TpvVulkanBuffer read fEnvironmentSphericalHarmonicsMetaDataBuffer;
        property GGXBRDF:TpvScene3DRendererGGXBRDF read fGGXBRDF;
        property CharlieBRDF:TpvScene3DRendererCharlieBRDF read fCharlieBRDF;
        property SheenEBRDF:TpvScene3DRendererSheenEBRDF read fSheenEBRDF;
@@ -217,10 +278,19 @@ type TpvScene3DRenderer=class;
        property LensStar:TpvScene3DRendererLensStar read fLensStar write fLensStar;
        property ImageBasedLightingEnvMapCubeMaps:TpvScene3DRendererImageBasedLightingEnvMapCubeMaps read fImageBasedLightingEnvMapCubeMaps;
        property ShadowMapSampler:TpvVulkanSampler read fShadowMapSampler;
+       property CheckShadowMapSampler:TpvVulkanSampler read fCheckShadowMapSampler;
        property GeneralSampler:TpvVulkanSampler read fGeneralSampler;
-       property SSAOSampler:TpvVulkanSampler read fSSAOSampler;
+       property OrderIndependentTransparencySampler:TpvVulkanSampler read fOrderIndependentTransparencySampler;
+       property MipMapMinFilterSampler:TpvVulkanSampler read fMipMapMinFilterSampler;
+       property MipMapMaxFilterSampler:TpvVulkanSampler read fMipMapMaxFilterSampler;
+       property RepeatedSampler:TpvVulkanSampler read fRepeatedSampler;
+       property MirrorRepeatedSampler:TpvVulkanSampler read fMirrorRepeatedSampler;
+       property ClampedSampler:TpvVulkanSampler read fClampedSampler;
+       property ClampedNearestSampler:TpvVulkanSampler read fClampedNearestSampler;
+       property AmbientOcclusionSampler:TpvVulkanSampler read fAmbientOcclusionSampler;
        property SMAAAreaTexture:TpvVulkanTexture read fSMAAAreaTexture;
        property SMAASearchTexture:TpvVulkanTexture read fSMAASearchTexture;
+       property EmptyAmbientOcclusionTexture:TpvVulkanTexture read fEmptyAmbientOcclusionTexture;
 {      property LensColorTexture:TpvVulkanTexture read fLensColorTexture;
        property LensDirtTexture:TpvVulkanTexture read fLensDirtTexture;
        property LensStarTexture:TpvVulkanTexture read fLensStarTexture;}
@@ -313,7 +383,7 @@ end;
 { TpvScene3DRenderer }
 
 constructor TpvScene3DRenderer.Create(const aScene3D:TpvScene3D;const aVulkanDevice:TpvVulkanDevice;const aVulkanPipelineCache:TpvVulkanPipelineCache;const aCountInFlightFrames:TpvSizeInt);
-var InFlightFrameIndex:TpvSizeInt;
+//var InFlightFrameIndex:TpvSizeInt;
 begin
  inherited Create(nil);
 
@@ -337,6 +407,8 @@ begin
   fCountInFlightFrames:=pvApplication.CountInFlightFrames;
  end;
 
+ fScreenSpaceAmbientOcclusion:=true;
+
  fAntialiasingMode:=TpvScene3DRendererAntialiasingMode.Auto;
 
  fShadowMode:=TpvScene3DRendererShadowMode.Auto;
@@ -347,9 +419,13 @@ begin
 
  fLensMode:=TpvScene3DRendererLensMode.Auto;
 
- fMinLogLuminance:=-8.0;
+ fGlobalIlluminationMode:=TpvScene3DRendererGlobalIlluminationMode.Auto;
 
- fMaxLogLuminance:=3.5;
+ fToneMappingMode:=TpvScene3DRendererToneMappingMode.Auto;
+
+{fMinLogLuminance:=-8.0;
+
+ fMaxLogLuminance:=6.0;}
 
  fMaxMSAA:=0;
 
@@ -360,41 +436,72 @@ begin
  fVirtualRealityHUDWidth:=2048;
  fVirtualRealityHUDHeight:=1152;
 
- fVulkanFlushQueue:=Renderer.VulkanDevice.UniversalQueue;
+ fSupersampleWaterWhenMSAA:=true;
 
- fVulkanFlushCommandPool:=TpvVulkanCommandPool.Create(Renderer.VulkanDevice,
-                                                      Renderer.VulkanDevice.UniversalQueueFamilyIndex,
-                                                      TVkCommandPoolCreateFlags(VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT));
+ fGlobalIlluminationCaching:=true;
 
- for InFlightFrameIndex:=0 to Renderer.CountInFlightFrames-1 do begin
+ fGlobalIlluminationRadianceHintsSpread:=-0.25;
 
-  fVulkanFlushCommandBuffers[InFlightFrameIndex]:=TpvVulkanCommandBuffer.Create(fVulkanFlushCommandPool,VK_COMMAND_BUFFER_LEVEL_PRIMARY);
+ fGlobalIlluminationVoxelGridSize:=64;
 
-  fVulkanFlushCommandBufferFences[InFlightFrameIndex]:=TpvVulkanFence.Create(Renderer.VulkanDevice);
+ fGlobalIlluminationVoxelCountCascades:=8;
 
-  fVulkanFlushSemaphores[InFlightFrameIndex]:=TpvVulkanSemaphore.Create(Renderer.VulkanDevice);
+ fGlobalIlluminationVoxelCountBounces:=2;
 
- end;
+ fFastSky:=true;
+ fFastAerialPerspective:=true;
+ fAtmosphereBlueNoise:=false;
+ fAtmosphereShadows:=false;
 
 end;
 
 destructor TpvScene3DRenderer.Destroy;
-var InFlightFrameIndex:TpvSizeInt;
+//var InFlightFrameIndex:TpvSizeInt;
 begin
-
- for InFlightFrameIndex:=0 to Renderer.CountInFlightFrames-1 do begin
-  FreeAndNil(fVulkanFlushCommandBuffers[InFlightFrameIndex]);
-  FreeAndNil(fVulkanFlushCommandBufferFences[InFlightFrameIndex]);
-  FreeAndNil(fVulkanFlushSemaphores[InFlightFrameIndex]);
- end;
-
- FreeAndNil(fVulkanFlushCommandPool);
-
  inherited Destroy;
+end;
+
+procedure TpvScene3DRenderer.SetGlobalIlluminationVoxelCountBounces(const aValue:TpvInt32);
+begin
+ fGlobalIlluminationVoxelCountBounces:=Min(Max(aValue,1),2);
+end;
+
+procedure TpvScene3DRenderer.SetGlobalIlluminationVoxelCountCascades(const aValue:TpvInt32);
+begin
+ fGlobalIlluminationVoxelCountCascades:=Min(Max(aValue,1),8);
+end;
+
+procedure TpvScene3DRenderer.SetGlobalIlluminationVoxelGridSize(const aValue:TpvInt32);
+begin
+ fGlobalIlluminationVoxelGridSize:=RoundUpToPowerOfTwo(Min(Max(aValue,16),256));
 end;
 
 class procedure TpvScene3DRenderer.SetupVulkanDevice(const aVulkanDevice:TpvVulkanDevice);
 begin
+ if aVulkanDevice.PhysicalDevice.Properties.limits.maxDrawIndexedIndexValue<TpvInt64($80000000) then begin
+  raise EpvApplication.Create('Application','The value of maxDrawIndexedIndexValue is too low, must be at least 2147483648.',LOG_ERROR);
+ end;
+ if aVulkanDevice.PhysicalDevice.Features.multiDrawIndirect=VK_FALSE then begin
+  raise EpvApplication.Create('Application','Support for multiDrawIndirect is needed',LOG_ERROR);
+ end;
+ if aVulkanDevice.PhysicalDevice.Properties.limits.maxDrawIndirectCount<TpvInt64($40000000) then begin
+  raise EpvApplication.Create('Application','The value of maxDrawIndirectCount is too low, must be at least 1073741824.',LOG_ERROR);
+ end;
+ if (((aVulkanDevice.Instance.APIVersion and VK_API_VERSION_WITHOUT_PATCH_MASK)<VK_API_VERSION_1_2) and
+     (aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME)<0)) or
+    (((aVulkanDevice.Instance.APIVersion and VK_API_VERSION_WITHOUT_PATCH_MASK)>=VK_API_VERSION_1_2) and
+     (aVulkanDevice.PhysicalDevice.Vulkan12Features.drawIndirectCount=VK_FALSE)) then begin
+  raise EpvApplication.Create('Application','Support for drawIndirectCount is needed',LOG_ERROR);
+ end;
+ if (((aVulkanDevice.Instance.APIVersion and VK_API_VERSION_WITHOUT_PATCH_MASK)<VK_API_VERSION_1_2) and
+     (aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_EXT_SAMPLER_FILTER_MINMAX_EXTENSION_NAME)<0)) or
+    (((aVulkanDevice.Instance.APIVersion and VK_API_VERSION_WITHOUT_PATCH_MASK)>=VK_API_VERSION_1_2) and
+     (aVulkanDevice.PhysicalDevice.Vulkan12Features.samplerFilterMinmax=VK_FALSE)) then begin
+  raise EpvApplication.Create('Application','Support for samplerFilterMinmax is needed',LOG_ERROR);
+ end;
+ if aVulkanDevice.PhysicalDevice.SamplerFilterMinmaxPropertiesEXT.filterMinmaxImageComponentMapping=VK_FALSE then begin
+  raise EpvApplication.Create('Application','Support for filterMinmaxImageComponentMapping is needed',LOG_ERROR);
+ end;
  if (aVulkanDevice.PhysicalDevice.DescriptorIndexingFeaturesEXT.descriptorBindingPartiallyBound=VK_FALSE) or
     (aVulkanDevice.PhysicalDevice.DescriptorIndexingFeaturesEXT.runtimeDescriptorArray=VK_FALSE) or
     (aVulkanDevice.PhysicalDevice.DescriptorIndexingFeaturesEXT.shaderSampledImageArrayNonUniformIndexing=VK_FALSE) then begin
@@ -403,6 +510,13 @@ begin
 {if aVulkanDevice.PhysicalDevice.BufferDeviceAddressFeaturesKHR.bufferDeviceAddress=VK_FALSE then begin
   raise EpvApplication.Create('Application','Support for VK_KHR_buffer_device_address (bufferDeviceAddress) is needed',LOG_ERROR);
  end;}
+ if (aVulkanDevice.Instance.APIVersion and VK_API_VERSION_WITHOUT_PATCH_MASK)<VK_API_VERSION_1_1 then begin
+  if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_KHR_BIND_MEMORY_2_EXTENSION_NAME)>=0 then begin
+   aVulkanDevice.EnabledExtensionNames.Add(VK_KHR_BIND_MEMORY_2_EXTENSION_NAME);
+  end else begin
+   raise EpvApplication.Create('Application','Support for VK_KHR_BIND_MEMORY_2 is needed',LOG_ERROR);
+  end;
+ end;
  if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME)>=0 then begin
   aVulkanDevice.EnabledExtensionNames.Add(VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME);
  end;
@@ -430,26 +544,83 @@ begin
  if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME)>=0 then begin
   aVulkanDevice.EnabledExtensionNames.Add(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
  end;
+{if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME)>=0 then begin
+  aVulkanDevice.EnabledExtensionNames.Add(VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME);
+ end;
+ if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME)>=0 then begin
+  aVulkanDevice.EnabledExtensionNames.Add(VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME);
+ end;
+ if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_KHR_8BIT_STORAGE_EXTENSION_NAME)>=0 then begin
+  aVulkanDevice.EnabledExtensionNames.Add(VK_KHR_8BIT_STORAGE_EXTENSION_NAME);
+ end;
+ if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_KHR_16BIT_STORAGE_EXTENSION_NAME)>=0 then begin
+  aVulkanDevice.EnabledExtensionNames.Add(VK_KHR_16BIT_STORAGE_EXTENSION_NAME);
+ end;//}
  if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_EXT_HOST_QUERY_RESET_EXTENSION_NAME)>=0 then begin
   aVulkanDevice.EnabledExtensionNames.Add(VK_EXT_HOST_QUERY_RESET_EXTENSION_NAME);
+ end;
+ if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME)>=0 then begin
+  aVulkanDevice.EnabledExtensionNames.Add(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+ end;
+ if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME)>=0 then begin
+  aVulkanDevice.EnabledExtensionNames.Add(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
+ end;
+ if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_KHR_RAY_QUERY_EXTENSION_NAME)>=0 then begin
+  aVulkanDevice.EnabledExtensionNames.Add(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+ end;
+ if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_KHR_RAY_TRACING_MAINTENANCE_1_EXTENSION_NAME)>=0 then begin
+  aVulkanDevice.EnabledExtensionNames.Add(VK_KHR_RAY_TRACING_MAINTENANCE_1_EXTENSION_NAME);
+ end;
+ if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME)>=0 then begin
+  aVulkanDevice.EnabledExtensionNames.Add(VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME);
+ end;
+ if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME)>=0 then begin
+  aVulkanDevice.EnabledExtensionNames.Add(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+ end;
+ if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME)>=0 then begin
+  aVulkanDevice.EnabledExtensionNames.Add(VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME);
+ end;
+ if aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_EXT_MESH_SHADER_EXTENSION_NAME)>=0 then begin
+  aVulkanDevice.EnabledExtensionNames.Add(VK_EXT_MESH_SHADER_EXTENSION_NAME);
  end;
  if ((aVulkanDevice.Instance.APIVersion and VK_API_VERSION_WITHOUT_PATCH_MASK)<VK_API_VERSION_1_2) and
     (aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_KHR_SPIRV_1_4_EXTENSION_NAME)>=0) then begin
   aVulkanDevice.EnabledExtensionNames.Add(VK_KHR_SPIRV_1_4_EXTENSION_NAME);
+ end;
+ if ((aVulkanDevice.Instance.APIVersion and VK_API_VERSION_WITHOUT_PATCH_MASK)<VK_API_VERSION_1_2) and
+    (aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME)>=0) then begin
+  aVulkanDevice.EnabledExtensionNames.Add(VK_KHR_DRAW_INDIRECT_COUNT_EXTENSION_NAME);
+ end;
+ if ((aVulkanDevice.Instance.APIVersion and VK_API_VERSION_WITHOUT_PATCH_MASK)<VK_API_VERSION_1_2) and
+    (aVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_EXT_SAMPLER_FILTER_MINMAX_EXTENSION_NAME)>=0) then begin
+  aVulkanDevice.EnabledExtensionNames.Add(VK_EXT_SAMPLER_FILTER_MINMAX_EXTENSION_NAME);
  end;
 end;
 
 class function TpvScene3DRenderer.CheckBufferDeviceAddress(const aVulkanDevice:TpvVulkanDevice):boolean;
 begin
  result:=assigned(aVulkanDevice) and
-         ((aVulkanDevice.PhysicalDevice.BufferDeviceAddressFeaturesKHR.bufferDeviceAddress<>VK_FALSE) and
-          (aVulkanDevice.PhysicalDevice.BufferDeviceAddressFeaturesKHR.bufferDeviceAddressCaptureReplay<>VK_FALSE));
+         ((aVulkanDevice.PhysicalDevice.BufferDeviceAddressFeaturesKHR.bufferDeviceAddress<>VK_FALSE){$ifndef Android}and
+          (aVulkanDevice.PhysicalDevice.BufferDeviceAddressFeaturesKHR.bufferDeviceAddressCaptureReplay<>VK_FALSE){$endif}{and
+          (aVulkanDevice.PhysicalDevice.Features.shaderInt64<>VK_FALSE)});
 end;
 
 procedure TpvScene3DRenderer.Prepare;
 var SampleCounts:TVkSampleCountFlags;
     FormatProperties:TVkFormatProperties;
 begin
+
+ fVelocityBufferNeeded:=false;
+
+ fGPUCulling:=true;
+
+ fGPUShadowCulling:=not fScene3D.RaytracingActive;
+
+ fEarlyDepthPrepassNeeded:=false;
+
+ if fScreenSpaceAmbientOcclusion then begin
+  fEarlyDepthPrepassNeeded:=true;
+ end;
 
  if fShadowMapSize=0 then begin
   fShadowMapSize:=512;
@@ -458,14 +629,21 @@ begin
  fShadowMapSize:=Max(16,fShadowMapSize);
 
  fBufferDeviceAddress:=fScene3D.UseBufferDeviceAddress;
+
+ fRaytracingActive:=fScene3D.RaytracingActive;
+
  if fBufferDeviceAddress then begin
-  fMeshFragTypeName:='matbufref';
+  if fRaytracingActive then begin
+   fMeshFragTypeName:='matbufref_raytracing';
+  end else begin
+   fMeshFragTypeName:='matbufref';
+  end;
  end else begin
   fMeshFragTypeName:='matssbo';
  end;
 
  FormatProperties:=fVulkanDevice.PhysicalDevice.GetFormatProperties(VK_FORMAT_B10G11R11_UFLOAT_PACK32);
- if //(fVulkanDevice.PhysicalDevice.Properties.deviceType=VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU) and
+ if (fVulkanDevice.PhysicalDevice.Properties.deviceType=VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU) and
     ((FormatProperties.linearTilingFeatures and (TVkFormatFeatureFlags(VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) or
                                                  TVkFormatFeatureFlags(VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) or
                                                  TVkFormatFeatureFlags(VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) or
@@ -493,6 +671,51 @@ begin
 
  fOptimizedNonAlphaFormat:=VK_FORMAT_R16G16B16A16_SFLOAT;
 
+{FormatProperties:=fVulkanDevice.PhysicalDevice.GetFormatProperties(VK_FORMAT_E5B9G9R9_UFLOAT_PACK32);
+ if //(fVulkanDevice.PhysicalDevice.Properties.deviceType=VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU) and
+    ((FormatProperties.linearTilingFeatures and (TVkFormatFeatureFlags(VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) or
+                                                 TVkFormatFeatureFlags(VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) or
+                                                 TVkFormatFeatureFlags(VK_FORMAT_FEATURE_TRANSFER_DST_BIT) or
+                                                 TVkFormatFeatureFlags(VK_FORMAT_FEATURE_TRANSFER_SRC_BIT)))=(TVkFormatFeatureFlags(VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) or
+                                                                                                              TVkFormatFeatureFlags(VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) or
+                                                                                                              TVkFormatFeatureFlags(VK_FORMAT_FEATURE_TRANSFER_DST_BIT) or
+                                                                                                              TVkFormatFeatureFlags(VK_FORMAT_FEATURE_TRANSFER_SRC_BIT))) and
+    ((FormatProperties.optimalTilingFeatures and (TVkFormatFeatureFlags(VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) or
+                                                  TVkFormatFeatureFlags(VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) or
+                                                  TVkFormatFeatureFlags(VK_FORMAT_FEATURE_TRANSFER_DST_BIT) or
+                                                  TVkFormatFeatureFlags(VK_FORMAT_FEATURE_TRANSFER_SRC_BIT)))=(TVkFormatFeatureFlags(VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) or
+                                                                                                               TVkFormatFeatureFlags(VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) or
+                                                                                                               TVkFormatFeatureFlags(VK_FORMAT_FEATURE_TRANSFER_DST_BIT) or
+                                                                                                               TVkFormatFeatureFlags(VK_FORMAT_FEATURE_TRANSFER_SRC_BIT))) then begin
+  fOptimizedCubeMapFormat:=VK_FORMAT_E5B9G9R9_UFLOAT_PACK32;
+ end else begin
+  fOptimizedCubeMapFormat:=VK_FORMAT_R16G16B16A16_SFLOAT;
+ end;}
+
+ FormatProperties:=fVulkanDevice.PhysicalDevice.GetFormatProperties(VK_FORMAT_B10G11R11_UFLOAT_PACK32);
+ if (fVulkanDevice.PhysicalDevice.Properties.deviceType=VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU) and
+    ((FormatProperties.linearTilingFeatures and (TVkFormatFeatureFlags(VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) or
+                                                 TVkFormatFeatureFlags(VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) or
+                                                 TVkFormatFeatureFlags(VK_FORMAT_FEATURE_TRANSFER_DST_BIT) or
+                                                 TVkFormatFeatureFlags(VK_FORMAT_FEATURE_TRANSFER_SRC_BIT)))=(TVkFormatFeatureFlags(VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) or
+                                                                                                              TVkFormatFeatureFlags(VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) or
+                                                                                                              TVkFormatFeatureFlags(VK_FORMAT_FEATURE_TRANSFER_DST_BIT) or
+                                                                                                              TVkFormatFeatureFlags(VK_FORMAT_FEATURE_TRANSFER_SRC_BIT))) and
+    ((FormatProperties.optimalTilingFeatures and (TVkFormatFeatureFlags(VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) or
+                                                  TVkFormatFeatureFlags(VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) or
+                                                  TVkFormatFeatureFlags(VK_FORMAT_FEATURE_TRANSFER_DST_BIT) or
+                                                  TVkFormatFeatureFlags(VK_FORMAT_FEATURE_TRANSFER_SRC_BIT)))=(TVkFormatFeatureFlags(VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) or
+                                                                                                               TVkFormatFeatureFlags(VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) or
+                                                                                                               TVkFormatFeatureFlags(VK_FORMAT_FEATURE_TRANSFER_DST_BIT) or
+                                                                                                               TVkFormatFeatureFlags(VK_FORMAT_FEATURE_TRANSFER_SRC_BIT))) then begin
+  fOptimizedCubeMapFormat:=VK_FORMAT_B10G11R11_UFLOAT_PACK32;
+ end else begin
+  fOptimizedCubeMapFormat:=VK_FORMAT_R16G16B16A16_SFLOAT;
+ end;
+
+//fOptimizedCubeMapFormat:=VK_FORMAT_R16G16B16A16_SFLOAT;
+//fOptimizedCubeMapFormat:=VK_FORMAT_E5B9G9R9_UFLOAT_PACK32;
+
  case TpvVulkanVendorID(fVulkanDevice.PhysicalDevice.Properties.vendorID) of
   TpvVulkanVendorID.ImgTec,
   TpvVulkanVendorID.ARM,
@@ -507,7 +730,7 @@ begin
   end;
  end;
 
- fUseDemote:=fVulkanDevice.PhysicalDevice.ShaderDemoteToHelperInvocation;
+ fUseDemote:=fVulkanDevice.ShaderDemoteToHelperInvocation;
 
  case TpvVulkanVendorID(fVulkanDevice.PhysicalDevice.Properties.vendorID) of
   TpvVulkanVendorID.Intel:begin
@@ -525,34 +748,34 @@ begin
   case TpvVulkanVendorID(fVulkanDevice.PhysicalDevice.Properties.vendorID) of
    TpvVulkanVendorID.AMD:begin
     if fVulkanDevice.PhysicalDevice.Properties.deviceType=VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU then begin
-     fAntialiasingMode:=TpvScene3DRendererAntialiasingMode.FXAA;
-    end else begin
      fAntialiasingMode:=TpvScene3DRendererAntialiasingMode.SMAA;
+    end else begin
+     fAntialiasingMode:=TpvScene3DRendererAntialiasingMode.MSAASMAA;
     end;
    end;
    TpvVulkanVendorID.NVIDIA:begin
     if fVulkanDevice.PhysicalDevice.Properties.deviceType=VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU then begin
-     fAntialiasingMode:=TpvScene3DRendererAntialiasingMode.FXAA;
-    end else begin
      fAntialiasingMode:=TpvScene3DRendererAntialiasingMode.SMAA;
+    end else begin
+     fAntialiasingMode:=TpvScene3DRendererAntialiasingMode.MSAASMAA;
     end;
    end;
    TpvVulkanVendorID.Intel:begin
     if fVulkanDevice.PhysicalDevice.Properties.deviceType=VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU then begin
-     fAntialiasingMode:=TpvScene3DRendererAntialiasingMode.FXAA;
-    end else begin
      fAntialiasingMode:=TpvScene3DRendererAntialiasingMode.SMAA;
+    end else begin
+     fAntialiasingMode:=TpvScene3DRendererAntialiasingMode.MSAASMAA;
     end;
    end;
    else begin
-    if fVulkanDevice.PhysicalDevice.Properties.deviceType=VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU then begin
-     fAntialiasingMode:=TpvScene3DRendererAntialiasingMode.DSAA;
-    end else begin
-     fAntialiasingMode:=TpvScene3DRendererAntialiasingMode.FXAA;
-    end;
+    fAntialiasingMode:=TpvScene3DRendererAntialiasingMode.None;
    end;
   end;
-  //fAntialiasingMode:=TpvScene3DRendererAntialiasingMode.TAA;
+//fAntialiasingMode:=TpvScene3DRendererAntialiasingMode.TAA;
+ end;
+
+ if fAntialiasingMode=TpvScene3DRendererAntialiasingMode.TAA then begin
+  fVelocityBufferNeeded:=true;
  end;
 
  SampleCounts:=fVulkanDevice.PhysicalDevice.Properties.limits.framebufferColorSampleCounts and
@@ -639,7 +862,8 @@ begin
   fCountCascadedShadowMapMSAASamples:=1;
  end;
 
- if fAntialiasingMode=TpvScene3DRendererAntialiasingMode.MSAA then begin
+ if (fAntialiasingMode=TpvScene3DRendererAntialiasingMode.MSAA) or
+    (fAntialiasingMode=TpvScene3DRendererAntialiasingMode.MSAASMAA) then begin
   if (fMaxMSAA>=64) and ((SampleCounts and TVkSampleCountFlags(VK_SAMPLE_COUNT_64_BIT))<>0) then begin
    fSurfaceSampleCountFlagBits:=TVkSampleCountFlagBits(VK_SAMPLE_COUNT_64_BIT);
    fCountSurfaceMSAASamples:=64;
@@ -674,7 +898,8 @@ begin
     if (fSurfaceSampleCountFlagBits=TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT)) and
        (fVulkanDevice.EnabledExtensionNames.IndexOf(VK_EXT_POST_DEPTH_COVERAGE_EXTENSION_NAME)>0) then begin
      // >= RDNA, since VK_EXT_post_depth_coverage exists just from RDNA on.
-     fTransparencyMode:=TpvScene3DRendererTransparencyMode.SPINLOCKOIT;
+//   fTransparencyMode:=TpvScene3DRendererTransparencyMode.SPINLOCKOIT;
+     fTransparencyMode:=TpvScene3DRendererTransparencyMode.MBOIT;
     end else begin
      if fVulkanDevice.PhysicalDevice.Properties.deviceType=VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU then begin
       fTransparencyMode:=TpvScene3DRendererTransparencyMode.WBOIT;
@@ -684,15 +909,15 @@ begin
     end;
    end;
    TpvVulkanVendorID.NVIDIA:begin
-    if fVulkanDevice.EnabledExtensionNames.IndexOf(VK_EXT_POST_DEPTH_COVERAGE_EXTENSION_NAME)>0 then begin
-     if (fVulkanDevice.EnabledExtensionNames.IndexOf(VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME)>0) and
-        fVulkanDevice.PhysicalDevice.FragmentShaderPixelInterlock and
-        (fCountSurfaceMSAASamples=1) then begin
+(*  if fVulkanDevice.EnabledExtensionNames.IndexOf(VK_EXT_POST_DEPTH_COVERAGE_EXTENSION_NAME)>0 then begin
+     if fVulkanDevice.FragmentShaderPixelInterlock and (fCountSurfaceMSAASamples=1) then begin
       fTransparencyMode:=TpvScene3DRendererTransparencyMode.INTERLOCKOIT;
+{    end else if fVulkanDevice.FragmentShaderSampleInterlock and (fCountSurfaceMSAASamples<>1) then begin
+      fTransparencyMode:=TpvScene3DRendererTransparencyMode.INTERLOCKOIT;}
      end else begin
       fTransparencyMode:=TpvScene3DRendererTransparencyMode.SPINLOCKOIT;
      end;
-    end else begin
+    end else*)begin
      if fVulkanDevice.PhysicalDevice.Properties.deviceType=VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU then begin
       fTransparencyMode:=TpvScene3DRendererTransparencyMode.WBOIT;
      end else begin
@@ -701,11 +926,11 @@ begin
     end;
    end;
    TpvVulkanVendorID.Intel:begin
-    if (fSurfaceSampleCountFlagBits=TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT)) and
+{   if (fSurfaceSampleCountFlagBits=TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT)) and
        (fVulkanDevice.EnabledExtensionNames.IndexOf(VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME)>0) and
        fVulkanDevice.PhysicalDevice.FragmentShaderPixelInterlock then begin
      fTransparencyMode:=TpvScene3DRendererTransparencyMode.INTERLOCKOIT;
-    end else begin
+    end else}begin
      if fVulkanDevice.PhysicalDevice.Properties.deviceType=VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU then begin
       fTransparencyMode:=TpvScene3DRendererTransparencyMode.WBOIT;
      end else begin
@@ -722,6 +947,8 @@ begin
    end;
   end;
  end;
+
+//fTransparencyMode:=TpvScene3DRendererTransparencyMode.LOOPOIT;
 
  if fDepthOfFieldMode=TpvScene3DRendererDepthOfFieldMode.Auto then begin
   case TpvVulkanVendorID(fVulkanDevice.PhysicalDevice.Properties.vendorID) of
@@ -781,6 +1008,54 @@ begin
   end;
  end;
 
+ if fGlobalIlluminationMode=TpvScene3DRendererGlobalIlluminationMode.Auto then begin
+  case TpvVulkanVendorID(fVulkanDevice.PhysicalDevice.Properties.vendorID) of
+   TpvVulkanVendorID.AMD:begin
+    if fVulkanDevice.PhysicalDevice.Properties.deviceType=VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU then begin
+     fGlobalIlluminationMode:=TpvScene3DRendererGlobalIlluminationMode.StaticEnvironmentMap;
+    end else begin
+     fGlobalIlluminationMode:=TpvScene3DRendererGlobalIlluminationMode.CascadedRadianceHints;
+    end;
+   end;
+   TpvVulkanVendorID.NVIDIA:begin
+    if fVulkanDevice.PhysicalDevice.Properties.deviceType=VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU then begin
+     fGlobalIlluminationMode:=TpvScene3DRendererGlobalIlluminationMode.StaticEnvironmentMap;
+    end else begin
+     fGlobalIlluminationMode:=TpvScene3DRendererGlobalIlluminationMode.CascadedRadianceHints;
+    end;
+   end;
+   TpvVulkanVendorID.Intel:begin
+    if fVulkanDevice.PhysicalDevice.Properties.deviceType=VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU then begin
+     fGlobalIlluminationMode:=TpvScene3DRendererGlobalIlluminationMode.StaticEnvironmentMap;
+    end else begin
+     fGlobalIlluminationMode:=TpvScene3DRendererGlobalIlluminationMode.CascadedRadianceHints;
+    end;
+   end;
+   else begin
+    fGlobalIlluminationMode:=TpvScene3DRendererGlobalIlluminationMode.StaticEnvironmentMap;
+   end;
+  end;
+//fGlobalIlluminationMode:=TpvScene3DRendererGlobalIlluminationMode.CascadedVoxelConeTracing;
+  fGlobalIlluminationMode:=TpvScene3DRendererGlobalIlluminationMode.StaticEnvironmentMap;
+ end;
+
+ case fGlobalIlluminationMode of
+  TpvScene3DRendererGlobalIlluminationMode.CascadedRadianceHints:begin
+   fMeshFragGlobalIlluminationTypeName:='globalillumination_cascaded_radiance_hints_';
+   fEarlyDepthPrepassNeeded:=true;
+  end;
+  TpvScene3DRendererGlobalIlluminationMode.CascadedVoxelConeTracing:begin
+   fMeshFragGlobalIlluminationTypeName:='globalillumination_cascaded_voxel_cone_tracing_';
+  end;
+  else begin
+   fMeshFragGlobalIlluminationTypeName:='';
+  end;
+ end;
+
+ if fToneMappingMode=TpvScene3DRendererToneMappingMode.Auto then begin
+  fToneMappingMode:=TpvScene3DRendererToneMappingMode.AGXRec2020Punchy;
+ end;
+
 end;
 
 procedure TpvScene3DRenderer.AcquirePersistentResources;
@@ -789,23 +1064,10 @@ var Stream:TStream;
     UniversalCommandPool:TpvVulkanCommandPool;
     UniversalCommandBuffer:TpvVulkanCommandBuffer;
     UniversalFence:TpvVulkanFence;
+    EmptyAmbientOcclusionTextureData:TpvUInt8DynamicArray;
+    SkyBoxTexture,EnvironmentTexture:TpvVulkanTexture;
+    IntensityFactor:TpvFloat;
 begin
-
- fSkyCubeMap:=TpvScene3DRendererSkyCubeMap.Create(fVulkanDevice,fVulkanPipelineCache,fScene3D.PrimaryLightDirection,fOptimizedNonAlphaFormat);
-
- fGGXBRDF:=TpvScene3DRendererGGXBRDF.Create(fVulkanDevice,fVulkanPipelineCache);
-
- fCharlieBRDF:=TpvScene3DRendererCharlieBRDF.Create(fVulkanDevice,fVulkanPipelineCache);
-
- fSheenEBRDF:=TpvScene3DRendererSheenEBRDF.Create(fVulkanDevice,fVulkanPipelineCache);
-
- fLensColor:=TpvScene3DRendererLensColor.Create(fVulkanDevice,fVulkanPipelineCache);
-
- fLensDirt:=TpvScene3DRendererLensDirt.Create(fVulkanDevice,fVulkanPipelineCache);
-
- fLensStar:=TpvScene3DRendererLensStar.Create(fVulkanDevice,fVulkanPipelineCache);
-
- fImageBasedLightingEnvMapCubeMaps:=TpvScene3DRendererImageBasedLightingEnvMapCubeMaps.Create(fVulkanDevice,fVulkanPipelineCache,fSkyCubeMap.DescriptorImageInfo,fOptimizedNonAlphaFormat);
 
  case fShadowMode of
 
@@ -828,6 +1090,8 @@ begin
                                               VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE,
                                               false);
 
+   fVulkanDevice.DebugUtils.SetObjectName(fShadowMapSampler.Handle,VK_OBJECT_TYPE_SAMPLER,'TpvScene3DRenderer.fShadowMapSampler');
+
   end;
 
   TpvScene3DRendererShadowMode.PCF:begin
@@ -849,6 +1113,8 @@ begin
                                               VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE,
                                               false);
 
+   fVulkanDevice.DebugUtils.SetObjectName(fShadowMapSampler.Handle,VK_OBJECT_TYPE_SAMPLER,'TpvScene3DRenderer.fShadowMapSampler');
+
   end;
 
   else begin
@@ -869,9 +1135,30 @@ begin
                                               0.0,
                                               VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE,
                                               false);
+
+   fVulkanDevice.DebugUtils.SetObjectName(fShadowMapSampler.Handle,VK_OBJECT_TYPE_SAMPLER,'TpvScene3DRenderer.fShadowMapSampler');
+
   end;
 
  end;
+
+ fCheckShadowMapSampler:=TpvVulkanSampler.Create(fVulkanDevice,
+                                                 TVkFilter.VK_FILTER_LINEAR,
+                                                 TVkFilter.VK_FILTER_LINEAR,
+                                                 TVkSamplerMipmapMode.VK_SAMPLER_MIPMAP_MODE_NEAREST,
+                                                 VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                                                 VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                                                 VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                                                 0.0,
+                                                 false,
+                                                 0.0,
+                                                 true,
+                                                 VK_COMPARE_OP_GREATER,
+                                                 0.0,
+                                                 0.0,
+                                                 VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE,
+                                                 false);
+ fVulkanDevice.DebugUtils.SetObjectName(fCheckShadowMapSampler.Handle,VK_OBJECT_TYPE_SAMPLER,'TpvScene3DRenderer.fCheckShadowMapSampler');
 
  fGeneralSampler:=TpvVulkanSampler.Create(fVulkanDevice,
                                           TVkFilter.VK_FILTER_LINEAR,
@@ -881,22 +1168,151 @@ begin
                                           VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
                                           VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
                                           0.0,
-                                          false,
-                                          0.0,
+                                          fVulkanDevice.PhysicalDevice.Properties.limits.maxSamplerAnisotropy>1.0,
+                                          Max(1.0,fVulkanDevice.PhysicalDevice.Properties.limits.maxSamplerAnisotropy),
                                           false,
                                           VK_COMPARE_OP_ALWAYS,
                                           0.0,
-                                          0.0,
+                                          65536.0,
                                           VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK,
                                           false);
+ fVulkanDevice.DebugUtils.SetObjectName(fGeneralSampler.Handle,VK_OBJECT_TYPE_SAMPLER,'TpvScene3DRenderer.fGeneralSampler');
 
- fSSAOSampler:=TpvVulkanSampler.Create(fVulkanDevice,
+ fOrderIndependentTransparencySampler:=TpvVulkanSampler.Create(VulkanDevice,
+                                                               TVkFilter(VK_FILTER_LINEAR),
+                                                               TVkFilter(VK_FILTER_LINEAR),
+                                                               TVkSamplerMipmapMode(VK_SAMPLER_MIPMAP_MODE_LINEAR),
+                                                               TVkSamplerAddressMode(VK_SAMPLER_ADDRESS_MODE_REPEAT),
+                                                               TVkSamplerAddressMode(VK_SAMPLER_ADDRESS_MODE_REPEAT),
+                                                               TVkSamplerAddressMode(VK_SAMPLER_ADDRESS_MODE_REPEAT),
+                                                               0.0,
+                                                               false,
+                                                               1.0,
+                                                               false,
+                                                               TVkCompareOp(VK_COMPARE_OP_NEVER),
+                                                               0.0,
+                                                               1,
+                                                               TVkBorderColor(VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK),
+                                                               false);
+ fVulkanDevice.DebugUtils.SetObjectName(fOrderIndependentTransparencySampler.Handle,VK_OBJECT_TYPE_SAMPLER,'TpvScene3DRenderer.fOrderIndependentTransparencySampler');
+
+ fMipMapMinFilterSampler:=TpvVulkanSampler.Create(fVulkanDevice,
+                                                  TVkFilter.VK_FILTER_LINEAR,
+                                                  TVkFilter.VK_FILTER_LINEAR,
+                                                  TVkSamplerMipmapMode.VK_SAMPLER_MIPMAP_MODE_LINEAR,
+                                                  VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                                                  VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                                                  VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                                                  0.0,
+                                                  false,
+                                                  1.0,
+                                                  false,
+                                                  VK_COMPARE_OP_ALWAYS,
+                                                  0.0,
+                                                  65536.0,
+                                                  VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK,
+                                                  false,
+                                                  TVkSamplerReductionMode.VK_SAMPLER_REDUCTION_MODE_MIN_EXT);
+ fVulkanDevice.DebugUtils.SetObjectName(fMipMapMinFilterSampler.Handle,VK_OBJECT_TYPE_SAMPLER,'TpvScene3DRenderer.fMipMapMinFilterSampler');
+
+ fMipMapMaxFilterSampler:=TpvVulkanSampler.Create(fVulkanDevice,
+                                                  TVkFilter.VK_FILTER_LINEAR,
+                                                  TVkFilter.VK_FILTER_LINEAR,
+                                                  TVkSamplerMipmapMode.VK_SAMPLER_MIPMAP_MODE_LINEAR,
+                                                  VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                                                  VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                                                  VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                                                  0.0,
+                                                  false,
+                                                  1.0,
+                                                  false,
+                                                  VK_COMPARE_OP_ALWAYS,
+                                                  0.0,
+                                                  65536.0,
+                                                  VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK,
+                                                  false,
+                                                  TVkSamplerReductionMode.VK_SAMPLER_REDUCTION_MODE_MAX_EXT);
+ fVulkanDevice.DebugUtils.SetObjectName(fMipMapMaxFilterSampler.Handle,VK_OBJECT_TYPE_SAMPLER,'TpvScene3DRenderer.fMipMapMaxFilterSampler');
+
+ fRepeatedSampler:=TpvVulkanSampler.Create(fVulkanDevice,
+                                           TVkFilter.VK_FILTER_LINEAR,
+                                           TVkFilter.VK_FILTER_LINEAR,
+                                           TVkSamplerMipmapMode.VK_SAMPLER_MIPMAP_MODE_LINEAR,
+                                           VK_SAMPLER_ADDRESS_MODE_REPEAT,
+                                           VK_SAMPLER_ADDRESS_MODE_REPEAT,
+                                           VK_SAMPLER_ADDRESS_MODE_REPEAT,
+                                           0.0,
+                                           false,
+                                           1.0,
+                                           false,
+                                           VK_COMPARE_OP_ALWAYS,
+                                           0.0,
+                                           1000.0,
+                                           VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK,
+                                           false);
+  fVulkanDevice.DebugUtils.SetObjectName(fRepeatedSampler.Handle,VK_OBJECT_TYPE_SAMPLER,'TpvScene3DRenderer.fRepeatedSampler');
+
+  fMirrorRepeatedSampler:=TpvVulkanSampler.Create(fVulkanDevice,
+                                                  TVkFilter.VK_FILTER_LINEAR,
+                                                  TVkFilter.VK_FILTER_LINEAR,
+                                                  TVkSamplerMipmapMode.VK_SAMPLER_MIPMAP_MODE_LINEAR,
+                                                  VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT,
+                                                  VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT,
+                                                  VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT,
+                                                  0.0,
+                                                  false,
+                                                  1.0,
+                                                  false,
+                                                  VK_COMPARE_OP_ALWAYS,
+                                                  0.0,
+                                                  1000.0,
+                                                  VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK,
+                                                  false);
+  fVulkanDevice.DebugUtils.SetObjectName(fMirrorRepeatedSampler.Handle,VK_OBJECT_TYPE_SAMPLER,'TpvScene3DRenderer.fMirrorRepeatedSampler');
+
+  fClampedSampler:=TpvVulkanSampler.Create(fVulkanDevice,
+                                          TVkFilter.VK_FILTER_LINEAR,
+                                          TVkFilter.VK_FILTER_LINEAR,
+                                          TVkSamplerMipmapMode.VK_SAMPLER_MIPMAP_MODE_LINEAR,
+                                          VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                                          VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                                          VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                                          0.0,
+                                          fVulkanDevice.PhysicalDevice.Properties.limits.maxSamplerAnisotropy>1.0,
+                                          Max(1.0,fVulkanDevice.PhysicalDevice.Properties.limits.maxSamplerAnisotropy),
+                                          false,
+                                          VK_COMPARE_OP_ALWAYS,
+                                          0.0,
+                                          65536.0,
+                                          VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK,
+                                          false);
+ fVulkanDevice.DebugUtils.SetObjectName(fClampedSampler.Handle,VK_OBJECT_TYPE_SAMPLER,'TpvScene3DRenderer.fClampedSampler');
+
+ fClampedNearestSampler:=TpvVulkanSampler.Create(fVulkanDevice,
+                                                 TVkFilter.VK_FILTER_NEAREST,
+                                                 TVkFilter.VK_FILTER_NEAREST,
+                                                 TVkSamplerMipmapMode.VK_SAMPLER_MIPMAP_MODE_NEAREST,
+                                                 VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                                                 VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                                                 VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                                                 0.0,
+                                                 false,
+                                                 1.0,
+                                                 false,
+                                                 VK_COMPARE_OP_ALWAYS,
+                                                 0.0,
+                                                 65536.0,
+                                                 VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK,
+                                                 false);
+ fVulkanDevice.DebugUtils.SetObjectName(fClampedNearestSampler.Handle,VK_OBJECT_TYPE_SAMPLER,'TpvScene3DRenderer.fClampedNearestSampler');
+
+ fAmbientOcclusionSampler:=TpvVulkanSampler.Create(fVulkanDevice,
                                        TVkFilter.VK_FILTER_LINEAR,
                                        TVkFilter.VK_FILTER_LINEAR,
                                        TVkSamplerMipmapMode.VK_SAMPLER_MIPMAP_MODE_LINEAR,
-                                       VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
-                                       VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
-                                       VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER,
+                                       VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                                       VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+                                       VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
                                        0.0,
                                        false,
                                        0.0,
@@ -906,6 +1322,118 @@ begin
                                        0.0,
                                        VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE,
                                        false);
+ fVulkanDevice.DebugUtils.SetObjectName(fAmbientOcclusionSampler.Handle,VK_OBJECT_TYPE_SAMPLER,'TpvScene3DRenderer.fAmbientOcclusionSampler');
+
+ if assigned(fScene3D) and assigned(fScene3D.EnvironmentTextureImage) then begin
+  fScene3D.EnvironmentTextureImage.Upload;
+  EnvironmentTexture:=fScene3D.EnvironmentTextureImage.Texture;
+ end else begin
+  EnvironmentTexture:=nil;
+ end;
+
+ fEnvironmentCubeMap:=TpvScene3DRendererEnvironmentCubeMap.Create(fVulkanDevice,fVulkanPipelineCache,fGeneralSampler,fScene3D.PrimaryLightDirection,fScene3D.EnvironmentIntensityFactor,fOptimizedCubeMapFormat,EnvironmentTexture,fScene3D.EnvironmentMode);
+ fVulkanDevice.DebugUtils.SetObjectName(fEnvironmentCubeMap.VulkanImage.Handle,VK_OBJECT_TYPE_IMAGE,'TpvScene3DRenderer.fEnvironmentCubeMap.Image');
+ fVulkanDevice.DebugUtils.SetObjectName(fEnvironmentCubeMap.VulkanImageView.Handle,VK_OBJECT_TYPE_IMAGE_VIEW,'TpvScene3DRenderer.fEnvironmentCubeMap.ImageView');
+
+ if (fScene3D.SkyBoxTextureImage=fScene3D.EnvironmentTextureImage) and
+    (fScene3D.SkyBoxMode=fScene3D.EnvironmentMode) and
+    SameValue(fScene3D.SkyBoxIntensityFactor,fScene3D.EnvironmentIntensityFactor) then begin
+
+  fSkyBoxCubeMap:=fEnvironmentCubeMap;
+
+ end else begin
+
+  if assigned(fScene3D) and assigned(fScene3D.SkyBoxTextureImage) then begin
+   fScene3D.SkyBoxTextureImage.Upload;
+   SkyBoxTexture:=fScene3D.SkyBoxTextureImage.Texture;
+   IntensityFactor:=fScene3D.SkyBoxIntensityFactor;
+  end else if assigned(fScene3D) and assigned(fScene3D.EnvironmentTextureImage) then begin
+   SkyBoxTexture:=fScene3D.EnvironmentTextureImage.Texture;
+   IntensityFactor:=fScene3D.EnvironmentIntensityFactor;
+  end else begin
+   SkyBoxTexture:=nil;
+   IntensityFactor:=fScene3D.SkyBoxIntensityFactor;
+  end;
+
+  fSkyBoxCubeMap:=TpvScene3DRendererEnvironmentCubeMap.Create(fVulkanDevice,fVulkanPipelineCache,fGeneralSampler,fScene3D.PrimaryLightDirection,IntensityFactor,fOptimizedCubeMapFormat,SkyBoxTexture,fScene3D.SkyBoxMode);
+  fVulkanDevice.DebugUtils.SetObjectName(fSkyBoxCubeMap.VulkanImage.Handle,VK_OBJECT_TYPE_IMAGE,'TpvScene3DRenderer.fSkyBoxCubeMap.Image');
+  fVulkanDevice.DebugUtils.SetObjectName(fSkyBoxCubeMap.VulkanImageView.Handle,VK_OBJECT_TYPE_IMAGE_VIEW,'TpvScene3DRenderer.fSkyBoxCubeMap.ImageView');
+
+  if assigned(fScene3D) and assigned(fScene3D.SkyBoxTextureImage) then begin
+   fScene3D.SkyBoxTextureImage.Unload;
+  end;
+
+ end;
+
+ if assigned(fScene3D) and assigned(fScene3D.EnvironmentTextureImage) then begin
+  fScene3D.EnvironmentTextureImage.Unload;
+ end;
+
+ fEnvironmentSphericalHarmonicsBuffer:=TpvVulkanBuffer.Create(fVulkanDevice,
+                                                              SizeOf(TSphericalHarmonicsBufferData),
+                                                              TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT),
+                                                              TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                              [],
+                                                              TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+                                                              0,
+                                                              0,
+                                                              TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                                                              0,
+                                                              0,
+                                                              0,
+                                                              0,
+                                                              [],
+                                                              0,
+                                                              pvAllocationGroupIDScene3DStatic
+                                                             );
+ fVulkanDevice.DebugUtils.SetObjectName(fEnvironmentSphericalHarmonicsBuffer.Handle,VK_OBJECT_TYPE_BUFFER,'TpvScene3DRenderer.fSkySphericalHarmonicsBuffer');
+
+ fEnvironmentSphericalHarmonicsMetaDataBuffer:=TpvVulkanBuffer.Create(fVulkanDevice,
+                                                                      SizeOf(TSphericalHarmonicsMetaDataBufferData),
+                                                                      TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_SRC_BIT),
+                                                                      TVkSharingMode(VK_SHARING_MODE_EXCLUSIVE),
+                                                                      [],
+                                                                      TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+                                                                      0,
+                                                                      0,
+                                                                      TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+                                                                      0,
+                                                                      0,
+                                                                      0,
+                                                                      0,
+                                                                      [],
+                                                                      0,
+                                                                      pvAllocationGroupIDScene3DStatic
+                                                                     );
+ fVulkanDevice.DebugUtils.SetObjectName(fEnvironmentSphericalHarmonicsMetaDataBuffer.Handle,VK_OBJECT_TYPE_BUFFER,'TpvScene3DRenderer.fSkySphericalHarmonicsMetaDataBuffer');
+
+ fEnvironmentSphericalHarmonics:=TpvScene3DRendererImageBasedLightingSphericalHarmonics.Create(fVulkanDevice,fVulkanPipelineCache,fEnvironmentCubeMap.DescriptorImageInfo,fEnvironmentSphericalHarmonicsBuffer,fEnvironmentSphericalHarmonicsMetaDataBuffer,fEnvironmentCubeMap.Width,fEnvironmentCubeMap.Height,true);
+
+ fGGXBRDF:=TpvScene3DRendererGGXBRDF.Create(fVulkanDevice,fVulkanPipelineCache,fGeneralSampler);
+ fVulkanDevice.DebugUtils.SetObjectName(fGGXBRDF.VulkanImage.Handle,VK_OBJECT_TYPE_IMAGE,'TpvScene3DRenderer.fGGXBRDF.Image');
+ fVulkanDevice.DebugUtils.SetObjectName(fGGXBRDF.VulkanImageView.Handle,VK_OBJECT_TYPE_IMAGE_VIEW,'TpvScene3DRenderer.fGGXBRDF.ImageView');
+
+ fCharlieBRDF:=TpvScene3DRendererCharlieBRDF.Create(fVulkanDevice,fVulkanPipelineCache,fGeneralSampler);
+ fVulkanDevice.DebugUtils.SetObjectName(fCharlieBRDF.VulkanImage.Handle,VK_OBJECT_TYPE_IMAGE,'TpvScene3DRenderer.fCharlieBRDF.Image');
+ fVulkanDevice.DebugUtils.SetObjectName(fCharlieBRDF.VulkanImageView.Handle,VK_OBJECT_TYPE_IMAGE_VIEW,'TpvScene3DRenderer.fCharlieBRDF.ImageView');
+
+ fSheenEBRDF:=TpvScene3DRendererSheenEBRDF.Create(fVulkanDevice,fVulkanPipelineCache,fGeneralSampler);
+ fVulkanDevice.DebugUtils.SetObjectName(fSheenEBRDF.VulkanImage.Handle,VK_OBJECT_TYPE_IMAGE,'TpvScene3DRenderer.fSheenEBRDF.Image');
+ fVulkanDevice.DebugUtils.SetObjectName(fSheenEBRDF.VulkanImageView.Handle,VK_OBJECT_TYPE_IMAGE_VIEW,'TpvScene3DRenderer.fSheenEBRDF.ImageView');
+
+ fLensColor:=TpvScene3DRendererLensColor.Create(fVulkanDevice,fVulkanPipelineCache,fGeneralSampler);
+ fVulkanDevice.DebugUtils.SetObjectName(fLensColor.VulkanImage.Handle,VK_OBJECT_TYPE_IMAGE,'TpvScene3DRenderer.fLensColor.Image');
+ fVulkanDevice.DebugUtils.SetObjectName(fLensColor.VulkanImageView.Handle,VK_OBJECT_TYPE_IMAGE_VIEW,'TpvScene3DRenderer.fLensColor.ImageView');
+
+ fLensDirt:=TpvScene3DRendererLensDirt.Create(fVulkanDevice,fVulkanPipelineCache,fGeneralSampler);
+ fVulkanDevice.DebugUtils.SetObjectName(fLensDirt.VulkanImage.Handle,VK_OBJECT_TYPE_IMAGE,'TpvScene3DRenderer.fLensDirt.Image');
+ fVulkanDevice.DebugUtils.SetObjectName(fLensDirt.VulkanImageView.Handle,VK_OBJECT_TYPE_IMAGE_VIEW,'TpvScene3DRenderer.fLensDirt.ImageView');
+
+ fLensStar:=TpvScene3DRendererLensStar.Create(fVulkanDevice,fVulkanPipelineCache,fGeneralSampler);
+ fVulkanDevice.DebugUtils.SetObjectName(fLensStar.VulkanImage.Handle,VK_OBJECT_TYPE_IMAGE,'TpvScene3DRenderer.fLensStar.Image');
+ fVulkanDevice.DebugUtils.SetObjectName(fLensStar.VulkanImageView.Handle,VK_OBJECT_TYPE_IMAGE_VIEW,'TpvScene3DRenderer.fLensStar.ImageView');
+
+ fImageBasedLightingEnvMapCubeMaps:=TpvScene3DRendererImageBasedLightingEnvMapCubeMaps.Create(fVulkanDevice,fVulkanPipelineCache,fEnvironmentCubeMap.DescriptorImageInfo,fOptimizedCubeMapFormat);
 
  UniversalQueue:=fVulkanDevice.UniversalQueue;
  try
@@ -924,7 +1452,8 @@ begin
 
      case fAntialiasingMode of
 
-      TpvScene3DRendererAntialiasingMode.SMAA:begin
+      TpvScene3DRendererAntialiasingMode.SMAA,
+      TpvScene3DRendererAntialiasingMode.MSAASMAA:begin
 
        fSMAAAreaTexture:=TpvVulkanTexture.CreateFromMemory(fVulkanDevice,
                                                            UniversalQueue,
@@ -952,6 +1481,8 @@ begin
                                                            0,
                                                            true,
                                                            false);
+       fVulkanDevice.DebugUtils.SetObjectName(fSMAAAreaTexture.Image.Handle,VK_OBJECT_TYPE_IMAGE,'TpvScene3DRenderer.fSMAAAreaTexture.Image');
+       fVulkanDevice.DebugUtils.SetObjectName(fSMAAAreaTexture.ImageView.Handle,VK_OBJECT_TYPE_IMAGE_VIEW,'TpvScene3DRenderer.fSMAAAreaTexture.ImageView');
 
        fSMAASearchTexture:=TpvVulkanTexture.CreateFromMemory(fVulkanDevice,
                                                              UniversalQueue,
@@ -979,11 +1510,48 @@ begin
                                                              0,
                                                              true,
                                                              false);
-
+       fVulkanDevice.DebugUtils.SetObjectName(fSMAASearchTexture.Image.Handle,VK_OBJECT_TYPE_IMAGE,'TpvScene3DRenderer.fSMAASearchTexture.Image');
+       fVulkanDevice.DebugUtils.SetObjectName(fSMAASearchTexture.ImageView.Handle,VK_OBJECT_TYPE_IMAGE_VIEW,'TpvScene3DRenderer.fSMAASearchTexture.ImageView');
 
       end;
       else begin
       end;
+     end;
+
+     EmptyAmbientOcclusionTextureData:=nil;
+     try
+      SetLength(EmptyAmbientOcclusionTextureData,2048*2048*6);
+      FillChar(EmptyAmbientOcclusionTextureData[0],length(EmptyAmbientOcclusionTextureData)*SizeOf(TpvUInt8),#$ff);
+      fEmptyAmbientOcclusionTexture:=TpvVulkanTexture.CreateFromMemory(fVulkanDevice,
+                                                           UniversalQueue,
+                                                           UniversalCommandBuffer,
+                                                           UniversalFence,
+                                                           UniversalQueue,
+                                                           UniversalCommandBuffer,
+                                                           UniversalFence,
+                                                           VK_FORMAT_R8_UNORM,
+                                                           VK_SAMPLE_COUNT_1_BIT,
+                                                           2048,
+                                                           2048,
+                                                           0,
+                                                           6,
+                                                           1,
+                                                           0,
+                                                           [TpvVulkanTextureUsageFlag.General,
+                                                            TpvVulkanTextureUsageFlag.TransferDst,
+                                                            TpvVulkanTextureUsageFlag.TransferSrc,
+                                                            TpvVulkanTextureUsageFlag.Sampled],
+                                                           @EmptyAmbientOcclusionTextureData[0],
+                                                           length(EmptyAmbientOcclusionTextureData)*SizeOf(TpvUInt8),
+                                                           false,
+                                                           false,
+                                                           0,
+                                                           true,
+                                                           false);
+      fVulkanDevice.DebugUtils.SetObjectName(fEmptyAmbientOcclusionTexture.Image.Handle,VK_OBJECT_TYPE_IMAGE,'TpvScene3DRenderer.fEmptyAmbientOcclusionTexture.Image');
+      fVulkanDevice.DebugUtils.SetObjectName(fEmptyAmbientOcclusionTexture.ImageView.Handle,VK_OBJECT_TYPE_IMAGE_VIEW,'TpvScene3DRenderer.fEmptyAmbientOcclusionTexture.ImageView');
+     finally
+      EmptyAmbientOcclusionTextureData:=nil;
      end;
 
 {    case fLensMode of
@@ -1089,12 +1657,30 @@ begin
 
  FreeAndNil(fShadowMapSampler);
 
- FreeAndNil(fSSAOSampler);
+ FreeAndNil(fCheckShadowMapSampler);
+
+ FreeAndNil(fAmbientOcclusionSampler);
+
+ FreeAndNil(fClampedNearestSampler);
+
+ FreeAndNil(fClampedSampler);
+
+ FreeAndNil(fMirrorRepeatedSampler);
+
+ FreeAndNil(fRepeatedSampler);
+
+ FreeAndNil(fMipMapMaxFilterSampler);
+
+ FreeAndNil(fMipMapMinFilterSampler);
+
+ FreeAndNil(fOrderIndependentTransparencySampler);
 
  FreeAndNil(fGeneralSampler);
 
  FreeAndNil(fSMAAAreaTexture);
  FreeAndNil(fSMAASearchTexture);
+
+ FreeAndNil(fEmptyAmbientOcclusionTexture);
 
 {FreeAndNil(fLensColorTexture);
  FreeAndNil(fLensDirtTexture);
@@ -1114,25 +1700,20 @@ begin
 
  FreeAndNil(fImageBasedLightingEnvMapCubeMaps);
 
- FreeAndNil(fSkyCubeMap);
+ FreeAndNil(fEnvironmentSphericalHarmonics);
 
-end;
+ FreeAndNil(fEnvironmentSphericalHarmonicsBuffer);
 
-procedure TpvScene3DRenderer.Flush(const aInFlightFrameIndex:TpvInt32;var aWaitSemaphore:TpvVulkanSemaphore;const aWaitFence:TpvVulkanFence=nil);
-begin
- if fScene3D.NeedFlush(aInFlightFrameIndex) then begin
-  fVulkanFlushCommandBuffers[aInFlightFrameIndex].Reset(TVkCommandBufferResetFlags(VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT));
-  fVulkanFlushCommandBuffers[aInFlightFrameIndex].BeginRecording;
-  fScene3D.Flush(aInFlightFrameIndex,fVulkanFlushCommandBuffers[aInFlightFrameIndex]);
-  fVulkanFlushCommandBuffers[aInFlightFrameIndex].EndRecording;
-  fVulkanFlushCommandBuffers[aInFlightFrameIndex].Execute(fVulkanFlushQueue,
-                                                          TVkPipelineStageFlags(VK_PIPELINE_STAGE_TRANSFER_BIT) or pvApplication.VulkanDevice.PhysicalDevice.PipelineStageAllShaderBits,
-                                                          aWaitSemaphore,
-                                                          fVulkanFlushSemaphores[aInFlightFrameIndex],
-                                                          aWaitFence,
-                                                          false);
-  aWaitSemaphore:=fVulkanFlushSemaphores[aInFlightFrameIndex];
+ FreeAndNil(fEnvironmentSphericalHarmonicsMetaDataBuffer);
+
+ if assigned(fSkyBoxCubeMap) and (fSkyBoxCubeMap<>fEnvironmentCubeMap) then begin
+  FreeAndNil(fSkyBoxCubeMap);
+ end else begin
+  fSkyBoxCubeMap:=nil;
  end;
+
+ FreeAndNil(fEnvironmentCubeMap);
+
 end;
 
 end.

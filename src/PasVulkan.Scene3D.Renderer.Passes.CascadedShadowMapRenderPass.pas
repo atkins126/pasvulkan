@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -72,6 +72,7 @@ uses SysUtils,
      PasVulkan.Application,
      PasVulkan.FrameGraph,
      PasVulkan.Scene3D,
+     PasVulkan.Scene3D.Planet,
      PasVulkan.Scene3D.Renderer.Globals,
      PasVulkan.Scene3D.Renderer,
      PasVulkan.Scene3D.Renderer.Instance,
@@ -83,6 +84,7 @@ type { TpvScene3DRendererPassesCascadedShadowMapRenderPass }
        fOnSetRenderPassResourcesDone:boolean;
        procedure OnSetRenderPassResources(const aCommandBuffer:TpvVulkanCommandBuffer;
                                           const aPipelineLayout:TpvVulkanPipelineLayout;
+                                          const aRendererInstance:TObject;
                                           const aRenderPassIndex:TpvSizeInt;
                                           const aPreviousInFlightFrameIndex:TpvSizeInt;
                                           const aInFlightFrameIndex:TpvSizeInt);
@@ -93,11 +95,15 @@ type { TpvScene3DRendererPassesCascadedShadowMapRenderPass }
        fMeshVertexShaderModule:TpvVulkanShaderModule;
        fMeshFragmentShaderModule:TpvVulkanShaderModule;
        fMeshMaskedFragmentShaderModule:TpvVulkanShaderModule;
+       fPassVulkanDescriptorSetLayout:TpvVulkanDescriptorSetLayout;
+       fPassVulkanDescriptorPool:TpvVulkanDescriptorPool;
+       fPassVulkanDescriptorSets:array[0..MaxInFlightFrames-1] of TpvVulkanDescriptorSet;
        fVulkanPipelineShaderStageMeshVertex:TpvVulkanPipelineShaderStage;
        fVulkanPipelineShaderStageMeshFragment:TpvVulkanPipelineShaderStage;
        fVulkanPipelineShaderStageMeshMaskedFragment:TpvVulkanPipelineShaderStage;
        fVulkanGraphicsPipelines:array[TpvScene3D.TMaterial.TAlphaMode] of TpvScene3D.TGraphicsPipelines;
        fVulkanPipelineLayout:TpvVulkanPipelineLayout;
+       fPlanetShadowMapPass:TpvScene3DPlanet.TRenderPass;
       public
        constructor Create(const aFrameGraph:TpvFrameGraph;const aInstance:TpvScene3DRendererInstance); reintroduce;
        destructor Destroy; override;
@@ -138,31 +144,58 @@ inherited Create(aFrameGraph);
  case fInstance.Renderer.ShadowMode of
   TpvScene3DRendererShadowMode.MSM:begin
    if fInstance.Renderer.ShadowMapSampleCountFlagBits=TVkSampleCountFlagBits(VK_SAMPLE_COUNT_1_BIT) then begin
-    fResourceDepth:=AddImageDepthOutput('resourcetype_cascadedshadowmap_depth',
+    if fInstance.Renderer.GPUCulling and fInstance.Renderer.GPUShadowCulling then begin
+     fResourceDepth:=AddImageDepthInput('resourcetype_cascadedshadowmap_depth',
                                         'resource_cascadedshadowmap_single_depth',
-                                        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                                        TpvFrameGraph.TLoadOp.Create(TpvFrameGraph.TLoadOp.TKind.Clear,
-                                                                     TpvVector4.InlineableCreate(1.0,1.0,1.0,1.0)),
+                                         VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                                         [TpvFrameGraph.TResourceTransition.TFlag.Attachment,
+                                          TpvFrameGraph.TResourceTransition.TFlag.ExplicitOutputAttachment]
+                                        );
+    end else begin
+     fResourceDepth:=AddImageDepthOutput('resourcetype_cascadedshadowmap_depth',
+                                         'resource_cascadedshadowmap_single_depth',
+                                         VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                                         TpvFrameGraph.TLoadOp.Create(TpvFrameGraph.TLoadOp.TKind.Clear,
+                                                                      TpvVector4.InlineableCreate(1.0,1.0,1.0,1.0)),
                                         [TpvFrameGraph.TResourceTransition.TFlag.Attachment]
                                        );
+    end;
    end else begin
-    fResourceDepth:=AddImageDepthOutput('resourcetype_cascadedshadowmap_msaa_depth',
+    if fInstance.Renderer.GPUCulling and fInstance.Renderer.GPUShadowCulling then begin
+     fResourceDepth:=AddImageDepthInput('resourcetype_cascadedshadowmap_msaa_depth',
                                         'resource_cascadedshadowmap_msaa_depth',
+                                        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                                        [TpvFrameGraph.TResourceTransition.TFlag.Attachment,
+                                         TpvFrameGraph.TResourceTransition.TFlag.ExplicitOutputAttachment]
+                                       );
+    end else begin
+     fResourceDepth:=AddImageDepthOutput('resourcetype_cascadedshadowmap_msaa_depth',
+                                         'resource_cascadedshadowmap_msaa_depth',
+                                         VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                                         TpvFrameGraph.TLoadOp.Create(TpvFrameGraph.TLoadOp.TKind.Clear,
+                                                                      TpvVector4.InlineableCreate(1.0,1.0,1.0,1.0)),
+                                         [TpvFrameGraph.TResourceTransition.TFlag.Attachment]
+                                        );
+    end;
+   end;
+  end
+  else begin
+   if fInstance.Renderer.GPUCulling and fInstance.Renderer.GPUShadowCulling then begin
+    fResourceDepth:=AddImageDepthInput('resourcetype_cascadedshadowmap_data',
+                                       'resource_cascadedshadowmap_data_final',
+                                       VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                                       [TpvFrameGraph.TResourceTransition.TFlag.Attachment,
+                                        TpvFrameGraph.TResourceTransition.TFlag.ExplicitOutputAttachment]
+                                      );
+   end else begin
+    fResourceDepth:=AddImageDepthOutput('resourcetype_cascadedshadowmap_data',
+                                        'resource_cascadedshadowmap_data_final',
                                         VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
                                         TpvFrameGraph.TLoadOp.Create(TpvFrameGraph.TLoadOp.TKind.Clear,
                                                                      TpvVector4.InlineableCreate(1.0,1.0,1.0,1.0)),
                                         [TpvFrameGraph.TResourceTransition.TFlag.Attachment]
                                        );
    end;
-  end
-  else begin
-   fResourceDepth:=AddImageDepthOutput('resourcetype_cascadedshadowmap_data',
-                                       'resource_cascadedshadowmap_data_final',
-                                       VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                                       TpvFrameGraph.TLoadOp.Create(TpvFrameGraph.TLoadOp.TKind.Clear,
-                                                                    TpvVector4.InlineableCreate(1.0,1.0,1.0,1.0)),
-                                       [TpvFrameGraph.TResourceTransition.TFlag.Attachment]
-                                      );
   end;
  end;
 
@@ -194,11 +227,11 @@ begin
  end;
 
  if fInstance.Renderer.UseDemote then begin
-  Stream:=pvScene3DShaderVirtualFileSystem.GetFile('mesh_'+fInstance.Renderer.MeshFragTypeName+'_depth_masked_demote_frag.spv');
+  Stream:=pvScene3DShaderVirtualFileSystem.GetFile('mesh_'+fInstance.Renderer.MeshFragTypeName+'_depth_alphatest_demote_frag.spv');
  end else if fInstance.Renderer.UseNoDiscard then begin
-  Stream:=pvScene3DShaderVirtualFileSystem.GetFile('mesh_'+fInstance.Renderer.MeshFragTypeName+'_depth_masked_nodiscard_frag.spv');
+  Stream:=pvScene3DShaderVirtualFileSystem.GetFile('mesh_'+fInstance.Renderer.MeshFragTypeName+'_depth_alphatest_nodiscard_frag.spv');
  end else begin
-  Stream:=pvScene3DShaderVirtualFileSystem.GetFile('mesh_'+fInstance.Renderer.MeshFragTypeName+'_depth_masked_frag.spv');
+  Stream:=pvScene3DShaderVirtualFileSystem.GetFile('mesh_'+fInstance.Renderer.MeshFragTypeName+'_depth_alphatest_frag.spv');
  end;
  try
   fMeshMaskedFragmentShaderModule:=TpvVulkanShaderModule.Create(fInstance.Renderer.VulkanDevice,Stream);
@@ -212,10 +245,21 @@ begin
 
  fVulkanPipelineShaderStageMeshMaskedFragment:=TpvVulkanPipelineShaderStage.Create(VK_SHADER_STAGE_FRAGMENT_BIT,fMeshMaskedFragmentShaderModule,'main');
 
- fVulkanPipelineLayout:=TpvVulkanPipelineLayout.Create(fInstance.Renderer.VulkanDevice);
- fVulkanPipelineLayout.AddPushConstantRange(TVkShaderStageFlags(VK_SHADER_STAGE_VERTEX_BIT),0,SizeOf(TpvScene3D.TVertexStagePushConstants));
- fVulkanPipelineLayout.AddDescriptorSetLayout(fInstance.Renderer.Scene3D.GlobalVulkanDescriptorSetLayout);
- fVulkanPipelineLayout.Initialize;
+ if fInstance.Renderer.GPUCulling and fInstance.Renderer.GPUShadowCulling then begin
+  fPlanetShadowMapPass:=TpvScene3DPlanet.TRenderPass.Create(fInstance.Renderer,
+                                                            fInstance,
+                                                            fInstance.Renderer.Scene3D,
+                                                            TpvScene3DPlanet.TRenderPass.TMode.ShadowMapDisocclusion,
+                                                            nil,
+                                                            nil);
+ end else begin
+  fPlanetShadowMapPass:=TpvScene3DPlanet.TRenderPass.Create(fInstance.Renderer,
+                                                            fInstance,
+                                                            fInstance.Renderer.Scene3D,
+                                                            TpvScene3DPlanet.TRenderPass.TMode.ShadowMap,
+                                                            nil,
+                                                            nil);
+ end;
 
 end;
 
@@ -223,7 +267,7 @@ procedure TpvScene3DRendererPassesCascadedShadowMapRenderPass.ReleasePersistentR
 var InFlightFrameIndex:TpvSizeInt;
 begin
 
- FreeAndNil(fVulkanPipelineLayout);
+ FreeAndNil(fPlanetShadowMapPass);
 
  FreeAndNil(fVulkanPipelineShaderStageMeshVertex);
 
@@ -241,7 +285,8 @@ begin
 end;
 
 procedure TpvScene3DRendererPassesCascadedShadowMapRenderPass.AcquireVolatileResources;
-var AlphaMode:TpvScene3D.TMaterial.TAlphaMode;
+var InFlightFrameIndex:TpvSizeInt;
+    AlphaMode:TpvScene3D.TMaterial.TAlphaMode;
     PrimitiveTopology:TpvScene3D.TPrimitiveTopology;
     FaceCullingMode:TpvScene3D.TFaceCullingMode;
     VulkanGraphicsPipeline:TpvVulkanGraphicsPipeline;
@@ -250,6 +295,38 @@ begin
  inherited AcquireVolatileResources;
 
  fVulkanRenderPass:=VulkanRenderPass;
+
+ fPassVulkanDescriptorSetLayout:=TpvVulkanDescriptorSetLayout.Create(fInstance.Renderer.VulkanDevice);
+ fPassVulkanDescriptorSetLayout.AddBinding(0,
+                                             VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                                             1,
+                                             TVkShaderStageFlags(VK_SHADER_STAGE_VERTEX_BIT) or TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),
+                                             []);
+ fPassVulkanDescriptorSetLayout.Initialize;
+
+ fPassVulkanDescriptorPool:=TpvVulkanDescriptorPool.Create(fInstance.Renderer.VulkanDevice,TVkDescriptorPoolCreateFlags(VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT),fInstance.Renderer.CountInFlightFrames);
+ fPassVulkanDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,1*fInstance.Renderer.CountInFlightFrames);
+ fPassVulkanDescriptorPool.Initialize;
+
+ for InFlightFrameIndex:=0 to FrameGraph.CountInFlightFrames-1 do begin
+  fPassVulkanDescriptorSets[InFlightFrameIndex]:=TpvVulkanDescriptorSet.Create(fPassVulkanDescriptorPool,
+                                                                                 fPassVulkanDescriptorSetLayout);
+  fPassVulkanDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(0,
+                                                                       0,
+                                                                       1,
+                                                                       TVkDescriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER),
+                                                                       [],
+                                                                       [fInstance.VulkanViewUniformBuffers[InFlightFrameIndex].DescriptorBufferInfo],
+                                                                       [],
+                                                                       false);
+  fPassVulkanDescriptorSets[InFlightFrameIndex].Flush;
+ end;
+
+ fVulkanPipelineLayout:=TpvVulkanPipelineLayout.Create(fInstance.Renderer.VulkanDevice);
+ fVulkanPipelineLayout.AddPushConstantRange(TVkShaderStageFlags(VK_SHADER_STAGE_VERTEX_BIT) or TVkShaderStageFlags(VK_SHADER_STAGE_FRAGMENT_BIT),0,SizeOf(TpvScene3D.TMeshStagePushConstants));
+ fVulkanPipelineLayout.AddDescriptorSetLayout(fInstance.Renderer.Scene3D.GlobalVulkanDescriptorSetLayout);
+ fVulkanPipelineLayout.AddDescriptorSetLayout(fPassVulkanDescriptorSetLayout);
+ fVulkanPipelineLayout.Initialize;
 
  for AlphaMode:=Low(TpvScene3D.TMaterial.TAlphaMode) to High(TpvScene3D.TMaterial.TAlphaMode) do begin
   for PrimitiveTopology:=Low(TpvScene3D.TPrimitiveTopology) to High(TpvScene3D.TPrimitiveTopology) do begin
@@ -280,11 +357,11 @@ begin
      VulkanGraphicsPipeline.AddStage(fVulkanPipelineShaderStageMeshVertex);
      if AlphaMode=TpvScene3D.TMaterial.TAlphaMode.Mask then begin
       VulkanGraphicsPipeline.AddStage(fVulkanPipelineShaderStageMeshMaskedFragment);
-     end else begin
-      VulkanGraphicsPipeline.AddStage(fVulkanPipelineShaderStageMeshFragment);
+{    end else begin
+      VulkanGraphicsPipeline.AddStage(fVulkanPipelineShaderStageMeshFragment);}
      end;
 
-     VulkanGraphicsPipeline.InputAssemblyState.Topology:=TVkPrimitiveTopology(PrimitiveTopology);
+     VulkanGraphicsPipeline.InputAssemblyState.Topology:=TpvScene3D.VulkanPrimitiveTopologies[PrimitiveTopology];
      VulkanGraphicsPipeline.InputAssemblyState.PrimitiveRestartEnable:=false;
 
      fInstance.Renderer.Scene3D.InitializeGraphicsPipeline(VulkanGraphicsPipeline);
@@ -382,13 +459,20 @@ begin
 
  end;
 
+ fPlanetShadowMapPass.AllocateResources(fVulkanRenderPass,
+                                        fInstance.CascadedShadowMapWidth,
+                                        fInstance.CascadedShadowMapHeight,
+                                        fInstance.Renderer.ShadowMapSampleCountFlagBits);
+
 end;
 
 procedure TpvScene3DRendererPassesCascadedShadowMapRenderPass.ReleaseVolatileResources;
-var AlphaMode:TpvScene3D.TMaterial.TAlphaMode;
+var Index:TpvSizeInt;
+    AlphaMode:TpvScene3D.TMaterial.TAlphaMode;
     PrimitiveTopology:TpvScene3D.TPrimitiveTopology;
     FaceCullingMode:TpvScene3D.TFaceCullingMode;
 begin
+ fPlanetShadowMapPass.ReleaseResources;
  for AlphaMode:=Low(TpvScene3D.TMaterial.TAlphaMode) to High(TpvScene3D.TMaterial.TAlphaMode) do begin
   for PrimitiveTopology:=Low(TpvScene3D.TPrimitiveTopology) to High(TpvScene3D.TPrimitiveTopology) do begin
    for FaceCullingMode:=Low(TpvScene3D.TFaceCullingMode) to High(TpvScene3D.TFaceCullingMode) do begin
@@ -396,6 +480,12 @@ begin
    end;
   end;
  end;
+ FreeAndNil(fVulkanPipelineLayout);
+ for Index:=0 to fInstance.Renderer.CountInFlightFrames-1 do begin
+  FreeAndNil(fPassVulkanDescriptorSets[Index]);
+ end;
+ FreeAndNil(fPassVulkanDescriptorPool);
+ FreeAndNil(fPassVulkanDescriptorSetLayout);
  inherited ReleaseVolatileResources;
 end;
 
@@ -405,13 +495,21 @@ begin
 end;
 
 procedure TpvScene3DRendererPassesCascadedShadowMapRenderPass.OnSetRenderPassResources(const aCommandBuffer:TpvVulkanCommandBuffer;
-                                                                            const aPipelineLayout:TpvVulkanPipelineLayout;
-                                                                            const aRenderPassIndex:TpvSizeInt;
-                                                                            const aPreviousInFlightFrameIndex:TpvSizeInt;
-                                                                            const aInFlightFrameIndex:TpvSizeInt);
+                                                                                       const aPipelineLayout:TpvVulkanPipelineLayout;
+                                                                                       const aRendererInstance:TObject;
+                                                                                       const aRenderPassIndex:TpvSizeInt;
+                                                                                       const aPreviousInFlightFrameIndex:TpvSizeInt;
+                                                                                       const aInFlightFrameIndex:TpvSizeInt);
 begin
  if not fOnSetRenderPassResourcesDone then begin
   fOnSetRenderPassResourcesDone:=true;
+  aCommandBuffer.CmdBindDescriptorSets(VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                       fVulkanPipelineLayout.Handle,
+                                       1,
+                                       1,
+                                       @fPassVulkanDescriptorSets[aInFlightFrameIndex].Handle,
+                                       0,
+                                       nil);
  end;
 end;
 
@@ -429,41 +527,61 @@ begin
 
   if fInstance.Renderer.ShadowMode<>TpvScene3DRendererShadowMode.None then begin
 
-   fInstance.Renderer.Scene3D.Draw(fVulkanGraphicsPipelines[TpvScene3D.TMaterial.TAlphaMode.Opaque],
-                                   -1,
-                                   aInFlightFrameIndex,
-                                   InFlightFrameState^.CascadedShadowMapRenderPassIndex,
-                                   InFlightFrameState^.CascadedShadowMapViewIndex,
-                                   InFlightFrameState^.CountCascadedShadowMapViews,
-                                   FrameGraph.DrawFrameIndex,
-                                   aCommandBuffer,
-                                   fVulkanPipelineLayout,
-                                   OnSetRenderPassResources,
-                                   [TpvScene3D.TMaterial.TAlphaMode.Opaque]);
+   if not fInstance.Renderer.Scene3D.RaytracingActive then
+   begin
 
-   fInstance.Renderer.Scene3D.Draw(fVulkanGraphicsPipelines[TpvScene3D.TMaterial.TAlphaMode.Mask],
-                                   -1,
-                                   aInFlightFrameIndex,
-                                   InFlightFrameState^.CascadedShadowMapRenderPassIndex,
-                                   InFlightFrameState^.CascadedShadowMapViewIndex,
-                                   InFlightFrameState^.CountCascadedShadowMapViews,
-                                   FrameGraph.DrawFrameIndex,
-                                   aCommandBuffer,
-                                   fVulkanPipelineLayout,
-                                   OnSetRenderPassResources,
-                                   [TpvScene3D.TMaterial.TAlphaMode.Mask]);
+    fPlanetShadowMapPass.Draw(aInFlightFrameIndex,
+                              aFrameIndex,
+                              InFlightFrameState^.CascadedShadowMapRenderPassIndex,
+                              InFlightFrameState^.CascadedShadowMapViewIndex,
+                              InFlightFrameState^.CountCascadedShadowMapViews,
+                              aCommandBuffer);
 
- { fInstance.Renderer.Scene3D.Draw(fVulkanGraphicsPipelines[TpvScene3D.TMaterial.TAlphaMode.Blend],
-                                   -1,
-                                   aInFlightFrameIndex,
-                                   InFlightFrameState^.CascadedShadowMapRenderPassIndex,
-                                   InFlightFrameState^.CascadedShadowMapViewIndex,
-                                   InFlightFrameState^.CountCascadedShadowMapViews,
-                                   fFrameGraph.DrawFrameIndex,
-                                   aCommandBuffer,
-                                   fVulkanPipelineLayout,
-                                   OnSetRenderPassResources,
-                                   [TpvScene3D.TMaterial.TAlphaMode.Blend]);}
+    fInstance.Renderer.Scene3D.Draw(fInstance,
+                                    fVulkanGraphicsPipelines[TpvScene3D.TMaterial.TAlphaMode.Opaque],
+                                    -1,
+                                    aInFlightFrameIndex,
+                                    InFlightFrameState^.CascadedShadowMapRenderPassIndex,
+                                    InFlightFrameState^.CascadedShadowMapViewIndex,
+                                    InFlightFrameState^.CountCascadedShadowMapViews,
+                                    FrameGraph.DrawFrameIndex,
+                                    aCommandBuffer,
+                                    fVulkanPipelineLayout,
+                                    OnSetRenderPassResources,
+                                    [TpvScene3D.TMaterial.TAlphaMode.Opaque],
+                                    nil,
+                                    fInstance.Renderer.GPUCulling and fInstance.Renderer.GPUShadowCulling);
+
+    fInstance.Renderer.Scene3D.Draw(fInstance,
+                                    fVulkanGraphicsPipelines[TpvScene3D.TMaterial.TAlphaMode.Mask],
+                                    -1,
+                                    aInFlightFrameIndex,
+                                    InFlightFrameState^.CascadedShadowMapRenderPassIndex,
+                                    InFlightFrameState^.CascadedShadowMapViewIndex,
+                                    InFlightFrameState^.CountCascadedShadowMapViews,
+                                    FrameGraph.DrawFrameIndex,
+                                    aCommandBuffer,
+                                    fVulkanPipelineLayout,
+                                    OnSetRenderPassResources,
+                                    [TpvScene3D.TMaterial.TAlphaMode.Mask],
+                                    nil,
+                                    fInstance.Renderer.GPUCulling and fInstance.Renderer.GPUShadowCulling);
+
+  { fInstance.Renderer.Scene3D.Draw(fInstance,
+                                    fVulkanGraphicsPipelines[TpvScene3D.TMaterial.TAlphaMode.Blend],
+                                    -1,
+                                    aInFlightFrameIndex,
+                                    InFlightFrameState^.CascadedShadowMapRenderPassIndex,
+                                    InFlightFrameState^.CascadedShadowMapViewIndex,
+                                    InFlightFrameState^.CountCascadedShadowMapViews,
+                                    fFrameGraph.DrawFrameIndex,
+                                    aCommandBuffer,
+                                    fVulkanPipelineLayout,
+                                    OnSetRenderPassResources,
+                                    [TpvScene3D.TMaterial.TAlphaMode.Blend],
+                                    nil,
+                                    fInstance.Renderer.GPUCulling and fInstance.Renderer.GPUShadowCulling);}
+    end;
 
   end;
 

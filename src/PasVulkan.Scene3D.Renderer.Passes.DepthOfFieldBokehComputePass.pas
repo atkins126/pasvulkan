@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -107,6 +107,8 @@ type { TpvScene3DRendererPassesDepthOfFieldBokehComputePass }
      end;
 
 implementation
+
+uses PasVulkan.Scene3D.Renderer.CameraPreset;
 
 { TpvScene3DRendererPassesDepthOfFieldBokehComputePass }
 
@@ -218,14 +220,17 @@ end;
 procedure TpvScene3DRendererPassesDepthOfFieldBokehComputePass.Execute(const aCommandBuffer:TpvVulkanCommandBuffer;const aInFlightFrameIndex,aFrameIndex:TpvSizeInt);
 var PushConstants:TpvScene3DRendererPassesDepthOfFieldBokehComputePass.TPushConstants;
     MemoryBarrier:TVkMemoryBarrier;
+    CameraPreset:TpvScene3DRendererCameraPreset;
 begin
  inherited Execute(aCommandBuffer,aInFlightFrameIndex,aFrameIndex);
 
  aCommandBuffer.CmdBindPipeline(VK_PIPELINE_BIND_POINT_COMPUTE,fPipeline.Handle);
 
- PushConstants.Size:=fInstance.CameraPreset.BlurKernelSize;
- PushConstants.FFactor:=fInstance.CameraPreset.FNumber;
- PushConstants.Ngon:=fInstance.CameraPreset.Ngon;
+ CameraPreset:=fInstance.CameraPresets[aInFlightFrameIndex];
+
+ PushConstants.Size:=CameraPreset.BlurKernelSize;
+ PushConstants.FFactor:=CameraPreset.FNumber;
+ PushConstants.Ngon:=CameraPreset.Ngon;
  PushConstants.PhiShutterMax:=HalfPI;
 
  aCommandBuffer.CmdPushConstants(fPipelineLayout.Handle,

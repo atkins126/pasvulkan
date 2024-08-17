@@ -1,4 +1,4 @@
-(******************************************************************************
+ï»¿(******************************************************************************
  *                                 PasVulkan                                  *
  ******************************************************************************
  *                       Version see PasVulkan.Framework.pas                  *
@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -81,7 +81,14 @@ unit PasVulkan.Math;
  {$ifdef cpux64}
   {$define SIMD}
  {$endif}
+ {$ifndef fpc}
+//  {$undef SIMD} // Due to inline assembler bugs in Delphi
+ {$endif}
 {$endif}
+
+{$if defined(cpux64) and defined(Windows)}
+ {$define ExplicitX64SIMDRegs}
+{$ifend}
 
 {$warnings off}
 
@@ -104,6 +111,8 @@ const EPSILON={$ifdef UseDouble}1e-14{$else}1e-5{$endif}; // actually {$ifdef Us
       DEG2RAD=PI/180.0;
       RAD2DEG=180.0/PI;
 
+      LN2=0.6931471805599453;
+
       OnePI=PI;
 
       HalfPI=PI*0.5;
@@ -117,6 +126,10 @@ const EPSILON={$ifdef UseDouble}1e-14{$else}1e-5{$endif}; // actually {$ifdef Us
       OneOverTwoPI=1.0/TwoPI;
 
       SQRT_0_DOT_5=0.70710678118;
+
+      QTangentThreshold8Bit=1.0/127.0;
+
+      QTangentThreshold16Bit=1.0/32767.0;
 
       SupraEngineFPUPrecisionMode:TFPUPrecisionMode={$ifdef cpu386}pmExtended{$else}{$ifdef cpux64}pmExtended{$else}pmDouble{$endif}{$endif};
 
@@ -134,6 +147,27 @@ type PpvScalar=^TpvScalar;
      PPpvIntPoint=^PpvIntPoint;
      PpvIntPoint=^TpvIntPoint;
      TpvIntPoint=record
+      public
+       x,y:TpvInt32;
+     end;
+
+     PPpvInt16Vector2=^PpvInt16Vector2;
+     PpvInt16Vector2=^TpvInt16Vector2;
+     TpvInt16Vector2=packed record
+      public
+       x,y:TpvInt16;
+     end;
+
+     PPpvUInt16Vector2=^PpvUInt16Vector2;
+     PpvUInt16Vector2=^TpvUInt16Vector2;
+     TpvUInt16Vector2=packed record
+      public
+       x,y:TpvUInt16;
+     end;
+
+     PPpvInt32Vector2=^PpvInt32Vector2;
+     PpvInt32Vector2=^TpvInt32Vector2;
+     TpvInt32Vector2=packed record
       public
        x,y:TpvInt32;
      end;
@@ -181,6 +215,7 @@ type PpvScalar=^TpvScalar;
        function Length:TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
        function SquaredLength:TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
        function Normalize:TpvVector2; {$ifdef CAN_INLINE}inline;{$endif}
+       function Abs:TpvVector2; {$ifdef CAN_INLINE}inline;{$endif}
        function DistanceTo(const aToVector:TpvVector2):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
        function Dot(const aWithVector:TpvVector2):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
        function Cross(const aVector:TpvVector2):TpvVector2; {$ifdef CAN_INLINE}inline;{$endif}
@@ -209,6 +244,7 @@ type PpvScalar=^TpvScalar;
        class function InlineableCreate(const aX:TpvScalar):TpvVector3; overload; inline; static;
        class function InlineableCreate(const aX,aY,aZ:TpvScalar):TpvVector3; overload; inline; static;
        class function InlineableCreate(const aXY:TpvVector2;const aZ:TpvScalar=0.0):TpvVector3; overload; inline; static;
+       class function InlineableCreate(const aXYZ:TpvVector3):TpvVector3; overload; inline; static;
        class operator Implicit(const a:TpvScalar):TpvVector3; {$ifdef CAN_INLINE}inline;{$endif}
        class operator Explicit(const a:TpvScalar):TpvVector3; {$ifdef CAN_INLINE}inline;{$endif}
        class operator Equal(const a,b:TpvVector3):boolean; {$ifdef CAN_INLINE}inline;{$endif}
@@ -244,11 +280,18 @@ type PpvScalar=^TpvScalar;
        function Flip:TpvVector3; {$ifdef CAN_INLINE}inline;{$endif}
        function Perpendicular:TpvVector3; {$ifdef CAN_INLINE}inline;{$endif}
        function OneUnitOrthogonalVector:TpvVector3;
+       function OneUnitSmoothOrthogonalVector:TpvVector3;
        function Length:TpvScalar; {$if not (defined(cpu386) or defined(cpux64))}{$ifdef CAN_INLINE}inline;{$endif}{$ifend} {$if defined(fpc) and defined(cpuamd64) and not defined(Windows)}ms_abi_default;{$ifend}
        function SquaredLength:TpvScalar; {$if not (defined(cpu386) or defined(cpux64))}{$ifdef CAN_INLINE}inline;{$endif}{$ifend} {$if defined(fpc) and defined(cpuamd64) and not defined(Windows)}ms_abi_default;{$ifend}
        function Normalize:TpvVector3; {$if not (defined(cpu386) or defined(cpux64))}{$ifdef CAN_INLINE}inline;{$endif}{$ifend} {$if defined(fpc) and defined(cpuamd64) and not defined(Windows)}ms_abi_default;{$ifend}
        function DistanceTo({$ifdef fpc}constref{$else}const{$endif} aToVector:TpvVector3):TpvScalar; {$if not (defined(cpu386) or defined(cpux64))}{$ifdef CAN_INLINE}inline;{$endif}{$ifend} {$if defined(fpc) and defined(cpuamd64) and not defined(Windows)}ms_abi_default;{$ifend}
+       function Min(const aWith:TpvVector3):TpvVector3; {$ifdef CAN_INLINE}inline;{$endif}
+       function Max(const aWith:TpvVector3):TpvVector3; {$ifdef CAN_INLINE}inline;{$endif}
        function Abs:TpvVector3; {$if not (defined(cpu386) or defined(cpux64))}{$ifdef CAN_INLINE}inline;{$endif}{$ifend} {$if defined(fpc) and defined(cpuamd64) and not defined(Windows)}ms_abi_default;{$ifend}
+       function Truncate:TpvVector3; {$if not (defined(cpu386) or defined(cpux64))}{$ifdef CAN_INLINE}inline;{$endif}{$ifend} {$if defined(fpc) and defined(cpuamd64) and not defined(Windows)}ms_abi_default;{$ifend}
+       function Round:TpvVector3; {$if not (defined(cpu386) or defined(cpux64))}{$ifdef CAN_INLINE}inline;{$endif}{$ifend} {$if defined(fpc) and defined(cpuamd64) and not defined(Windows)}ms_abi_default;{$ifend}
+       function Floor:TpvVector3; {$if not (defined(cpu386) or defined(cpux64))}{$ifdef CAN_INLINE}inline;{$endif}{$ifend} {$if defined(fpc) and defined(cpuamd64) and not defined(Windows)}ms_abi_default;{$ifend}
+       function Ceil:TpvVector3; {$if not (defined(cpu386) or defined(cpux64))}{$ifdef CAN_INLINE}inline;{$endif}{$ifend} {$if defined(fpc) and defined(cpuamd64) and not defined(Windows)}ms_abi_default;{$ifend}
        function Dot({$ifdef fpc}constref{$else}const{$endif} aWithVector:TpvVector3):TpvScalar; {$if not (defined(cpu386) or defined(cpux64))}{$ifdef CAN_INLINE}inline;{$endif}{$ifend} {$if defined(fpc) and defined(cpuamd64) and not defined(Windows)}ms_abi_default;{$ifend}
        function AngleTo(const aToVector:TpvVector3):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
        function Cross({$ifdef fpc}constref{$else}const{$endif} aOtherVector:TpvVector3):TpvVector3; {$if not (defined(cpu386) or defined(cpux64))}{$ifdef CAN_INLINE}inline;{$endif}{$ifend} {$if defined(fpc) and defined(cpuamd64) and not defined(Windows)}ms_abi_default;{$ifend}
@@ -352,6 +395,7 @@ type PpvScalar=^TpvScalar;
              XAxis:TpvVector2=(x:1.0;y:0.0);
              YAxis:TpvVector2=(x:0.0;y:1.0);
              AllAxis:TpvVector2=(x:1.0;y:1.0);
+             AllMaxAxis:TpvVector3=(x:3.4e+28;y:3.4e+28);
       public
        {$i PasVulkan.Math.TpvVector2Helper.Swizzle.Definitions.inc}
      end;
@@ -364,6 +408,7 @@ type PpvScalar=^TpvScalar;
              YAxis:TpvVector3=(x:0.0;y:1.0;z:0.0);
              ZAxis:TpvVector3=(x:0.0;y:0.0;z:1.0);
              AllAxis:TpvVector3=(x:1.0;y:1.0;z:1.0);
+             AllMaxAxis:TpvVector3=(x:16777215.0;y:16777215.0;z:16777215.0);
       public
        {$i PasVulkan.Math.TpvVector3Helper.Swizzle.Definitions.inc}
      end;
@@ -377,6 +422,7 @@ type PpvScalar=^TpvScalar;
              ZAxis:TpvVector4=(x:0.0;y:0.0;z:1.0;w:0.0);
              WAxis:TpvVector4=(x:0.0;y:0.0;z:0.0;w:1.0);
              AllAxis:TpvVector4=(x:1.0;y:1.0;z:1.0;w:1.0);
+             AllMaxAxis:TpvVector4=(x:16777215.0;y:16777215.0;z:16777215.0;w:16777215.0);
       public
        {$i PasVulkan.Math.TpvVector4Helper.Swizzle.Definitions.inc}
      end;
@@ -414,9 +460,24 @@ type PpvScalar=^TpvScalar;
         6:(Vector3:TpvHalfFloatVector3);
      end;
 
-     PpvPackedTangentSpace=^TpvPackedTangentSpace;
-     TpvPackedTangentSpace=record
+     PpvInt8PackedTangentSpace=^TpvInt8PackedTangentSpace;
+     TpvInt8PackedTangentSpace=record
+      x,y,z,w:TpvInt8;
+     end;
+
+     PpvInt16PackedTangentSpace=^TpvInt16PackedTangentSpace;
+     TpvInt16PackedTangentSpace=record
+      x,y,z,w:TpvInt16;
+     end;
+
+     PpvUInt8PackedTangentSpace=^TpvUInt8PackedTangentSpace;
+     TpvUInt8PackedTangentSpace=record
       x,y,z,w:TpvUInt8;
+     end;
+
+     PpvUInt16PackedTangentSpace=^TpvUInt16PackedTangentSpace;
+     TpvUInt16PackedTangentSpace=record
+      x,y,z,w:TpvUInt16;
      end;
 
      PpvNormalizedSphericalCoordinates=^TpvNormalizedSphericalCoordinates;
@@ -469,6 +530,9 @@ type PpvScalar=^TpvScalar;
          Normal:TpvVector3;
          Distance:TpvScalar;
         );
+        3:(
+         Vector4:TpvVector4;
+        );
      end;
 
      PpvQuaternion=^TpvQuaternion;
@@ -477,12 +541,16 @@ type PpvScalar=^TpvScalar;
        constructor Create(const aX:TpvScalar); overload;
        constructor Create(const aX,aY,aZ,aW:TpvScalar); overload;
        constructor Create(const aVector:TpvVector4); overload;
+       constructor CreateFromScaledAngleAxis(const aScaledAngleAxis:TpvVector3);
        constructor CreateFromAngularVelocity(const aAngularVelocity:TpvVector3);
        constructor CreateFromAngleAxis(const aAngle:TpvScalar;const aAxis:TpvVector3);
        constructor CreateFromEuler(const aPitch,aYaw,aRoll:TpvScalar); overload;
        constructor CreateFromEuler(const aAngles:TpvVector3); overload;
        constructor CreateFromNormalizedSphericalCoordinates(const aNormalizedSphericalCoordinates:TpvNormalizedSphericalCoordinates);
        constructor CreateFromToRotation(const aFromDirection,aToDirection:TpvVector3);
+       constructor CreateFromLookRotation(const aForward,aUp:TpvVector3);
+       constructor CreateFromCols(const aC0,aC1,aC2:TpvVector3);
+       constructor CreateFromXY(const aX,aY:TpvVector3);
        class operator Implicit(const a:TpvScalar):TpvQuaternion; {$ifdef CAN_INLINE}inline;{$endif}
        class operator Explicit(const a:TpvScalar):TpvQuaternion; {$ifdef CAN_INLINE}inline;{$endif}
        class operator Equal(const a,b:TpvQuaternion):boolean; {$ifdef CAN_INLINE}inline;{$endif}
@@ -524,6 +592,7 @@ type PpvScalar=^TpvScalar;
        function ToRoll:TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
        function ToAngularVelocity:TpvVector3; {$ifdef CAN_INLINE}inline;{$endif}
        procedure ToAngleAxis(out aAngle:TpvScalar;out aAxis:TpvVector3); {$ifdef CAN_INLINE}inline;{$endif}
+       function ToScaledAngleAxis:TpvVector3; {$ifdef CAN_INLINE}inline;{$endif}
        function Generator:TpvVector3; {$ifdef CAN_INLINE}inline;{$endif}
        function Flip:TpvQuaternion; {$ifdef CAN_INLINE}inline;{$endif}
        function Perpendicular:TpvQuaternion; {$ifdef CAN_INLINE}inline;{$endif}
@@ -540,10 +609,16 @@ type PpvScalar=^TpvScalar;
        function Lerp(const aToQuaternion:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion; {$ifdef CAN_INLINE}inline;{$endif}
        function Nlerp(const aToQuaternion:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion; {$ifdef CAN_INLINE}inline;{$endif}
        function Slerp(const aToQuaternion:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion;
+       function ApproximatedSlerp(const aToQuaternion:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion;
        function Elerp(const aToQuaternion:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion;
        function Sqlerp(const aB,aC,aD:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion;
        function UnflippedSlerp(const aToQuaternion:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion;
+       function UnflippedApproximatedSlerp(const aToQuaternion:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion;
        function UnflippedSqlerp(const aB,aC,aD:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion;
+       function AngleBetween(const aP:TpvQuaternion):TpvScalar;
+       function Between(const aP:TpvQuaternion):TpvQuaternion;
+       class procedure Hermite(out aRotation:TpvQuaternion;out aVelocity:TpvVector3;const aTime:TpvScalar;const aR0,aR1:TpvQuaternion;const aV0,aV1:TpvVector3); static;
+       class procedure CatmullRom(out aRotation:TpvQuaternion;out aVelocity:TpvVector3;const aTime:TpvScalar;const aR0,aR1,aR2,aR3:TpvQuaternion); static;
        function RotateAroundAxis(const aVector:TpvQuaternion):TpvQuaternion; {$ifdef CAN_INLINE}inline;{$endif}
        function Integrate(const aOmega:TpvVector3;const aDeltaTime:TpvScalar):TpvQuaternion; {$ifdef CAN_INLINE}inline;{$endif}
        function Spin(const aOmega:TpvVector3;const aDeltaTime:TpvScalar):TpvQuaternion; {$ifdef CAN_INLINE}inline;{$endif}
@@ -701,7 +776,7 @@ type PpvScalar=^TpvScalar;
        function OrthoNormalize:TpvMatrix3x3; {$ifdef CAN_INLINE}inline;{$endif}
        function RobustOrthoNormalize(const Tolerance:TpvScalar=1e-3):TpvMatrix3x3; {$ifdef CAN_INLINE}inline;{$endif}
        function ToQuaternion:TpvQuaternion;
-       function ToQTangent:TpvQuaternion;
+       function ToQTangent(const aThreshold:TpvDouble=QTangentThreshold16Bit):TpvQuaternion;
        function SimpleLerp(const b:TpvMatrix3x3;const t:TpvScalar):TpvMatrix3x3; {$ifdef CAN_INLINE}inline;{$endif}
        function SimpleNlerp(const b:TpvMatrix3x3;const t:TpvScalar):TpvMatrix3x3; {$ifdef CAN_INLINE}inline;{$endif}
        function SimpleSlerp(const b:TpvMatrix3x3;const t:TpvScalar):TpvMatrix3x3; {$ifdef CAN_INLINE}inline;{$endif}
@@ -720,10 +795,14 @@ type PpvScalar=^TpvScalar;
        property Rows[const pIndex:TpvInt32]:TpvVector3 read GetRow write SetRow;
        case TpvInt32 of
         0:(RawComponents:array[0..2,0..2] of TpvScalar);
-        1:(m00,m01,m02,m10,m11,m12,m20,m21,m22:TpvScalar);
-        2:(Tangent,Bitangent,Normal:TpvVector3);
-        3:(Right,Up,Forwards:TpvVector3);
-       end;
+        1:(LinearRawComponents:array[0..8] of TpvScalar);
+        2:(m00,m01,m02,m10,m11,m12,m20,m21,m22:TpvScalar);
+        3:(Tangent,Bitangent,Normal:TpvVector3);
+        4:(Right,Up,Forwards:TpvVector3);
+        5:(RawVectors:array[0..2] of TpvVector3);
+     end;
+
+     TpvMatrix3x3DynamicArray=array of TpvMatrix3x3;
 
      PpvDecomposedMatrix4x4=^TpvDecomposedMatrix4x4;
      TpvDecomposedMatrix4x4=record
@@ -747,6 +826,8 @@ type PpvScalar=^TpvScalar;
 //     constructor Create; overload;
        constructor Create(const pX:TpvScalar); overload;
        constructor Create(const pXX,pXY,pXZ,pXW,pYX,pYY,pYZ,pYW,pZX,pZY,pZZ,pZW,pWX,pWY,pWZ,pWW:TpvScalar); overload;
+       constructor Create(const pX,pY,pZ:TpvVector3); overload;
+       constructor Create(const pX,pY,pZ,pW:TpvVector3); overload;
        constructor Create(const pX,pY,pZ,pW:TpvVector4); overload;
        constructor Create(const pMatrix:TpvMatrix3x3); overload;
        constructor CreateRotateX(const Angle:TpvScalar);
@@ -804,6 +885,14 @@ type PpvScalar=^TpvScalar;
        constructor CreatePerspectiveRightHandedOneToZero(const fovy,Aspect,zNear,zFar:TpvScalar);
        constructor CreatePerspectiveReversedZ(const aFOVY,aAspectRatio,aZNear:TpvScalar);
        constructor CreatePerspective(const fovy,Aspect,zNear,zFar:TpvScalar);
+       constructor CreateHorizontalFOVPerspectiveLeftHandedNegativeOneToPositiveOne(const fovx,Aspect,zNear,zFar:TpvScalar);
+       constructor CreateHorizontalFOVPerspectiveLeftHandedZeroToOne(const fovx,Aspect,zNear,zFar:TpvScalar);
+       constructor CreateHorizontalFOVPerspectiveLeftHandedOneToZero(const fovx,Aspect,zNear,zFar:TpvScalar);
+       constructor CreateHorizontalFOVPerspectiveRightHandedNegativeOneToPositiveOne(const fovx,Aspect,zNear,zFar:TpvScalar);
+       constructor CreateHorizontalFOVPerspectiveRightHandedZeroToOne(const fovx,Aspect,zNear,zFar:TpvScalar);
+       constructor CreateHorizontalFOVPerspectiveRightHandedOneToZero(const fovx,Aspect,zNear,zFar:TpvScalar);
+       constructor CreateHorizontalFOVPerspectiveReversedZ(const aFOVX,aAspectRatio,aZNear:TpvScalar);
+       constructor CreateHorizontalFOVPerspective(const fovx,Aspect,zNear,zFar:TpvScalar);
        constructor CreateLookAt(const Eye,Center,Up:TpvVector3);
        constructor CreateFill(const Eye,RightVector,UpVector,ForwardVector:TpvVector3);
        constructor CreateConstructX(const xAxis:TpvVector3);
@@ -859,10 +948,10 @@ type PpvScalar=^TpvScalar;
        function Transpose:TpvMatrix4x4; {$if not (defined(cpu386) or defined(cpux64))}{$ifdef CAN_INLINE}inline;{$endif}{$ifend} {$if defined(fpc) and defined(cpuamd64) and not defined(Windows)}ms_abi_default;{$ifend}
        function EulerAngles:TpvVector3; {$ifdef CAN_INLINE}inline;{$endif}
        function Normalize:TpvMatrix4x4; {$ifdef CAN_INLINE}inline;{$endif}
-       function OrthoNormalize:TpvMatrix4x4; {$ifdef CAN_INLINE}inline;{$endif}
-       function RobustOrthoNormalize(const Tolerance:TpvScalar=1e-3):TpvMatrix4x4; {$ifdef CAN_INLINE}inline;{$endif}
+       function OrthoNormalize:TpvMatrix4x4; //{$ifdef CAN_INLINE}inline;{$endif}
+       function RobustOrthoNormalize(const Tolerance:TpvScalar=1e-3):TpvMatrix4x4; //{$ifdef CAN_INLINE}inline;{$endif}
        function ToQuaternion:TpvQuaternion;
-       function ToQTangent:TpvQuaternion;
+       function ToQTangent(const aThreshold:TpvDouble=QTangentThreshold16Bit):TpvQuaternion;
        function ToMatrix3x3:TpvMatrix3x3; {$ifdef CAN_INLINE}inline;{$endif}
        function ToRotation:TpvMatrix4x4; {$ifdef CAN_INLINE}inline;{$endif}
        function SimpleLerp(const b:TpvMatrix4x4;const t:TpvScalar):TpvMatrix4x4; {$ifdef CAN_INLINE}inline;{$endif}
@@ -881,20 +970,26 @@ type PpvScalar=^TpvScalar;
        function MulInverted({$ifdef fpc}constref{$else}const{$endif} a:TpvVector4):TpvVector4; overload; {$ifdef CAN_INLINE}inline;{$endif}
        function MulBasis({$ifdef fpc}constref{$else}const{$endif} a:TpvVector3):TpvVector3; overload; {$ifdef CAN_INLINE}inline;{$endif}
        function MulBasis({$ifdef fpc}constref{$else}const{$endif} a:TpvVector4):TpvVector4; overload; {$ifdef CAN_INLINE}inline;{$endif}
+       function MulAbsBasis({$ifdef fpc}constref{$else}const{$endif} a:TpvVector3):TpvVector3; overload; {$ifdef CAN_INLINE}inline;{$endif}
+       function MulAbsBasis({$ifdef fpc}constref{$else}const{$endif} a:TpvVector4):TpvVector4; overload; {$ifdef CAN_INLINE}inline;{$endif}
        function MulTransposedBasis({$ifdef fpc}constref{$else}const{$endif} a:TpvVector3):TpvVector3; overload; {$ifdef CAN_INLINE}inline;{$endif}
        function MulTransposedBasis({$ifdef fpc}constref{$else}const{$endif} a:TpvVector4):TpvVector4; overload; {$ifdef CAN_INLINE}inline;{$endif}
-       function MulHomogen({$ifdef fpc}constref{$else}const{$endif} a:TpvVector3):TpvVector3; overload; {$ifdef CAN_INLINE}inline;{$endif}
-       function MulHomogen({$ifdef fpc}constref{$else}const{$endif} a:TpvVector4):TpvVector4; overload; {$ifdef CAN_INLINE}inline;{$endif}
+       function MulHomogen({$ifdef fpc}constref{$else}const{$endif} a:TpvVector3):TpvVector3; overload; //{$ifdef CAN_INLINE}inline;{$endif}
+       function MulHomogen({$ifdef fpc}constref{$else}const{$endif} a:TpvVector4):TpvVector4; overload; //{$ifdef CAN_INLINE}inline;{$endif}
        function Decompose:TpvDecomposedMatrix4x4;
        property Components[const pIndexA,pIndexB:TpvInt32]:TpvScalar read GetComponent write SetComponent; default;
        property Columns[const pIndex:TpvInt32]:TpvVector4 read GetColumn write SetColumn;
        property Rows[const pIndex:TpvInt32]:TpvVector4 read GetRow write SetRow;
        case TpvInt32 of
         0:(RawComponents:array[0..3,0..3] of TpvScalar);
-        1:(m00,m01,m02,m03,m10,m11,m12,m13,m20,m21,m22,m23,m30,m31,m32,m33:TpvScalar);
-        2:(Tangent,Bitangent,Normal,Translation:TpvVector4);
-        3:(Right,Up,Forwards,Offset:TpvVector4);
+        1:(LinearRawComponents:array[0..15] of TpvScalar);
+        2:(m00,m01,m02,m03,m10,m11,m12,m13,m20,m21,m22,m23,m30,m31,m32,m33:TpvScalar);
+        3:(Tangent,Bitangent,Normal,Translation:TpvVector4);
+        4:(Right,Up,Forwards,Offset:TpvVector4);
+        5:(RawVectors:array[0..3] of TpvVector4);
      end;
+
+     TpvMatrix4x4DynamicArray=array of TpvMatrix4x4;
 
      // Dual quaternion with uniform scaling support
      PpvDualQuaternion=^TpvDualQuaternion;
@@ -954,6 +1049,7 @@ type PpvScalar=^TpvScalar;
       public
        const Null:TpvMatrix4x4=(RawComponents:((0.0,0.0,0,0.0),(0.0,0.0,0,0.0),(0.0,0.0,0,0.0),(0.0,0.0,0,0.0)));
              Identity:TpvMatrix4x4=(RawComponents:((1.0,0.0,0,0.0),(0.0,1.0,0.0,0.0),(0.0,0.0,1.0,0.0),(0.0,0.0,0,1.0)));
+             RotateY180:TpvMatrix4x4=(RawComponents:((-1.0,0.0,0,0.0),(0.0,1.0,0.0,0.0),(0.0,0.0,-1.0,0.0),(0.0,0.0,0,1.0)));
              RightToLeftHanded:TpvMatrix4x4=(RawComponents:((1.0,0.0,0,0.0),(0.0,1.0,0.0,0.0),(0.0,0.0,-1.0,0.0),(0.0,0.0,0,1.0)));
              Flip:TpvMatrix4x4=(RawComponents:((0.0,0.0,-1.0,0.0),(-1.0,0.0,0,0.0),(0.0,1.0,0.0,0.0),(0.0,0.0,0,1.0)));
              InverseFlip:TpvMatrix4x4=(RawComponents:((0.0,-1.0,0.0,0.0),(0.0,0.0,1.0,0.0),(-1.0,0.0,0,0.0),(0.0,0.0,0,1.0)));
@@ -1058,8 +1154,10 @@ type PpvScalar=^TpvScalar;
        function Flip:TpvAABB;
        function SquareMagnitude:TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
        function Resize(const f:TpvScalar):TpvAABB; {$ifdef CAN_INLINE}inline;{$endif}
+       procedure DirectCombine(const WithAABB:TpvAABB); {$ifdef CAN_INLINE}inline;{$endif}
+       procedure DirectCombineVector3(const v:TpvVector3); {$ifdef CAN_INLINE}inline;{$endif}
        function Combine(const WithAABB:TpvAABB):TpvAABB; {$ifdef CAN_INLINE}inline;{$endif}
-       function CombineVector3(v:TpvVector3):TpvAABB; {$ifdef CAN_INLINE}inline;{$endif}
+       function CombineVector3(const v:TpvVector3):TpvAABB; {$ifdef CAN_INLINE}inline;{$endif}
        function DistanceTo(const ToAABB:TpvAABB):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
        function Radius:TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
        function Compare(const WithAABB:TpvAABB):boolean; {$ifdef CAN_INLINE}inline;{$endif}
@@ -1084,6 +1182,7 @@ type PpvScalar=^TpvScalar;
        function TriangleIntersection(const Triangle:TpvTriangle):boolean;
        function Transform(const Transform:TpvMatrix3x3):TpvAABB; overload; {$ifdef CAN_INLINE}inline;{$endif}
        function Transform(const Transform:TpvMatrix4x4):TpvAABB; overload; {$ifdef CAN_INLINE}inline;{$endif}
+       function HomogenTransform(const aTransform:TpvMatrix4x4):TpvAABB; overload;
        function MatrixMul(const Transform:TpvMatrix3x3):TpvAABB; overload;
        function MatrixMul(const Transform:TpvMatrix4x4):TpvAABB; overload;
        function ScissorRect(out Scissor:TpvClipRect;const mvp:TpvMatrix4x4;const vp:TpvClipRect;zcull:boolean):boolean; overload; {$ifdef CAN_INLINE}inline;{$endif}
@@ -1107,9 +1206,11 @@ type PpvScalar=^TpvScalar;
       public
        Center:TpvVector3;
        Radius:TpvScalar;
-       constructor Create(const pCenter:TpvVector3;const pRadius:TpvScalar);
+       constructor Create(const pCenter:TpvVector3;const pRadius:TpvScalar); overload;
+       constructor Create(const aVector:TpvVector4); overload;
        constructor CreateFromAABB(const ppvAABB:TpvAABB);
        constructor CreateFromFrustum(const zNear,zFar,FOV,AspectRatio:TpvScalar;const Position,Direction:TpvVector3);
+       function ToVector4:TpvVector4;
        function ToAABB(const pScale:TpvScalar=1.0):TpvAABB;
        function Cull(const p:array of TpvPlane):boolean;
        function Contains(const b:TpvSphere):boolean; overload; {$ifdef CAN_INLINE}inline;{$endif}
@@ -1462,9 +1563,21 @@ type PpvScalar=^TpvScalar;
 
      PpvPolynomial=^TpvPolynomial;
 
+function RoundDownToPowerOfTwo(x:TpvUInt32):TpvUInt32; {$ifdef fpc}{$ifdef CAN_INLINE}inline;{$endif}{$endif}
+function RoundDownToPowerOfTwo64(x:TpvUInt64):TpvUInt64; {$ifdef fpc}{$ifdef CAN_INLINE}inline;{$endif}{$endif}
+function RoundDownToPowerOfTwoSizeUInt(x:TpvSizeUInt):TpvSizeUInt; {$ifdef fpc}{$ifdef CAN_INLINE}inline;{$endif}{$endif}
+
 function RoundUpToPowerOfTwo(x:TpvUInt32):TpvUInt32; {$ifdef fpc}{$ifdef CAN_INLINE}inline;{$endif}{$endif}
 function RoundUpToPowerOfTwo64(x:TpvUInt64):TpvUInt64; {$ifdef fpc}{$ifdef CAN_INLINE}inline;{$endif}{$endif}
 function RoundUpToPowerOfTwoSizeUInt(x:TpvSizeUInt):TpvSizeUInt; {$ifdef fpc}{$ifdef CAN_INLINE}inline;{$endif}{$endif}
+
+function RoundNearestToPowerOfTwo(x:TpvUInt32):TpvUInt32; {$ifdef fpc}{$ifdef CAN_INLINE}inline;{$endif}{$endif}
+function RoundNearestToPowerOfTwo64(x:TpvUInt64):TpvUInt64; {$ifdef fpc}{$ifdef CAN_INLINE}inline;{$endif}{$endif}
+function RoundNearestToPowerOfTwoSizeUInt(x:TpvSizeUInt):TpvSizeUInt; {$ifdef fpc}{$ifdef CAN_INLINE}inline;{$endif}{$endif}
+
+function RoundUp(x,y:TpvUInt32):TpvUInt32; {$ifdef fpc}{$ifdef CAN_INLINE}inline;{$endif}{$endif}
+function RoundUp64(x,y:TpvUInt64):TpvUInt64; {$ifdef fpc}{$ifdef CAN_INLINE}inline;{$endif}{$endif}
+function RoundUpSizeUInt(x,y:TpvSizeUInt):TpvSizeUInt; {$ifdef fpc}{$ifdef CAN_INLINE}inline;{$endif}{$endif}
 
 function IntLog2(x:TpvUInt32):TpvUInt32; {$ifdef fpc}{$ifdef CAN_INLINE}inline;{$endif}{$endif}
 function IntLog264(x:TpvUInt64):TpvUInt32; {$ifdef fpc}{$ifdef CAN_INLINE}inline;{$endif}{$endif}
@@ -1474,13 +1587,22 @@ function ModuloPos(x,y:TpvScalar):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
 function IEEERemainder(x,y:TpvScalar):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
 function Modulus(x,y:TpvScalar):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
 
+function CastFloatToUInt32(const v:TpvFloat):TpvUInt32; {$ifdef CAN_INLINE}inline;{$endif}
+function CastUInt32ToFloat(const v:TpvUInt32):TpvFloat; {$ifdef CAN_INLINE}inline;{$endif}
+
+function SignNonZero(const v:TpvFloat):TpvInt32; {$ifdef CAN_INLINE}inline;{$endif}
+
 function Determinant4x4(const v0,v1,v2,v3:TpvVector4):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
-function SolveQuadraticRoots(const a,b,c:TpvScalar;out t1,t2:TpvScalar):boolean;
+function OldSolveQuadraticRoots(const a,b,c:TpvScalar;out t0,t1:TpvScalar):boolean;
+function SolveQuadraticRoots(const a,b,c:TpvScalar;out t0,t1:TpvScalar):boolean;
 function LinearPolynomialRoot(const a,b:TpvScalar):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
 function QuadraticPolynomialRoot(const a,b,c:TpvScalar):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
 function CubicPolynomialRoot(const a,b,c,d:TpvScalar):TpvScalar;
 
 function FloatLerp(const aV1,aV2,aTime:TpvScalar):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
+function DoubleLerp(const aV1,aV2,aTime:TpvDouble):TpvDouble; {$ifdef CAN_INLINE}inline;{$endif}
+
+function Exp2(const aValue:TpvDouble):TpvDouble; {$ifdef CAN_INLINE}inline;{$endif}
 
 function Cross(const a,b:TpvVector2):TpvVector2; overload; {$ifdef CAN_INLINE}inline;{$endif}
 function Cross(const a,b:TpvVector3):TpvVector3; overload; {$ifdef CAN_INLINE}inline;{$endif}
@@ -1602,7 +1724,9 @@ function GetOverlap(const MinA,MaxA,MinB,MaxB:TpvScalar):TpvScalar; {$ifdef CAN_
 function OldTriangleTriangleIntersection(const a0,a1,a2,b0,b1,b2:TpvVector3):boolean;
 function TriangleTriangleIntersection(const v0,v1,v2,u0,u1,u2:TpvVector3):boolean;
 
+function UnclampedClosestPointToLine(const LineStartPoint,LineEndPoint,Point:TpvVector3;const ClosestPointOnLine:PpvVector3=nil;const Time:PpvScalar=nil):TpvScalar;
 function ClosestPointToLine(const LineStartPoint,LineEndPoint,Point:TpvVector3;const ClosestPointOnLine:PpvVector3=nil;const Time:PpvScalar=nil):TpvScalar;
+function ClosestPointToRect(const Rect:TpvRect;const Point:TpvVector2;const ClosestPointOnRect:PpvVector2=nil):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
 function ClosestPointToAABB(const AABB:TpvAABB;const Point:TpvVector3;const ClosestPointOnAABB:PpvVector3=nil):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
 function ClosestPointToOBB(const OBB:TpvOBB;const Point:TpvVector3;out ClosestPoint:TpvVector3):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
 function ClosestPointToSphere(const Sphere:TpvSphere;const Point:TpvVector3;out ClosestPoint:TpvVector3):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
@@ -1628,6 +1752,13 @@ function AngleClamp(a:TpvScalar):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
 function AngleDiff(a,b:TpvScalar):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
 function AngleLerp(a,b,x:TpvScalar):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
 
+function UnitTimeClamp(a:TpvDouble):TpvDouble;
+function UnitTimeDiff(a,b:TpvDouble;const aBackwards:boolean):TpvDouble;
+function UnitTimeLerp(a,b,x:TpvDouble;const aBackwards:boolean):TpvDouble; overload;
+function UnitTimeLerp(a,b,x:TpvDouble):TpvDouble; overload;
+
+function NonUnitTimeLerp(a,b,x:TpvDouble):TpvDouble;
+
 function InertiaTensorTransform(const Inertia,Transform:TpvMatrix3x3):TpvMatrix3x3; {$ifdef CAN_INLINE}inline;{$endif}
 function InertiaTensorParallelAxisTheorem(const Center:TpvVector3;const Mass:TpvScalar):TpvMatrix3x3; {$ifdef CAN_INLINE}inline;{$endif}
 
@@ -1647,11 +1778,40 @@ function Float32ToFloat10(const pValue:TpvFloat):TpvUInt32;
 function ConvertRGB32FToRGB9E5(r,g,b:TpvFloat):TpvUInt32;
 function ConvertRGB32FToR11FG11FB10F(const r,g,b:TpvFloat):TpvUInt32; {$ifdef CAN_INLINE}inline;{$endif}
 
-function PackTangentSpace(const aTangent,aBitangent,aNormal:TpvVector3):TpvPackedTangentSpace;
-procedure UnpackTangentSpace(const aPackedTangentSpace:TpvPackedTangentSpace;out aTangent,aBitangent,aNormal:TpvVector3);
+function EncodeAsRGB10A2UNorm(const aVector:TpvVector4):TpvUInt32;
+function DecodeFromRGB10A2UNorm(const aValue:TpvUInt32):TpvVector4;
 
+function EncodeAsRGB10A2SNorm(const aVector:TpvVector4):TpvUInt32;
+function DecodeFromRGB10A2SNorm(const aValue:TpvUInt32):TpvVector4;
+
+function PackInt8TangentSpace(const aTangent,aBitangent,aNormal:TpvVector3):TpvInt8PackedTangentSpace;
+procedure UnpackInt8TangentSpace(const aPackedTangentSpace:TpvInt8PackedTangentSpace;out aTangent,aBitangent,aNormal:TpvVector3);
+
+function PackInt16TangentSpace(const aTangent,aBitangent,aNormal:TpvVector3):TpvInt16PackedTangentSpace;
+procedure UnpackInt16TangentSpace(const aPackedTangentSpace:TpvInt16PackedTangentSpace;out aTangent,aBitangent,aNormal:TpvVector3);
+
+function PackInt8QTangentSpace(const aTangent,aBitangent,aNormal:TpvVector3):TpvInt8PackedTangentSpace;
+procedure UnpackInt8QTangentSpace(const aPackedTangentSpace:TpvInt8PackedTangentSpace;out aTangent,aBitangent,aNormal:TpvVector3);
+
+function PackInt16QTangentSpace(const aTangent,aBitangent,aNormal:TpvVector3):TpvInt16PackedTangentSpace;
+procedure UnpackInt16QTangentSpace(const aPackedTangentSpace:TpvInt16PackedTangentSpace;out aTangent,aBitangent,aNormal:TpvVector3);
+
+function PackUInt8TangentSpace(const aTangent,aBitangent,aNormal:TpvVector3):TpvUInt8PackedTangentSpace;
+procedure UnpackUInt8TangentSpace(const aPackedTangentSpace:TpvUInt8PackedTangentSpace;out aTangent,aBitangent,aNormal:TpvVector3);
+
+function PackUInt16TangentSpace(const aTangent,aBitangent,aNormal:TpvVector3):TpvUInt16PackedTangentSpace;
+procedure UnpackUInt16TangentSpace(const aPackedTangentSpace:TpvUInt16PackedTangentSpace;out aTangent,aBitangent,aNormal:TpvVector3);
+
+function PackUInt8QTangentSpace(const aTangent,aBitangent,aNormal:TpvVector3):TpvUInt8PackedTangentSpace;
+procedure UnpackUInt8QTangentSpace(const aPackedTangentSpace:TpvUInt8PackedTangentSpace;out aTangent,aBitangent,aNormal:TpvVector3);
+
+function PackUInt16QTangentSpace(const aTangent,aBitangent,aNormal:TpvVector3):TpvUInt16PackedTangentSpace;
+procedure UnpackUInt16QTangentSpace(const aPackedTangentSpace:TpvUInt16PackedTangentSpace;out aTangent,aBitangent,aNormal:TpvVector3);
+
+function ConvertLinearToSRGB(const aColor:TpvFloat):TpvFloat; overload;
 function ConvertLinearToSRGB(const aColor:TpvVector3):TpvVector3; overload;
 function ConvertLinearToSRGB(const aColor:TpvVector4):TpvVector4; overload;
+function ConvertSRGBToLinear(const aColor:TpvFloat):TpvFloat; overload;
 function ConvertSRGBToLinear(const aColor:TpvVector3):TpvVector3; overload;
 function ConvertSRGBToLinear(const aColor:TpvVector4):TpvVector4; overload;
 
@@ -1663,7 +1823,116 @@ function SolveCubic(const a,b,c,d:TpvDouble;out r0,r1,r2:TpvDouble):TpvSizeInt;
 function SolveQuartic(const a,b,c,d,e:TpvDouble;out r0,r1,r2,r3:TpvDouble):TpvSizeInt;
 function SolveRootsInInterval(const aCoefs:array of TpvDouble;const aMin,aMax:TpvDouble):TpvDoubleDynamicArray;
 
+function EncodeNormalAsUInt32(const aNormal:TpvVector3):TpvUInt32;
+function DecodeNormalFromUInt32(const aNormal:TpvUInt32):TpvVector3;
+
+function OctahedralProjectionMappingEncode(const aVector:TpvVector3):TpvVector2;
+function OctahedralProjectionMappingDecode(const aVector:TpvVector2):TpvVector3;
+
+function OctahedralProjectionMappingSignedEncode(const aVector:TpvVector3):TpvVector2;
+function OctahedralProjectionMappingSignedDecode(const aVector:TpvVector2):TpvVector3;
+
+function OctEncode(const aVector:TpvVector3;const aFloorX,aFloorY:Boolean):TpvInt16Vector2; overload;
+function OctDecode(const aOct:TpvInt16Vector2):TpvVector3;
+function OctEncode(const aVector:TpvVector3):TpvInt16Vector2; overload;
+
+function EncodeDiamondUnsigned(const aVector:TpvVector2):TpvScalar;
+function DecodeDiamondUnsigned(const aValue:TpvScalar):TpvVector2;
+
+function EncodeDiamondSigned(const aVector:TpvVector2):TpvScalar;
+function DecodeDiamondSigned(const aValue:TpvScalar):TpvVector2;
+
+function EncodeTangentSpaceAsRGB10A2SNorm(const aTangent,aBitangent,aNormal:TpvVector3):TpvUInt32; overload;
+function EncodeTangentSpaceAsRGB10A2SNorm(const aMatrix:TpvMatrix3x3):TpvUInt32; overload;
+
+procedure DecodeTangentSpaceFromRGB10A2SNorm(const aValue:TpvUInt32;out aTangent,aBitangent,aNormal:TpvVector3); overload;
+procedure DecodeTangentSpaceFromRGB10A2SNorm(const aValue:TpvUInt32;out aMatrix3x3:TpvMatrix3x3); overload;
+
+function EncodeQTangentUI32(const aTangent,aBitangent:TpvVector3;aNormal:TpvVector3):TpvUInt32; overload;
+function EncodeQTangentUI32(const aMatrix:TpvMatrix3x3):TpvUInt32; overload;
+function EncodeQTangentUI32(const aMatrix:TpvMatrix4x4):TpvUInt32; overload;
+
+procedure DecodeQTangentUI32Vectors(const aValue:TpvUInt32;out aTangent,aBitangent,aNormal:TpvVector3);
+
+function DecodeQTangentUI32(const aValue:TpvUInt32):TpvMatrix3x3;
+
 implementation
+
+function RoundDownToPowerOfTwo(x:TpvUInt32):TpvUInt32;
+begin
+
+ if x=0 then begin
+
+  // Handle zero case
+  result:=0;
+
+ end else begin
+
+  // / Propagate the highest bit to the right
+  x:=x or (x shr 1);
+  x:=x or (x shr 2);
+  x:=x or (x shr 4);
+  x:=x or (x shr 8);
+  x:=x or (x shr 16);
+
+  // Subtract half of the value to get the previous power of 2
+  result:=x-(x shr 1);
+
+ end;
+
+end;
+
+function RoundDownToPowerOfTwo64(x:TpvUInt64):TpvUInt64;
+begin
+
+ if x=0 then begin
+
+  // Handle zero case
+  result:=0;
+
+ end else begin
+
+  // / Propagate the highest bit to the right
+  x:=x or (x shr 1);
+  x:=x or (x shr 2);
+  x:=x or (x shr 4);
+  x:=x or (x shr 8);
+  x:=x or (x shr 16);
+  x:=x or (x shr 32);
+
+  // Subtract half of the value to get the previous power of 2
+  result:=x-(x shr 1);
+
+ end;
+
+end;
+
+function RoundDownToPowerOfTwoSizeUInt(x:TpvSizeUInt):TpvSizeUInt;
+begin
+
+ if x=0 then begin
+
+  // Handle zero case
+  result:=0;
+
+ end else begin
+
+  // / Propagate the highest bit to the right
+  x:=x or (x shr 1);
+  x:=x or (x shr 2);
+  x:=x or (x shr 4);
+  x:=x or (x shr 8);
+  x:=x or (x shr 16);
+{$ifdef CPU64}
+  x:=x or (x shr 32);
+{$endif}
+
+  // Subtract half of the value to get the previous power of 2
+  result:=x-(x shr 1);
+
+ end;
+
+end;
 
 function RoundUpToPowerOfTwo(x:TpvUInt32):TpvUInt32;
 begin
@@ -1702,10 +1971,79 @@ begin
  result:=x+1;
 end;
 
+function RoundNearestToPowerOfTwo(x:TpvUInt32):TpvUInt32; {$ifdef fpc}{$ifdef CAN_INLINE}inline;{$endif}{$endif}
+var a,b:TpvUInt32;
+begin
+ a:=RoundDownToPowerOfTwo(x);
+ b:=RoundUpToPowerOfTwo(x);
+ if (x-a)<(b-x) then begin
+  result:=a;
+ end else begin
+  result:=b;
+ end;
+end;
+
+function RoundNearestToPowerOfTwo64(x:TpvUInt64):TpvUInt64; {$ifdef fpc}{$ifdef CAN_INLINE}inline;{$endif}{$endif}
+var a,b:TpvUInt64;
+begin
+ a:=RoundDownToPowerOfTwo64(x);
+ b:=RoundUpToPowerOfTwo64(x);
+ if (x-a)<(b-x) then begin
+  result:=a;
+ end else begin
+  result:=b;
+ end;
+end;
+
+function RoundNearestToPowerOfTwoSizeUInt(x:TpvSizeUInt):TpvSizeUInt; {$ifdef fpc}{$ifdef CAN_INLINE}inline;{$endif}{$endif}
+var a,b:TpvUInt32;
+begin
+ a:=RoundDownToPowerOfTwoSizeUInt(x);
+ b:=RoundUpToPowerOfTwoSizeUInt(x);
+ if (x-a)<(b-x) then begin
+  result:=a;
+ end else begin
+  result:=b;
+ end;
+end;
+
+function RoundUp(x,y:TpvUInt32):TpvUInt32; {$ifdef fpc}{$ifdef CAN_INLINE}inline;{$endif}{$endif}
+var m:TpvUInt32;
+begin
+ m:=y-1;
+ if (y and m)=0 then begin
+  result:=(x+m) and not TpvUInt32(m);
+ end else begin
+  result:=((x+m) div y)*y;
+ end;
+end;
+
+function RoundUp64(x,y:TpvUInt64):TpvUInt64; {$ifdef fpc}{$ifdef CAN_INLINE}inline;{$endif}{$endif}
+var m:TpvUInt64;
+begin
+ m:=y-1;
+ if (y and m)=0 then begin
+  result:=(x+m) and not TpvUInt64(m);
+ end else begin
+  result:=((x+m) div y)*y;
+ end;
+end;
+
+function RoundUpSizeUInt(x,y:TpvSizeUInt):TpvSizeUInt; {$ifdef fpc}{$ifdef CAN_INLINE}inline;{$endif}{$endif}
+var m:TpvSizeUInt;
+begin
+ m:=y-1;
+ if (y and m)=0 then begin
+  result:=(x+m) and not TpvSizeUInt(m);
+ end else begin
+  result:=((x+m) div y)*y;
+ end;
+end;
+
 function IntLog2(x:TpvUInt32):TpvUInt32; {$if defined(fpc)}{$ifdef CAN_INLINE}inline;{$endif}
 begin
  if x<>0 then begin
-  result:=BSRWord(x);
+  result:=BSRDWord(x);
  end else begin
   result:=0;
  end;
@@ -1836,17 +2174,32 @@ begin
  end;
 end;
 
-function IEEERemainder(x,y:TpvScalar):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
+function IEEERemainder(x,y:TpvScalar):TpvScalar;
 begin
  result:=x-(round(x/y)*y);
 end;
 
-function Modulus(x,y:TpvScalar):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
+function Modulus(x,y:TpvScalar):TpvScalar;
 begin
  result:=(abs(x)-(abs(y)*(floor(abs(x)/abs(y)))))*Sign(x);
 end;
 
-function Determinant4x4(const v0,v1,v2,v3:TpvVector4):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
+function CastFloatToUInt32(const v:TpvFloat):TpvUInt32;
+begin
+ result:=PpvUInt32(Pointer(@v))^;
+end;
+
+function CastUInt32ToFloat(const v:TpvUInt32):TpvFloat;
+begin
+ result:=PpvFloat(Pointer(@v))^;
+end;
+
+function SignNonZero(const v:TpvFloat):TpvInt32;
+begin
+ result:=1-(TpvInt32(TpvUInt32(TpvUInt32(PpvUInt32(Pointer(@v))^) shr 31)) shl 1);
+end;
+
+function Determinant4x4(const v0,v1,v2,v3:TpvVector4):TpvScalar;
 begin
  result:=(v0.w*v1.z*v2.y*v3.x)-(v0.z*v1.w*v2.y*v3.x)-
          (v0.w*v1.y*v2.z*v3.x)+(v0.y*v1.w*v2.z*v3.x)+
@@ -1862,7 +2215,7 @@ begin
          (v0.y*v1.x*v2.z*v3.w)+(v0.x*v1.y*v2.z*v3.w);
 end;
 
-function SolveQuadraticRoots(const a,b,c:TpvScalar;out t1,t2:TpvScalar):boolean;
+function OldSolveQuadraticRoots(const a,b,c:TpvScalar;out t0,t1:TpvScalar):boolean;
 var a2,d,InverseDenominator:TpvScalar;
 begin
  result:=false;
@@ -1876,20 +2229,65 @@ begin
   end else begin
    InverseDenominator:=1.0/a2;
    if abs(d)<EPSILON then begin
-    t1:=(-b)*InverseDenominator;
-    t2:=t1;
+    t0:=(-b)*InverseDenominator;
+    t1:=t0;
    end else begin
     d:=sqrt(d);
-    t1:=((-b)+d)*InverseDenominator;
-    t2:=((-b)-d)*InverseDenominator;
-    if t1>t2 then begin
-     d:=t1;
-     t1:=t2;
-     t2:=d;
+    t0:=((-b)+d)*InverseDenominator;
+    t1:=((-b)-d)*InverseDenominator;
+    if t0>t1 then begin
+     d:=t0;
+     t0:=t1;
+     t1:=d;
     end;
    end;
    result:=true;
   end;
+ end;
+end;
+
+// The SolveQuadraticRoots function offers a significant improvement over the OldSolveQuadraticRoots
+// function in terms of numerical stability and accuracy. In computing, especially for floating-point
+// numbers, the representation and precision of real numbers are limited, which can lead to issues
+// like loss of significance and catastrophic cancellation. This problem is particularly acute when
+// dealing with values that are very close in magnitude but have opposite signs.
+// The OldSolveQuadraticRoots function uses a direct approach to calculate the roots of the quadratic
+// equation, which suffers from these numerical stability issues. Specifically, when 'b' and the
+// square root of the discriminant ('d') in the quadratic formula have values close to each other
+// but opposite in sign, it can lead to significant errors due to rounding and cancellation.
+// The SolveQuadraticRoots function addresses this by using an alternative formulation:
+// q = -0.5 * (b + sign(b) * sqrt(b^2 - 4ac))
+// t0 = q / a
+// t1 = c / q
+// This approach ensures that the terms added to compute 'q' always have the same sign, thus avoiding
+// the catastrophic cancellation that can occur in the OldSolveQuadraticRoots function. By doing so,
+// SolveQuadraticRoots provides more reliable and accurate results, particularly in edge cases where
+// precision is crucial.
+function SolveQuadraticRoots(const a,b,c:TpvScalar;out t0,t1:TpvScalar):boolean;
+var d,q,t:TpvScalar;
+begin
+ d:=sqr(b)-(4.0*(a*c));
+ if d<0.0 then begin
+  result:=false;
+ end else begin
+  if d=0.0 then begin
+   t0:=((-0.5)*b)/a;
+   t1:=t0;
+  end else begin
+   if b>0 then begin
+    q:=(-0.5)*(b+sqrt(d));
+   end else begin
+    q:=(-0.5)*(b-sqrt(d));
+   end;
+   t0:=q/a;
+   t1:=c/q;
+   if t0>t1 then begin
+    t:=t0;
+    t0:=t1;
+    t1:=t;
+   end;
+  end;
+  result:=true;
  end;
 end;
 
@@ -2050,7 +2448,18 @@ begin
  end;
 end;
 
-function FloatLerp(const aV1,aV2,aTime:TpvScalar):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
+function FloatLerp(const aV1,aV2,aTime:TpvScalar):TpvScalar;
+begin
+ if aTime<0.0 then begin
+  result:=aV1;
+ end else if aTime>1.0 then begin
+  result:=aV2;
+ end else begin
+  result:=(aV1*(1.0-aTime))+(aV2*aTime);
+ end;
+end;
+
+function DoubleLerp(const aV1,aV2,aTime:TpvDouble):TpvDouble;
 begin
  if aTime<0.0 then begin
   result:=aV1;
@@ -2280,6 +2689,12 @@ begin
  end;
 end;
 
+function TpvVector2.Abs:TpvVector2;
+begin
+ result.x:=System.Abs(x);
+ result.y:=System.Abs(y);
+end;
+
 function TpvVector2.DistanceTo(const aToVector:TpvVector2):TpvScalar;
 begin
  result:=sqrt(sqr(x-aToVector.x)+sqr(y-aToVector.y));
@@ -2419,6 +2834,11 @@ begin
  result.z:=aZ;
 end;
 
+class function TpvVector3.InlineableCreate(const aXYZ:TpvVector3):TpvVector3;
+begin
+ result:=aXYZ;
+end;
+
 class operator TpvVector3.Implicit(const a:TpvScalar):TpvVector3;
 begin
  result.x:=a;
@@ -2447,9 +2867,15 @@ class operator TpvVector3.Inc({$ifdef fpc}constref{$else}const{$endif} a:TpvVect
 {$if defined(SIMD) and (defined(cpu386) or defined(cpux64))}
 const One:TpvFloat=1.0;
 asm
+{$if defined(ExplicitX64SIMDRegs)}
+ movss xmm0,dword ptr [rdx+0]
+ movss xmm1,dword ptr [rdx+4]
+ movss xmm2,dword ptr [rdx+8]
+{$else}
  movss xmm0,dword ptr [a+0]
  movss xmm1,dword ptr [a+4]
  movss xmm2,dword ptr [a+8]
+{$ifend}
 {$if defined(cpu386)}
  movss xmm3,dword ptr [One]
 {$elseif defined(fpc)}
@@ -2460,9 +2886,15 @@ asm
  addss xmm0,xmm3
  addss xmm1,xmm3
  addss xmm2,xmm3
+{$if defined(ExplicitX64SIMDRegs)}
+ movss dword ptr [rcx+0],xmm0
+ movss dword ptr [rcx+4],xmm1
+ movss dword ptr [rcx+8],xmm2
+{$else}
  movss dword ptr [result+0],xmm0
  movss dword ptr [result+4],xmm1
  movss dword ptr [result+8],xmm2
+{$ifend}
 end;
 {$else}
 begin
@@ -2476,9 +2908,15 @@ class operator TpvVector3.Dec({$ifdef fpc}constref{$else}const{$endif} a:TpvVect
 {$if defined(SIMD) and (defined(cpu386) or defined(cpux64))}
 const One:TpvFloat=1.0;
 asm
+{$if defined(ExplicitX64SIMDRegs)}
+ movss xmm0,dword ptr [rdx+0]
+ movss xmm1,dword ptr [rdx+4]
+ movss xmm2,dword ptr [rdx+8]
+{$else}
  movss xmm0,dword ptr [a+0]
  movss xmm1,dword ptr [a+4]
  movss xmm2,dword ptr [a+8]
+{$ifend}
 {$if defined(cpu386)}
  movss xmm3,dword ptr [One]
 {$elseif defined(fpc)}
@@ -2489,9 +2927,15 @@ asm
  subss xmm0,xmm3
  subss xmm1,xmm3
  subss xmm2,xmm3
+{$if defined(ExplicitX64SIMDRegs)}
+ movss dword ptr [rcx+0],xmm0
+ movss dword ptr [rcx+4],xmm1
+ movss dword ptr [rcx+8],xmm2
+{$else}
  movss dword ptr [result+0],xmm0
  movss dword ptr [result+4],xmm1
  movss dword ptr [result+8],xmm2
+{$ifend}
 end;
 {$else}
 begin
@@ -2504,6 +2948,17 @@ end;
 class operator TpvVector3.Add({$ifdef fpc}constref{$else}const{$endif} a,b:TpvVector3):TpvVector3;
 {$if defined(SIMD) and (defined(cpu386) or defined(cpux64))}
 asm
+{$if defined(ExplicitX64SIMDRegs)}
+ movss xmm0,dword ptr [rdx+0]
+ movss xmm1,dword ptr [rdx+4]
+ movss xmm2,dword ptr [rdx+8]
+ addss xmm0,dword ptr [r8+0]
+ addss xmm1,dword ptr [r8+4]
+ addss xmm2,dword ptr [r8+8]
+ movss dword ptr [rcx+0],xmm0
+ movss dword ptr [rcx+4],xmm1
+ movss dword ptr [rcx+8],xmm2
+{$else}
  movss xmm0,dword ptr [a+0]
  movss xmm1,dword ptr [a+4]
  movss xmm2,dword ptr [a+8]
@@ -2513,6 +2968,7 @@ asm
  movss dword ptr [result+0],xmm0
  movss dword ptr [result+4],xmm1
  movss dword ptr [result+8],xmm2
+{$ifend}
 end;
 {$else}
 begin
@@ -2539,6 +2995,17 @@ end;
 class operator TpvVector3.Subtract({$ifdef fpc}constref{$else}const{$endif} a,b:TpvVector3):TpvVector3;
 {$if defined(SIMD) and (defined(cpu386) or defined(cpux64))}
 asm
+{$if defined(ExplicitX64SIMDRegs)}
+ movss xmm0,dword ptr [rdx+0]
+ movss xmm1,dword ptr [rdx+4]
+ movss xmm2,dword ptr [rdx+8]
+ subss xmm0,dword ptr [r8+0]
+ subss xmm1,dword ptr [r8+4]
+ subss xmm2,dword ptr [r8+8]
+ movss dword ptr [rcx+0],xmm0
+ movss dword ptr [rcx+4],xmm1
+ movss dword ptr [rcx+8],xmm2
+{$else}
  movss xmm0,dword ptr [a+0]
  movss xmm1,dword ptr [a+4]
  movss xmm2,dword ptr [a+8]
@@ -2548,6 +3015,7 @@ asm
  movss dword ptr [result+0],xmm0
  movss dword ptr [result+4],xmm1
  movss dword ptr [result+8],xmm2
+{$ifend}
 end;
 {$else}
 begin
@@ -2574,15 +3042,27 @@ end;
 class operator TpvVector3.Multiply({$ifdef fpc}constref{$else}const{$endif} a,b:TpvVector3):TpvVector3;
 {$if defined(SIMD) and (defined(cpu386) or defined(cpux64))}
 asm
- movss xmm0,dword ptr [a]
- movss xmm1,xmm0
- movss xmm2,xmm0
+{$if defined(ExplicitX64SIMDRegs)}
+ movss xmm0,dword ptr [rdx+0]
+ movss xmm1,dword ptr [rdx+4]
+ movss xmm2,dword ptr [rdx+8]
+ mulss xmm0,dword ptr [r8+0]
+ mulss xmm1,dword ptr [r8+4]
+ mulss xmm2,dword ptr [r8+8]
+ movss dword ptr [rcx+0],xmm0
+ movss dword ptr [rcx+4],xmm1
+ movss dword ptr [rcx+8],xmm2
+{$else}
+ movss xmm0,dword ptr [a+0]
+ movss xmm1,dword ptr [a+4]
+ movss xmm2,dword ptr [a+8]
  mulss xmm0,dword ptr [b+0]
  mulss xmm1,dword ptr [b+4]
  mulss xmm2,dword ptr [b+8]
  movss dword ptr [result+0],xmm0
  movss dword ptr [result+4],xmm1
  movss dword ptr [result+8],xmm2
+{$ifend}
 end;
 {$else}
 begin
@@ -2609,15 +3089,27 @@ end;
 class operator TpvVector3.Divide({$ifdef fpc}constref{$else}const{$endif} a,b:TpvVector3):TpvVector3;
 {$if defined(SIMD) and (defined(cpu386) or defined(cpux64))}
 asm
- movss xmm0,dword ptr [a]
- movss xmm1,xmm0
- movss xmm2,xmm0
+{$if defined(ExplicitX64SIMDRegs)}
+ movss xmm0,dword ptr [rdx+0]
+ movss xmm1,dword ptr [rdx+4]
+ movss xmm2,dword ptr [rdx+8]
+ divss xmm0,dword ptr [r8+0]
+ divss xmm1,dword ptr [r8+4]
+ divss xmm2,dword ptr [r8+8]
+ movss dword ptr [rcx+0],xmm0
+ movss dword ptr [rcx+4],xmm1
+ movss dword ptr [rcx+8],xmm2
+{$else}
+ movss xmm0,dword ptr [a+0]
+ movss xmm1,dword ptr [a+4]
+ movss xmm2,dword ptr [a+8]
  divss xmm0,dword ptr [b+0]
  divss xmm1,dword ptr [b+4]
  divss xmm2,dword ptr [b+8]
  movss dword ptr [result+0],xmm0
  movss dword ptr [result+4],xmm1
  movss dword ptr [result+8],xmm2
+{$ifend}
 end;
 {$else}
 begin
@@ -2644,15 +3136,27 @@ end;
 class operator TpvVector3.IntDivide({$ifdef fpc}constref{$else}const{$endif} a,b:TpvVector3):TpvVector3;
 {$if defined(SIMD) and (defined(cpu386) or defined(cpux64))}
 asm
- movss xmm0,dword ptr [a]
- movss xmm1,xmm0
- movss xmm2,xmm0
+{$if defined(ExplicitX64SIMDRegs)}
+ movss xmm0,dword ptr [rdx+0]
+ movss xmm1,dword ptr [rdx+4]
+ movss xmm2,dword ptr [rdx+8]
+ divss xmm0,dword ptr [r8+0]
+ divss xmm1,dword ptr [r8+4]
+ divss xmm2,dword ptr [r8+8]
+ movss dword ptr [rcx+0],xmm0
+ movss dword ptr [rcx+4],xmm1
+ movss dword ptr [rcx+8],xmm2
+{$else}
+ movss xmm0,dword ptr [a+0]
+ movss xmm1,dword ptr [a+4]
+ movss xmm2,dword ptr [a+8]
  divss xmm0,dword ptr [b+0]
  divss xmm1,dword ptr [b+4]
  divss xmm2,dword ptr [b+8]
  movss dword ptr [result+0],xmm0
  movss dword ptr [result+4],xmm1
  movss dword ptr [result+8],xmm2
+{$ifend}
 end;
 {$else}
 begin
@@ -2703,12 +3207,21 @@ asm
  xorps xmm0,xmm0
  xorps xmm1,xmm1
  xorps xmm2,xmm2
+{$if defined(ExplicitX64SIMDRegs)}
+ subss xmm0,dword ptr [rdx+0]
+ subss xmm1,dword ptr [rdx+4]
+ subss xmm2,dword ptr [rdx+8]
+ movss dword ptr [rcx+0],xmm0
+ movss dword ptr [rcx+4],xmm1
+ movss dword ptr [rcx+8],xmm2
+{$else}
  subss xmm0,dword ptr [a+0]
  subss xmm1,dword ptr [a+4]
  subss xmm2,dword ptr [a+8]
  movss dword ptr [result+0],xmm0
  movss dword ptr [result+4],xmm1
  movss dword ptr [result+8],xmm2
+{$ifend}
 end;
 {$else}
 begin
@@ -2802,6 +3315,15 @@ begin
    result.z:=0.0;
   end;
  end;
+end;
+
+function TpvVector3.OneUnitSmoothOrthogonalVector:TpvVector3;
+var t:TpvVector3;
+begin
+ t.x:=self.y-self.z;
+ t.y:=self.z-self.x;
+ t.z:=self.x-self.y;
+ result:=(t-(self*self.Dot(t))).Normalize;
 end;
 
 function TpvVector3.Length:TpvScalar;
@@ -3040,6 +3562,20 @@ begin
 end;
 {$ifend}
 
+function TpvVector3.Min(const aWith:TpvVector3):TpvVector3;
+begin
+ result.x:=Math.Min(x,aWith.x);
+ result.y:=Math.Min(y,aWith.y);
+ result.z:=Math.Min(z,aWith.z);
+end;
+
+function TpvVector3.Max(const aWith:TpvVector3):TpvVector3;
+begin
+ result.x:=Math.Max(x,aWith.x);
+ result.y:=Math.Max(y,aWith.y);
+ result.z:=Math.Max(z,aWith.z);
+end;
+
 function TpvVector3.Abs:TpvVector3;
 {$if defined(SIMD) and defined(cpu386)}
 asm
@@ -3088,6 +3624,194 @@ begin
  result.x:=System.abs(x);
  result.y:=System.abs(y);
  result.z:=System.abs(z);
+end;
+{$ifend}
+
+function TpvVector3.Truncate:TpvVector3;
+{$if defined(SIMD) and defined(cpu386)}
+asm
+ movss xmm0,dword ptr [eax+0]
+ movss xmm1,dword ptr [eax+4]
+ movss xmm2,dword ptr [eax+8]
+ movlhps xmm0,xmm1
+ shufps xmm0,xmm2,$88
+ roundps xmm0,xmm0,3
+ movaps xmm1,xmm0
+ movaps xmm2,xmm0
+ shufps xmm1,xmm1,$55
+ shufps xmm2,xmm2,$aa
+ movss dword ptr [result+0],xmm0
+ movss dword ptr [result+4],xmm1
+ movss dword ptr [result+8],xmm2
+end;
+{$elseif defined(SIMD) and defined(cpux64)}
+asm
+//{$ifdef Windows}
+ movss xmm0,dword ptr [rcx+0]
+ movss xmm1,dword ptr [rcx+4]
+ movss xmm2,dword ptr [rcx+8]
+(*{$else}
+ movss xmm0,dword ptr [rdi+0]
+ movss xmm1,dword ptr [rdi+4]
+ movss xmm2,dword ptr [rdi+8]
+{$endif}*)
+ movlhps xmm0,xmm1
+ shufps xmm0,xmm2,$88
+ roundps xmm0,xmm0,3
+ movaps xmm1,xmm0
+ movaps xmm2,xmm0
+ shufps xmm1,xmm1,$55
+ shufps xmm2,xmm2,$aa
+ movss dword ptr [result+0],xmm0
+ movss dword ptr [result+4],xmm1
+ movss dword ptr [result+8],xmm2
+end;
+{$else}
+begin
+ result.x:=System.trunc(x);
+ result.y:=System.trunc(y);
+ result.z:=System.trunc(z);
+end;
+{$ifend}
+
+function TpvVector3.Round:TpvVector3;
+{$if defined(SIMD) and defined(cpu386)}
+asm
+ movss xmm0,dword ptr [eax+0]
+ movss xmm1,dword ptr [eax+4]
+ movss xmm2,dword ptr [eax+8]
+ movlhps xmm0,xmm1
+ shufps xmm0,xmm2,$88
+ roundps xmm0,xmm0,0
+ movaps xmm1,xmm0
+ movaps xmm2,xmm0
+ shufps xmm1,xmm1,$55
+ shufps xmm2,xmm2,$aa
+ movss dword ptr [result+0],xmm0
+ movss dword ptr [result+4],xmm1
+ movss dword ptr [result+8],xmm2
+end;
+{$elseif defined(SIMD) and defined(cpux64)}
+asm
+//{$ifdef Windows}
+ movss xmm0,dword ptr [rcx+0]
+ movss xmm1,dword ptr [rcx+4]
+ movss xmm2,dword ptr [rcx+8]
+(*{$else}
+ movss xmm0,dword ptr [rdi+0]
+ movss xmm1,dword ptr [rdi+4]
+ movss xmm2,dword ptr [rdi+8]
+{$endif}*)
+ movlhps xmm0,xmm1
+ shufps xmm0,xmm2,$88
+ roundps xmm0,xmm0,0
+ movaps xmm1,xmm0
+ movaps xmm2,xmm0
+ shufps xmm1,xmm1,$55
+ shufps xmm2,xmm2,$aa
+ movss dword ptr [result+0],xmm0
+ movss dword ptr [result+4],xmm1
+ movss dword ptr [result+8],xmm2
+end;
+{$else}
+begin
+ result.x:=System.Round(x);
+ result.y:=System.Round(y);
+ result.z:=System.Round(z);
+end;
+{$ifend}
+
+function TpvVector3.Floor:TpvVector3;
+{$if defined(SIMD) and defined(cpu386)}
+asm
+ movss xmm0,dword ptr [eax+0]
+ movss xmm1,dword ptr [eax+4]
+ movss xmm2,dword ptr [eax+8]
+ movlhps xmm0,xmm1
+ shufps xmm0,xmm2,$88
+ roundps xmm0,xmm0,1
+ movaps xmm1,xmm0
+ movaps xmm2,xmm0
+ shufps xmm1,xmm1,$55
+ shufps xmm2,xmm2,$aa
+ movss dword ptr [result+0],xmm0
+ movss dword ptr [result+4],xmm1
+ movss dword ptr [result+8],xmm2
+end;
+{$elseif defined(SIMD) and defined(cpux64)}
+asm
+//{$ifdef Windows}
+ movss xmm0,dword ptr [rcx+0]
+ movss xmm1,dword ptr [rcx+4]
+ movss xmm2,dword ptr [rcx+8]
+(*{$else}
+ movss xmm0,dword ptr [rdi+0]
+ movss xmm1,dword ptr [rdi+4]
+ movss xmm2,dword ptr [rdi+8]
+{$endif}*)
+ movlhps xmm0,xmm1
+ shufps xmm0,xmm2,$88
+ roundps xmm0,xmm0,1
+ movaps xmm1,xmm0
+ movaps xmm2,xmm0
+ shufps xmm1,xmm1,$55
+ shufps xmm2,xmm2,$aa
+ movss dword ptr [result+0],xmm0
+ movss dword ptr [result+4],xmm1
+ movss dword ptr [result+8],xmm2
+end;
+{$else}
+begin
+ result.x:=Math.Floor(x);
+ result.y:=Math.Floor(y);
+ result.z:=Math.Floor(z);
+end;
+{$ifend}
+
+function TpvVector3.Ceil:TpvVector3;
+{$if defined(SIMD) and defined(cpu386)}
+asm
+ movss xmm0,dword ptr [eax+0]
+ movss xmm1,dword ptr [eax+4]
+ movss xmm2,dword ptr [eax+8]
+ movlhps xmm0,xmm1
+ shufps xmm0,xmm2,$88
+ roundps xmm0,xmm0,2
+ movaps xmm1,xmm0
+ movaps xmm2,xmm0
+ shufps xmm1,xmm1,$55
+ shufps xmm2,xmm2,$aa
+ movss dword ptr [result+0],xmm0
+ movss dword ptr [result+4],xmm1
+ movss dword ptr [result+8],xmm2
+end;
+{$elseif defined(SIMD) and defined(cpux64)}
+asm
+//{$ifdef Windows}
+ movss xmm0,dword ptr [rcx+0]
+ movss xmm1,dword ptr [rcx+4]
+ movss xmm2,dword ptr [rcx+8]
+(*{$else}
+ movss xmm0,dword ptr [rdi+0]
+ movss xmm1,dword ptr [rdi+4]
+ movss xmm2,dword ptr [rdi+8]
+{$endif}*)
+ movlhps xmm0,xmm1
+ shufps xmm0,xmm2,$88
+ roundps xmm0,xmm0,2
+ movaps xmm1,xmm0
+ movaps xmm2,xmm0
+ shufps xmm1,xmm1,$55
+ shufps xmm2,xmm2,$aa
+ movss dword ptr [result+0],xmm0
+ movss dword ptr [result+4],xmm1
+ movss dword ptr [result+8],xmm2
+end;
+{$else}
+begin
+ result.x:=Math.Ceil(x);
+ result.y:=Math.Ceil(y);
+ result.z:=Math.Ceil(z);
 end;
 {$ifend}
 
@@ -3341,7 +4065,8 @@ begin
 end;
 
 function TpvVector3.Slerp(const aToVector:TpvVector3;const aTime:TpvScalar):TpvVector3;
-var DotProduct,Theta,Sinus,Cosinus:TpvScalar;
+var //DotProduct,Theta,Sinus,Cosinus:TpvScalar;
+    SelfLength,ToVectorLength:TpvScalar;
 begin
  if aTime<=0.0 then begin
   result:=self;
@@ -3350,7 +4075,17 @@ begin
  end else if self=aToVector then begin
   result:=aToVector;
  end else begin
-  DotProduct:=self.Dot(aToVector);
+  SelfLength:=self.Length;
+  ToVectorLength:=aToVector.Length;
+  if Math.Min(System.Abs(SelfLength),System.Abs(ToVectorLength))<1e-7 then begin
+   result:=(self*(1.0-aTime))+(aToVector*aTime);
+  end else begin
+   result:=TpvVector3.InlineableCreate(TpvQuaternion.Identity.Slerp(TpvQuaternion.CreateFromToRotation(self,
+                                                                                                       aToVector),
+                                                                    aTime)*self.Normalize)*
+           ((SelfLength*(1.0-aTime))+(ToVectorLength*aTime));
+  end;
+{ DotProduct:=self.Dot(aToVector);
   if DotProduct<-1.0 then begin
    DotProduct:=-1.0;
   end else if DotProduct>1.0 then begin
@@ -3360,7 +4095,7 @@ begin
   Sinus:=0.0;
   Cosinus:=0.0;
   SinCos(Theta,Sinus,Cosinus);
-  result:=(self*Cosinus)+((aToVector-(self*DotProduct)).Normalize*Sinus);
+  result:=(self*Cosinus)+((aToVector-(self*DotProduct)).Normalize*Sinus);}
  end;
 end;
 
@@ -3535,14 +4270,22 @@ end;
 {$elseif defined(SIMD) and defined(cpux64)}
 const One:TpvVector4=(x:1.0;y:1.0;z:1.0;w:1.0);
 asm
+{$if defined(ExplicitX64SIMDRegs)}
+ movups xmm0,dqword ptr [rdx]
+{$else}
  movups xmm0,dqword ptr [a]
+{$ifend}
 {$ifdef fpc}
  movups xmm1,dqword ptr [rip+One]
 {$else}
  movups xmm1,dqword ptr [rel One]
 {$endif}
  addps xmm0,xmm1
+{$if defined(ExplicitX64SIMDRegs)}
+ movups dqword ptr [rcx],xmm0
+{$else}
  movups dqword ptr [result],xmm0
+{$ifend}
 end;
 {$else}
 begin
@@ -3565,14 +4308,22 @@ end;
 {$elseif defined(SIMD) and defined(cpux64)}
 const One:TpvVector4=(x:1.0;y:1.0;z:1.0;w:1.0);
 asm
+{$if defined(ExplicitX64SIMDRegs)}
+ movups xmm0,dqword ptr [rdx]
+{$else}
  movups xmm0,dqword ptr [a]
+{$ifend}
 {$ifdef fpc}
  movups xmm1,dqword ptr [rip+One]
 {$else}
  movups xmm1,dqword ptr [rel One]
 {$endif}
  subps xmm0,xmm1
+{$if defined(ExplicitX64SIMDRegs)}
+ movups dqword ptr [rcx],xmm0
+{$else}
  movups dqword ptr [result],xmm0
+{$ifend}
 end;
 {$else}
 begin
@@ -3586,8 +4337,13 @@ end;
 class operator TpvVector4.Add({$ifdef fpc}constref{$else}const{$endif} a,b:TpvVector4):TpvVector4;
 {$if defined(SIMD) and (defined(cpu386) or defined(cpux64))}
 asm
+{$if defined(ExplicitX64SIMDRegs)}
+ movups xmm0,dqword ptr [rdx]
+ movups xmm1,dqword ptr [r8]
+{$else}
  movups xmm0,dqword ptr [a]
  movups xmm1,dqword ptr [b]
+{$ifend}
  addps xmm0,xmm1
  movups dqword ptr [result],xmm0
 end;
@@ -3619,8 +4375,13 @@ end;
 class operator TpvVector4.Subtract({$ifdef fpc}constref{$else}const{$endif} a,b:TpvVector4):TpvVector4;
 {$if defined(SIMD) and (defined(cpu386) or defined(cpux64))}
 asm
+{$if defined(ExplicitX64SIMDRegs)}
+ movups xmm0,dqword ptr [rdx]
+ movups xmm1,dqword ptr [r8]
+{$else}
  movups xmm0,dqword ptr [a]
  movups xmm1,dqword ptr [b]
+{$ifend}
  subps xmm0,xmm1
  movups dqword ptr [result],xmm0
 end;
@@ -3652,8 +4413,13 @@ end;
 class operator TpvVector4.Multiply({$ifdef fpc}constref{$else}const{$endif} a,b:TpvVector4):TpvVector4;
 {$if defined(SIMD) and (defined(cpu386) or defined(cpux64))}
 asm
+{$if defined(ExplicitX64SIMDRegs)}
+ movups xmm0,dqword ptr [rdx]
+ movups xmm1,dqword ptr [r8]
+{$else}
  movups xmm0,dqword ptr [a]
  movups xmm1,dqword ptr [b]
+{$ifend}
  mulps xmm0,xmm1
  movups dqword ptr [result],xmm0
 end;
@@ -3685,8 +4451,13 @@ end;
 class operator TpvVector4.Divide({$ifdef fpc}constref{$else}const{$endif} a,b:TpvVector4):TpvVector4;
 {$if defined(SIMD) and (defined(cpu386) or defined(cpux64))}
 asm
+{$if defined(ExplicitX64SIMDRegs)}
+ movups xmm0,dqword ptr [rdx]
+ movups xmm1,dqword ptr [r8]
+{$else}
  movups xmm0,dqword ptr [a]
  movups xmm1,dqword ptr [b]
+{$ifend}
  divps xmm0,xmm1
  movups dqword ptr [result],xmm0
 end;
@@ -3718,8 +4489,13 @@ end;
 class operator TpvVector4.IntDivide({$ifdef fpc}constref{$else}const{$endif} a,b:TpvVector4):TpvVector4;
 {$if defined(SIMD) and (defined(cpu386) or defined(cpux64))}
 asm
+{$if defined(ExplicitX64SIMDRegs)}
+ movups xmm0,dqword ptr [rdx]
+ movups xmm1,dqword ptr [r8]
+{$else}
  movups xmm0,dqword ptr [a]
  movups xmm1,dqword ptr [b]
+{$ifend}
  divps xmm0,xmm1
  movups dqword ptr [result],xmm0
 end;
@@ -3776,7 +4552,11 @@ class operator TpvVector4.Negative({$ifdef fpc}constref{$else}const{$endif} a:Tp
 {$if defined(SIMD) and (defined(cpu386) or defined(cpux64))}
 asm
  xorps xmm0,xmm0
+{$if defined(ExplicitX64SIMDRegs)}
+ movups xmm1,dqword ptr [rdx]
+{$else}
  movups xmm1,dqword ptr [a]
+{$ifend}
  subps xmm0,xmm1
  movups dqword ptr [result],xmm0
 end;
@@ -4544,6 +5324,26 @@ begin
  Vector:=aVector;
 end;
 
+constructor TpvQuaternion.CreateFromScaledAngleAxis(const aScaledAngleAxis:TpvVector3);
+var Angle,Sinus,Coefficent:TpvScalar;
+    t:TpvVector3;
+begin
+ t:=aScaledAngleAxis*0.5;
+ Angle:=sqrt(sqr(t.x)+sqr(t.y)+sqr(t.z));
+ Sinus:=sin(Angle);
+ w:=cos(Angle);
+ if System.Abs(Sinus)>1e-6 then begin
+  Coefficent:=Sinus/Angle;
+  x:=t.x*Coefficent;
+  y:=t.y*Coefficent;
+  z:=t.z*Coefficent;
+ end else begin
+  x:=t.x;
+  y:=t.y;
+  z:=t.z;
+ end;
+end;
+
 constructor TpvQuaternion.CreateFromAngularVelocity(const aAngularVelocity:TpvVector3);
 var Magnitude,Sinus,Cosinus,SinusGain:TpvScalar;
 begin
@@ -4589,10 +5389,10 @@ begin
  cy:=cos(aYaw*0.5);
  cr:=cos(aRoll*0.5);}
  Vector:=TpvVector4.Create((sp*cy*cr)+(cp*sy*sr),
-                              (cp*sy*cr)-(sp*cy*sr),
-                              (cp*cy*sr)-(sp*sy*cr),
-                              (cp*cy*cr)+(sp*sy*sr)
-                             ).Normalize;
+                           (cp*sy*cr)-(sp*cy*sr),
+                           (cp*cy*sr)-(sp*sy*cr),
+                           (cp*cy*cr)+(sp*sy*sr)
+                          ).Normalize;
 end;
 
 constructor TpvQuaternion.CreateFromEuler(const aAngles:TpvVector3);
@@ -4609,10 +5409,10 @@ begin
  cy:=cos(aAngles.Yaw*0.5);
  cr:=cos(aAngles.Roll*0.5);//}
  Vector:=TpvVector4.Create((sp*cy*cr)+(cp*sy*sr),
-                              (cp*sy*cr)-(sp*cy*sr),
-                              (cp*cy*sr)-(sp*sy*cr),
-                              (cp*cy*cr)+(sp*sy*sr)
-                             ).Normalize;
+                           (cp*sy*cr)-(sp*cy*sr),
+                           (cp*cy*sr)-(sp*sy*cr),
+                           (cp*cy*cr)+(sp*sy*sr)
+                          ).Normalize;
 end;
 
 constructor TpvQuaternion.CreateFromNormalizedSphericalCoordinates(const aNormalizedSphericalCoordinates:TpvNormalizedSphericalCoordinates);
@@ -4624,11 +5424,90 @@ begin
 end;
 
 constructor TpvQuaternion.CreateFromToRotation(const aFromDirection,aToDirection:TpvVector3);
+var FromDirection,ToDirection:TpvVector3;
+    DotProduct:TpvScalar;
 begin
- Vector.xyz:=aFromDirection.Normalize.Cross(aToDirection.Normalize);
- Vector.w:=sqrt((sqr(aFromDirection.x)+sqr(aFromDirection.y)+sqr(aFromDirection.z))*
-                (sqr(aToDirection.x)+sqr(aToDirection.y)+sqr(aToDirection.z)))+
-                ((aFromDirection.x*aToDirection.x)+(aFromDirection.y*aToDirection.y)+(aFromDirection.z*aToDirection.z));
+ FromDirection:=aFromDirection.Normalize;
+ ToDirection:=aToDirection.Normalize;
+ DotProduct:=FromDirection.Dot(ToDirection);
+ if System.Abs(DotProduct)>=1.0 then begin
+  if DotProduct>0.0 then begin
+   self:=TpvQuaternion.Identity;
+  end else begin
+   self:=TpvQuaternion.CreateFromAngleAxis(PI,FromDirection.Perpendicular);
+  end;
+ end else begin
+  Vector.xyz:=FromDirection.Cross(ToDirection);
+  Vector.w:=DotProduct+sqrt(FromDirection.SquaredLength*ToDirection.SquaredLength);
+  Vector:=Vector.Normalize;
+ end;
+end;
+
+constructor TpvQuaternion.CreateFromLookRotation(const aForward,aUp:TpvVector3);
+var m0,m1,m2:TpvVector3;
+    t,s:TpvScalar;
+begin
+ m2:=aForward.Normalize;
+ m0:=((aUp.Normalize).Cross(aForward)).Normalize;
+ m1:=(m2.Cross(m0)).Normalize;
+ t:=m0.x+(m1.y+m2.z);
+ if t>2.9999999 then begin
+  self.x:=0.0;
+  self.y:=0.0;
+  self.z:=0.0;
+  self.w:=1.0;
+ end else if t>0.0000001 then begin
+  s:=sqrt(1.0+t)*2.0;
+  self.x:=(m1.z-m2.y)/s;
+  self.y:=(m2.x-m0.z)/s;
+  self.z:=(m0.y-m1.x)/s;
+  self.w:=s*0.25;
+ end else if (m0.x>m1.y) and (m0.x>m2.z) then begin
+  s:=sqrt(1.0+(m0.x-(m1.y+m2.z)))*2.0;
+  self.x:=s*0.25;
+  self.y:=(m1.x+m0.y)/s;
+  self.z:=(m2.x+m0.z)/s;
+  self.w:=(m1.z-m2.y)/s;
+ end else if m1.y>m2.z then begin
+  s:=sqrt(1.0+(m1.y-(m0.x+m2.z)))*2.0;
+  self.x:=(m1.x+m0.y)/s;
+  self.y:=s*0.25;
+  self.z:=(m2.y+m1.z)/s;
+  self.w:=(m2.x-m0.z)/s;
+ end else begin
+  s:=sqrt(1.0+(m2.z-(m0.x+m1.y)))*2.0;
+  self.x:=(m2.x+m0.z)/s;
+  self.y:=(m2.y+m1.z)/s;
+  self.z:=s*0.25;
+  self.w:=(m0.y-m1.x)/s;
+ end;
+ self:=self.Normalize;
+end;
+
+constructor TpvQuaternion.CreateFromCols(const aC0,aC1,aC2:TpvVector3);
+begin
+ if aC2.z<0.0 then begin
+  if aC0.x>aC1.y then begin
+   self:=TpvQuaternion.Create(((1.0+aC0.x)-aC1.y)-aC2.z,aC0.y+aC1.x,aC2.x+aC0.Z,aC1.z-aC2.y).Normalize;
+  end else begin
+   self:=TpvQuaternion.Create(aC0.y+aC1.x,((1.0-aC0.x)+aC1.y)-aC2.z,aC1.z+aC2.y,aC2.x-aC0.z).Normalize;
+  end;
+ end else begin
+  if aC0.x<-aC1.y then begin
+   self:=TpvQuaternion.Create(aC2.x+aC0.z,aC1.z+aC2.y,((1.0-aC0.x)-aC1.y)+aC2.z,aC0.y-aC1.x).Normalize;
+  end else begin
+   self:=TpvQuaternion.Create(aC1.z-aC2.y,aC2.x-aC0.z,aC0.y-aC1.x,((1.0+aC0.x)+aC1.y)+aC2.z).Normalize;
+  end;
+ end;
+end;
+
+constructor TpvQuaternion.CreateFromXY(const aX,aY:TpvVector3);
+var c0,c1,c2:TpvVector3;
+begin
+ c2:=(aX.Cross(aY)).Normalize;
+ c1:=(c2.Cross(aX)).Normalize;
+ c0:=aX.Normalize;
+ self:=TpvQuaternion.CreateFromCols(c0,c1,c2);
 end;
 
 class operator TpvQuaternion.Implicit(const a:TpvScalar):TpvQuaternion;
@@ -4669,7 +5548,11 @@ end;
 {$elseif defined(SIMD) and defined(cpux64)}
 const One:TpvQuaternion=(x:1.0;y:1.0;z:1.0;w:1.0);
 asm
+{$if defined(ExplicitX64SIMDRegs)}
+ movups xmm0,dqword ptr [rdx]
+{$else}
  movups xmm0,dqword ptr [a]
+{$ifend}
 {$ifdef fpc}
  movups xmm1,dqword ptr [rip+One]
 {$else}
@@ -4699,7 +5582,11 @@ end;
 {$elseif defined(SIMD) and defined(cpux64)}
 const One:TpvQuaternion=(x:1.0;y:1.0;z:1.0;w:1.0);
 asm
+{$if defined(ExplicitX64SIMDRegs)}
+ movups xmm0,dqword ptr [rdx]
+{$else}
  movups xmm0,dqword ptr [a]
+{$ifend}
 {$ifdef fpc}
  movups xmm1,dqword ptr [rip+One]
 {$else}
@@ -4720,8 +5607,13 @@ end;
 class operator TpvQuaternion.Add({$ifdef fpc}constref{$else}const{$endif} a,b:TpvQuaternion):TpvQuaternion;
 {$if defined(SIMD) and (defined(cpu386) or defined(cpux64))}
 asm
+{$if defined(ExplicitX64SIMDRegs)}
+ movups xmm0,dqword ptr [rdx]
+ movups xmm1,dqword ptr [r8]
+{$else}
  movups xmm0,dqword ptr [a]
  movups xmm1,dqword ptr [b]
+{$ifend}
  addps xmm0,xmm1
  movups dqword ptr [result],xmm0
 end;
@@ -4753,8 +5645,13 @@ end;
 class operator TpvQuaternion.Subtract({$ifdef fpc}constref{$else}const{$endif} a,b:TpvQuaternion):TpvQuaternion;
 {$if defined(SIMD) and (defined(cpu386) or defined(cpux64))}
 asm
+{$if defined(ExplicitX64SIMDRegs)}
+ movups xmm0,dqword ptr [rdx]
+ movups xmm1,dqword ptr [r8]
+{$else}
  movups xmm0,dqword ptr [a]
  movups xmm1,dqword ptr [b]
+{$ifend}
  subps xmm0,xmm1
  movups dqword ptr [result],xmm0
 end;
@@ -4787,10 +5684,18 @@ class operator TpvQuaternion.Multiply({$ifdef fpc}constref{$else}const{$endif} a
 {$if defined(SIMD) and (defined(cpu386) or defined(cpux64))}
 const XORMaskW:array[0..3] of TpvUInt32=($00000000,$00000000,$00000000,$80000000);
 asm
+{$if defined(ExplicitX64SIMDRegs)}
+ movups xmm4,dqword ptr [rdx]
+{$else}
  movups xmm4,dqword ptr [a]
+{$ifend}
  movaps xmm0,xmm4
  shufps xmm0,xmm4,$49
+{$if defined(ExplicitX64SIMDRegs)}
+ movups xmm2,dqword ptr [r8]
+{$else}
  movups xmm2,dqword ptr [b]
+{$ifend}
  movaps xmm3,xmm2
  movaps xmm1,xmm2
  shufps xmm3,xmm2,$52 // 001010010b
@@ -4861,12 +5766,22 @@ asm
  // q = a
  // v = b
 
+{$if defined(ExplicitX64SIMDRegs)}
+ movups xmm4,dqword ptr [rdx] // xmm4 = q.xyzw
+{$else}
  movups xmm4,dqword ptr [a] // xmm4 = q.xyzw
+{$ifend}
 
  xorps xmm7,xmm7
+{$if defined(ExplicitX64SIMDRegs)}
+ movss xmm5,dword ptr [r8+0]
+ movss xmm6,dword ptr [r8+4]
+ movss xmm7,dword ptr [r8+8]
+{$else}
  movss xmm5,dword ptr [b+0]
  movss xmm6,dword ptr [b+4]
  movss xmm7,dword ptr [b+8]
+{$ifend}
  movlhps xmm5,xmm6
  shufps xmm5,xmm7,$88
 //movups xmm5,dqword ptr [b] // xmm5 = v.xyz?
@@ -4968,9 +5883,15 @@ asm
  // q = a
  // v = b
 
+{$if defined(ExplicitX64SIMDRegs)}
+ movups xmm4,dqword ptr [rdx] // xmm4 = q.xyzw
+
+ movups xmm5,dqword ptr [r8] // xmm5 = v.xyz?
+{$else}
  movups xmm4,dqword ptr [a] // xmm4 = q.xyzw
 
  movups xmm5,dqword ptr [b] // xmm5 = v.xyz?
+{$ifend}
 
  movaps xmm6,xmm4
  shufps xmm6,xmm6,$ff // xmm6 = q.wwww
@@ -5063,8 +5984,13 @@ end;
 class operator TpvQuaternion.Divide({$ifdef fpc}constref{$else}const{$endif} a,b:TpvQuaternion):TpvQuaternion;
 {$if defined(SIMD) and (defined(cpu386) or defined(cpux64))}
 asm
+{$if defined(ExplicitX64SIMDRegs)}
+ movups xmm0,dqword ptr [rdx]
+ movups xmm1,dqword ptr [r8]
+{$else}
  movups xmm0,dqword ptr [a]
  movups xmm1,dqword ptr [b]
+{$ifend}
  divps xmm0,xmm1
  movups dqword ptr [result],xmm0
 end;
@@ -5096,8 +6022,13 @@ end;
 class operator TpvQuaternion.IntDivide({$ifdef fpc}constref{$else}const{$endif} a,b:TpvQuaternion):TpvQuaternion;
 {$if defined(SIMD) and (defined(cpu386) or defined(cpux64))}
 asm
+{$if defined(ExplicitX64SIMDRegs)}
+ movups xmm0,dqword ptr [rdx]
+ movups xmm1,dqword ptr [r8]
+{$else}
  movups xmm0,dqword ptr [a]
  movups xmm1,dqword ptr [b]
+{$ifend}
  divps xmm0,xmm1
  movups dqword ptr [result],xmm0
 end;
@@ -5154,7 +6085,11 @@ class operator TpvQuaternion.Negative({$ifdef fpc}constref{$else}const{$endif} a
 {$if defined(SIMD) and (defined(cpu386) or defined(cpux64))}
 asm
  xorps xmm0,xmm0
+{$if defined(ExplicitX64SIMDRegs)}
+ movups xmm1,dqword ptr [rdx]
+{$else}
  movups xmm1,dqword ptr [a]
+{$ifend}
  subps xmm0,xmm1
  movups dqword ptr [result],xmm0
 end;
@@ -5288,6 +6223,11 @@ begin
  aAxis.x:=Quaternion.x/SinAngle;
  aAxis.y:=Quaternion.y/SinAngle;
  aAxis.z:=Quaternion.z/SinAngle;
+end;
+
+function TpvQuaternion.ToScaledAngleAxis:TpvVector3;
+begin
+ result:=Log.Vector.xyz*2.0;
 end;
 
 function TpvQuaternion.Generator:TpvVector3;
@@ -5769,6 +6709,23 @@ begin
  result:=(s0*self)+(aToQuaternion*(s1*s2));
 end;
 
+function TpvQuaternion.ApproximatedSlerp(const aToQuaternion:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion;
+var ca,d,a,b,k,o:TpvScalar;
+begin
+ // Idea from https://zeux.io/2015/07/23/approximating-slerp/
+ ca:=Dot(aToQuaternion);
+ d:=System.abs(ca);
+ a:=1.0904+(d*(-3.2452+(d*(3.55645-(d*1.43519)))));
+ b:=0.848013+(d*(-1.06021+(d*0.215638)));
+ k:=(a*sqr(aTime-0.5))+b;
+ o:=aTime+(((aTime*(aTime-0.5))*(aTime-1.0))*k);
+ if ca<0.0 then begin
+  result:=Nlerp(-aToQuaternion,o);
+ end else begin
+  result:=Nlerp(aToQuaternion,o);
+ end;
+end;
+
 function TpvQuaternion.Elerp(const aToQuaternion:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion;
 var SignFactor:TpvScalar;
 begin
@@ -5807,9 +6764,63 @@ begin
  result:=(s0*self)+(aToQuaternion*s1);
 end;
 
+function TpvQuaternion.UnflippedApproximatedSlerp(const aToQuaternion:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion;
+var d,a,b,k,o:TpvScalar;
+begin
+ // Idea from https://zeux.io/2015/07/23/approximating-slerp/
+ d:=System.abs(Dot(aToQuaternion));
+ a:=1.0904+(d*(-3.2452+(d*(3.55645-(d*1.43519)))));
+ b:=0.848013+(d*(-1.06021+(d*0.215638)));
+ k:=(a*sqr(aTime-0.5))+b;
+ o:=aTime+(((aTime*(aTime-0.5))*(aTime-1.0))*k);
+ result:=Nlerp(aToQuaternion,o);
+end;
+
 function TpvQuaternion.UnflippedSqlerp(const aB,aC,aD:TpvQuaternion;const aTime:TpvScalar):TpvQuaternion;
 begin
  result:=UnflippedSlerp(aD,aTime).UnflippedSlerp(aB.UnflippedSlerp(aC,aTime),(2.0*aTime)*(1.0-aTime));
+end;
+
+function TpvQuaternion.AngleBetween(const aP:TpvQuaternion):TpvScalar;
+var Difference:TpvQuaternion;
+begin
+ Difference:=(self*aP.Inverse).Abs;
+ result:=ArcCos(Clamp(Difference.w,-1.0,1.0))*2.0;
+end;
+
+function TpvQuaternion.Between(const aP:TpvQuaternion):TpvQuaternion;
+var c:TpvVector3;
+begin
+ c:=aP.Vector.xyz.Cross(self.Vector.xyz);
+ result:=TpvQuaternion.Create(c.x,c.y,c.z,sqrt(aP.Vector.xyz.SquaredLength*self.Vector.xyz.SquaredLength)+aP.Vector.xyz.Dot(self.Vector.xyz)).Normalize;
+end;
+
+class procedure TpvQuaternion.Hermite(out aRotation:TpvQuaternion;out aVelocity:TpvVector3;const aTime:TpvScalar;const aR0,aR1:TpvQuaternion;const aV0,aV1:TpvVector3);
+var t2,t3,w1,w2,w3,q1,q2,q3:TpvScalar;
+    r1r0:TpvVector3;
+begin
+ t2:=sqr(aTime);
+ t3:=t2*aTime;
+ w1:=(3.0*t2)-(2.0*t3);
+ w2:=(t3-(2.0*t2))+aTime;
+ w3:=t3-t2;
+ q1:=(6.0*aTime)-(6.0*t2);
+ q2:=((3.0*t2)-(4.0*aTime))+1.0;
+ q3:=(3.0*t2)-(2.0*aTime);
+ r1r0:=((aR1*aR0.Inverse).Abs).ToScaledAngleAxis;
+ aRotation:=TpvQuaternion.CreateFromScaledAngleAxis((r1r0*w1)+(aV0*w2)+(aV1*w3))*aR0;
+ aVelocity:=(q1*r1r0)+(aV0*q2)+(aV1*q3);
+end;
+
+class procedure TpvQuaternion.CatmullRom(out aRotation:TpvQuaternion;out aVelocity:TpvVector3;const aTime:TpvScalar;const aR0,aR1,aR2,aR3:TpvQuaternion);
+var r1r0,r2r1,r3r2,v1,v2:TpvVector3;
+begin
+ r1r0:=((aR1*aR0.Inverse).Abs).ToScaledAngleAxis;
+ r2r1:=((aR2*aR1.Inverse).Abs).ToScaledAngleAxis;
+ r3r2:=((aR3*aR2.Inverse).Abs).ToScaledAngleAxis;
+ v1:=(r1r0+r2r1)*0.5;
+ v2:=(r2r1+r3r2)*0.5;
+ TpvQuaternion.Hermite(aRotation,aVelocity,aTime,aR1,aR2,v1,v2);
 end;
 
 function TpvQuaternion.RotateAroundAxis(const aVector:TpvQuaternion):TpvQuaternion;
@@ -7262,8 +8273,7 @@ begin
  result:=result.Normalize;
 end;
 
-function TpvMatrix3x3.ToQTangent:TpvQuaternion;
-const Threshold=1.0/32767.0;
+function TpvMatrix3x3.ToQTangent(const aThreshold:TpvDouble):TpvQuaternion;
 var Scale,t,s,Renormalization:TpvScalar;
 begin
  if ((((((RawComponents[0,0]*RawComponents[1,1]*RawComponents[2,2])+
@@ -7279,16 +8289,13 @@ begin
     )<0.0 then begin
   // Reflection matrix, so flip y axis in case the tangent frame encodes a reflection
   Scale:=-1.0;
-  RawComponents[2,0]:=-RawComponents[2,0];
-  RawComponents[2,1]:=-RawComponents[2,1];
-  RawComponents[2,2]:=-RawComponents[2,2];
  end else begin
   // Rotation matrix, so nothing is doing to do
   Scale:=1.0;
  end;
  begin
   // Convert to quaternion
-  t:=RawComponents[0,0]+(RawComponents[1,1]+RawComponents[2,2]);
+  t:=RawComponents[0,0]+(RawComponents[1,1]+(RawComponents[2,2]*Scale));
   if t>2.9999999 then begin
    result.x:=0.0;
    result.y:=0.0;
@@ -7296,26 +8303,26 @@ begin
    result.w:=1.0;
   end else if t>0.0000001 then begin
    s:=sqrt(1.0+t)*2.0;
-   result.x:=(RawComponents[1,2]-RawComponents[2,1])/s;
-   result.y:=(RawComponents[2,0]-RawComponents[0,2])/s;
+   result.x:=(RawComponents[1,2]-(RawComponents[2,1]*Scale))/s;
+   result.y:=((RawComponents[2,0]*Scale)-RawComponents[0,2])/s;
    result.z:=(RawComponents[0,1]-RawComponents[1,0])/s;
    result.w:=s*0.25;
-  end else if (RawComponents[0,0]>RawComponents[1,1]) and (RawComponents[0,0]>RawComponents[2,2]) then begin
-   s:=sqrt(1.0+(RawComponents[0,0]-(RawComponents[1,1]+RawComponents[2,2])))*2.0;
+  end else if (RawComponents[0,0]>RawComponents[1,1]) and (RawComponents[0,0]>(RawComponents[2,2]*Scale)) then begin
+   s:=sqrt(1.0+(RawComponents[0,0]-(RawComponents[1,1]+(RawComponents[2,2]*Scale))))*2.0;
    result.x:=s*0.25;
    result.y:=(RawComponents[1,0]+RawComponents[0,1])/s;
-   result.z:=(RawComponents[2,0]+RawComponents[0,2])/s;
-   result.w:=(RawComponents[1,2]-RawComponents[2,1])/s;
-  end else if RawComponents[1,1]>RawComponents[2,2] then begin
-   s:=sqrt(1.0+(RawComponents[1,1]-(RawComponents[0,0]+RawComponents[2,2])))*2.0;
+   result.z:=((RawComponents[2,0]*Scale)+RawComponents[0,2])/s;
+   result.w:=(RawComponents[1,2]-(RawComponents[2,1]*Scale))/s;
+  end else if RawComponents[1,1]>(RawComponents[2,2]*Scale) then begin
+   s:=sqrt(1.0+(RawComponents[1,1]-(RawComponents[0,0]+(RawComponents[2,2]*Scale))))*2.0;
    result.x:=(RawComponents[1,0]+RawComponents[0,1])/s;
    result.y:=s*0.25;
-   result.z:=(RawComponents[2,1]+RawComponents[1,2])/s;
-   result.w:=(RawComponents[2,0]-RawComponents[0,2])/s;
+   result.z:=((RawComponents[2,1]*Scale)+RawComponents[1,2])/s;
+   result.w:=((RawComponents[2,0]*Scale)-RawComponents[0,2])/s;
   end else begin
-   s:=sqrt(1.0+(RawComponents[2,2]-(RawComponents[0,0]+RawComponents[1,1])))*2.0;
-   result.x:=(RawComponents[2,0]+RawComponents[0,2])/s;
-   result.y:=(RawComponents[2,1]+RawComponents[1,2])/s;
+   s:=sqrt(1.0+((RawComponents[2,2]*Scale)-(RawComponents[0,0]+RawComponents[1,1])))*2.0;
+   result.x:=((RawComponents[2,0]*Scale)+RawComponents[0,2])/s;
+   result.y:=((RawComponents[2,1]*Scale)+RawComponents[1,2])/s;
    result.z:=s*0.25;
    result.w:=(RawComponents[0,1]-RawComponents[1,0])/s;
   end;
@@ -7323,15 +8330,15 @@ begin
  end;
  begin
   // Make sure, that we don't end up with 0 as w component
-  if abs(result.w)<=Threshold then begin
-   Renormalization:=sqrt(1.0-sqr(Threshold));
+  if abs(result.w)<=aThreshold then begin
+   Renormalization:=sqrt(1.0-sqr(aThreshold));
    result.x:=result.x*Renormalization;
    result.y:=result.y*Renormalization;
    result.z:=result.z*Renormalization;
    if result.w>0.0 then begin
-    result.w:=Threshold;
+    result.w:=aThreshold;
    end else begin
-    result.w:=-Threshold;
+    result.w:=-aThreshold;
    end;
   end;
  end;
@@ -7689,6 +8696,46 @@ begin
  RawComponents[3,3]:=pWW;
 end;
 
+constructor TpvMatrix4x4.Create(const pX,pY,pZ:TpvVector3);
+begin
+ RawComponents[0,0]:=pX.x;
+ RawComponents[0,1]:=pX.y;
+ RawComponents[0,2]:=pX.z;
+ RawComponents[0,3]:=0.0;
+ RawComponents[1,0]:=pY.x;
+ RawComponents[1,1]:=pY.y;
+ RawComponents[1,2]:=pY.z;
+ RawComponents[1,3]:=0.0;
+ RawComponents[2,0]:=pZ.x;
+ RawComponents[2,1]:=pZ.y;
+ RawComponents[2,2]:=pZ.z;
+ RawComponents[2,3]:=0.0;
+ RawComponents[3,0]:=0.0;
+ RawComponents[3,1]:=0.0;
+ RawComponents[3,2]:=0.0;
+ RawComponents[3,3]:=1.0;
+end;
+
+constructor TpvMatrix4x4.Create(const pX,pY,pZ,pW:TpvVector3);
+begin
+ RawComponents[0,0]:=pX.x;
+ RawComponents[0,1]:=pX.y;
+ RawComponents[0,2]:=pX.z;
+ RawComponents[0,3]:=0.0;
+ RawComponents[1,0]:=pY.x;
+ RawComponents[1,1]:=pY.y;
+ RawComponents[1,2]:=pY.z;
+ RawComponents[1,3]:=0.0;
+ RawComponents[2,0]:=pZ.x;
+ RawComponents[2,1]:=pZ.y;
+ RawComponents[2,2]:=pZ.z;
+ RawComponents[2,3]:=0.0;
+ RawComponents[3,0]:=pW.x;
+ RawComponents[3,1]:=pW.y;
+ RawComponents[3,2]:=pW.z;
+ RawComponents[3,3]:=1.0;
+end;
+
 constructor TpvMatrix4x4.Create(const pX,pY,pZ,pW:TpvVector4);
 begin
  RawComponents[0,0]:=pX.x;
@@ -7708,7 +8755,6 @@ begin
  RawComponents[3,2]:=pW.z;
  RawComponents[3,3]:=pW.w;
 end;
-
 
 constructor TpvMatrix4x4.Create(const pMatrix:TpvMatrix3x3);
 begin
@@ -8977,6 +10023,156 @@ begin
  end;
 end;
 
+constructor TpvMatrix4x4.CreateHorizontalFOVPerspectiveLeftHandedNegativeOneToPositiveOne(const fovx,Aspect,zNear,zFar:TpvScalar);
+var Sine,Cotangent,ZDelta,Radians:TpvScalar;
+begin
+ Radians:=(fovx*0.5)*DEG2RAD;
+ ZDelta:=zFar-zNear;
+ Sine:=sin(Radians);
+ if not ((ZDelta=0) or (Sine=0) or (aspect=0)) then begin
+  Cotangent:=cos(Radians)/Sine;
+  RawComponents:=TpvMatrix4x4.Identity.RawComponents;
+  RawComponents[0,0]:=Cotangent;
+  RawComponents[1,1]:=Cotangent*aspect;
+  RawComponents[2,2]:=(-(zFar+zNear))/(zFar-zNear);
+  RawComponents[2,3]:=1.0;
+  RawComponents[3,2]:=(-(2.0*zNear*zFar))/(zFar-zNear);
+  RawComponents[3,3]:=0.0;
+ end;
+end;
+
+constructor TpvMatrix4x4.CreateHorizontalFOVPerspectiveLeftHandedZeroToOne(const fovx,Aspect,zNear,zFar:TpvScalar);
+var Sine,Cotangent,ZDelta,Radians:TpvScalar;
+begin
+ Radians:=(fovx*0.5)*DEG2RAD;
+ ZDelta:=zFar-zNear;
+ Sine:=sin(Radians);
+ if not ((ZDelta=0) or (Sine=0) or (aspect=0)) then begin
+  Cotangent:=cos(Radians)/Sine;
+  RawComponents:=TpvMatrix4x4.Identity.RawComponents;
+  RawComponents[0,0]:=Cotangent;
+  RawComponents[1,1]:=Cotangent*aspect;
+  RawComponents[2,2]:=zFar/(zFar-zNear);
+  RawComponents[2,3]:=1.0;
+  RawComponents[3,2]:=(-(zNear*zFar))/(zFar-zNear);
+  RawComponents[3,3]:=0.0;
+ end;
+end;
+
+constructor TpvMatrix4x4.CreateHorizontalFOVPerspectiveLeftHandedOneToZero(const fovx,Aspect,zNear,zFar:TpvScalar);
+var Sine,Cotangent,ZDelta,Radians:TpvScalar;
+begin
+ Radians:=(fovx*0.5)*DEG2RAD;
+ ZDelta:=zFar-zNear;
+ Sine:=sin(Radians);
+ if not ((ZDelta=0) or (Sine=0) or (aspect=0)) then begin
+  Cotangent:=cos(Radians)/Sine;
+  RawComponents:=TpvMatrix4x4.Identity.RawComponents;
+  RawComponents[0,0]:=Cotangent;
+  RawComponents[1,1]:=Cotangent*aspect;
+  RawComponents[2,2]:=(-zNear)/(zFar-zNear);
+  RawComponents[2,3]:=1.0;
+  RawComponents[3,2]:=(zNear*zFar)/(zFar-zNear);
+  RawComponents[3,3]:=0.0;
+ end;
+end;
+
+constructor TpvMatrix4x4.CreateHorizontalFOVPerspectiveRightHandedNegativeOneToPositiveOne(const fovx,Aspect,zNear,zFar:TpvScalar);
+var Sine,Cotangent,ZDelta,Radians:TpvScalar;
+begin
+ Radians:=(fovx*0.5)*DEG2RAD;
+ ZDelta:=zFar-zNear;
+ Sine:=sin(Radians);
+ if not ((ZDelta=0) or (Sine=0) or (aspect=0)) then begin
+  Cotangent:=cos(Radians)/Sine;
+  RawComponents:=TpvMatrix4x4.Identity.RawComponents;
+  RawComponents[0,0]:=Cotangent;
+  RawComponents[1,1]:=Cotangent*aspect;
+  RawComponents[2,2]:=(-(zFar+zNear))/(zFar-zNear);
+  RawComponents[2,3]:=-1.0;
+  RawComponents[3,2]:=(-(2.0*zNear*zFar))/(zFar-zNear);
+  RawComponents[3,3]:=0.0;
+ end;
+end;
+
+constructor TpvMatrix4x4.CreateHorizontalFOVPerspectiveRightHandedZeroToOne(const fovx,Aspect,zNear,zFar:TpvScalar);
+var Sine,Cotangent,ZDelta,Radians:TpvScalar;
+begin
+ Radians:=(fovx*0.5)*DEG2RAD;
+ ZDelta:=zFar-zNear;
+ Sine:=sin(Radians);
+ if not ((ZDelta=0) or (Sine=0) or (aspect=0)) then begin
+  Cotangent:=cos(Radians)/Sine;
+  RawComponents:=TpvMatrix4x4.Identity.RawComponents;
+  RawComponents[0,0]:=Cotangent;
+  RawComponents[1,1]:=Cotangent*aspect;
+  RawComponents[2,2]:=zFar/(zNear-zFar);
+  RawComponents[2,3]:=-1.0;
+  RawComponents[3,2]:=(-(zNear*zFar))/(zFar-zNear);
+  RawComponents[3,3]:=0.0;
+ end;
+end;
+
+constructor TpvMatrix4x4.CreateHorizontalFOVPerspectiveRightHandedOneToZero(const fovx,Aspect,zNear,zFar:TpvScalar);
+var Sine,Cotangent,ZDelta,Radians:TpvScalar;
+begin
+ Radians:=(fovx*0.5)*DEG2RAD;
+ ZDelta:=zFar-zNear;
+ Sine:=sin(Radians);
+ if not ((ZDelta=0) or (Sine=0) or (aspect=0)) then begin
+  Cotangent:=cos(Radians)/Sine;
+  RawComponents:=TpvMatrix4x4.Identity.RawComponents;
+  RawComponents[0,0]:=Cotangent;
+  RawComponents[1,1]:=Cotangent*aspect;
+  RawComponents[2,2]:=zNear/(zFar-zNear);
+  RawComponents[2,3]:=-1.0;
+  RawComponents[3,2]:=(zNear*zFar)/(zFar-zNear);
+  RawComponents[3,3]:=0.0;
+ end;
+end;
+
+constructor TpvMatrix4x4.CreateHorizontalFOVPerspectiveReversedZ(const aFOVX,aAspectRatio,aZNear:TpvScalar);
+var t,sx,sy:TpvScalar;
+begin
+ t:=tan(aFOVX*DEG2RAD*0.5);
+ sx:=1.0/t;
+ sy:=sx*aAspectRatio;
+ RawComponents[0,0]:=sx;
+ RawComponents[0,1]:=0.0;
+ RawComponents[0,2]:=0.0;
+ RawComponents[0,3]:=0.0;
+ RawComponents[1,0]:=0.0;
+ RawComponents[1,1]:=sy;
+ RawComponents[1,2]:=0.0;
+ RawComponents[1,3]:=0.0;
+ RawComponents[2,0]:=0.0;
+ RawComponents[2,1]:=0.0;
+ RawComponents[2,2]:=0.0;
+ RawComponents[2,3]:=-1.0;
+ RawComponents[3,0]:=0.0;
+ RawComponents[3,1]:=0.0;
+ RawComponents[3,2]:=aZNear;
+ RawComponents[3,3]:=0.0;
+end;
+
+constructor TpvMatrix4x4.CreateHorizontalFOVPerspective(const fovx,Aspect,zNear,zFar:TpvScalar);
+var Sine,Cotangent,ZDelta,Radians:TpvScalar;
+begin
+ Radians:=(fovx*0.5)*DEG2RAD;
+ ZDelta:=zFar-zNear;
+ Sine:=sin(Radians);
+ if not ((ZDelta=0) or (Sine=0) or (aspect=0)) then begin
+  Cotangent:=cos(Radians)/Sine;
+  RawComponents:=TpvMatrix4x4.Identity.RawComponents;
+  RawComponents[0,0]:=Cotangent;
+  RawComponents[1,1]:=Cotangent*aspect;
+  RawComponents[2,2]:=(-(zFar+zNear))/ZDelta;
+  RawComponents[2,3]:=-1.0;
+  RawComponents[3,2]:=(-(2.0*zNear*zFar))/ZDelta;
+  RawComponents[3,3]:=0.0;
+ end;
+end;
+
 constructor TpvMatrix4x4.CreateLookAt(const Eye,Center,Up:TpvVector3);
 var RightVector,UpVector,ForwardVector:TpvVector3;
 begin
@@ -9399,11 +10595,23 @@ end;
 class operator TpvMatrix4x4.Add({$ifdef fpc}constref{$else}const{$endif} a:TpvMatrix4x4;{$ifdef fpc}constref{$else}const{$endif} b:TpvScalar):TpvMatrix4x4;
 {$if defined(SIMD) and (defined(cpu386) or defined(cpux64))}
 asm
+{$if defined(ExplicitX64SIMDRegs)}
+{$ifdef fpc}
+ movss xmm4,dword ptr [r8] // FreePascal: load from memory (constref)
+{$else}
+ movss xmm4,xmm2 // Delphi: otherwise from another xmm register
+{$endif}
+ movups xmm0,dqword ptr [rdx+0]
+ movups xmm1,dqword ptr [rdx+16]
+ movups xmm2,dqword ptr [rdx+32]
+ movups xmm3,dqword ptr [rdx+48]
+{$else}
  movups xmm0,dqword ptr [a+0]
  movups xmm1,dqword ptr [a+16]
  movups xmm2,dqword ptr [a+32]
  movups xmm3,dqword ptr [a+48]
  movss xmm4,dword ptr [b]
+{$ifend}
  shufps xmm4,xmm4,$00
  addps xmm0,xmm4
  addps xmm1,xmm4
@@ -9445,15 +10653,37 @@ asm
  movups dqword ptr [StackSave0],xmm6
  movups dqword ptr [StackSave1],xmm7
 {-$endif}
+{$if defined(ExplicitX64SIMDRegs)}
+{$ifdef fpc}
+ movss xmm0,dword ptr [rdx] // FreePascal: load from memory (constref)
+{$else}
+ movss xmm0,xmm1 // Delphi: otherwise from another xmm register
+{$endif}
+{$else}
  movss xmm0,dword ptr [a]
+{$ifend}
  shufps xmm0,xmm0,$00
  movaps xmm1,xmm0
  movaps xmm2,xmm0
  movaps xmm3,xmm0
+{$if defined(ExplicitX64SIMDRegs)}
+{$ifdef fpc}
+ movups xmm4,dqword ptr [r8+0]
+ movups xmm5,dqword ptr [r8+16]
+ movups xmm6,dqword ptr [r8+32]
+ movups xmm7,dqword ptr [r8+48]
+{$else}
+ movups xmm4,dqword ptr [rdx+0]
+ movups xmm5,dqword ptr [rdx+16]
+ movups xmm6,dqword ptr [rdx+32]
+ movups xmm7,dqword ptr [rdx+48]
+{$endif}
+{$else}
  movups xmm4,dqword ptr [b+0]
  movups xmm5,dqword ptr [b+16]
  movups xmm6,dqword ptr [b+32]
  movups xmm7,dqword ptr [b+48]
+{$ifend}
  addps xmm0,xmm4
  addps xmm1,xmm5
  addps xmm2,xmm6
@@ -9543,11 +10773,23 @@ end;
 class operator TpvMatrix4x4.Subtract({$ifdef fpc}constref{$else}const{$endif} a:TpvMatrix4x4;{$ifdef fpc}constref{$else}const{$endif} b:TpvScalar):TpvMatrix4x4;
 {$if defined(SIMD) and (defined(cpu386) or defined(cpux64))}
 asm
+{$if defined(ExplicitX64SIMDRegs)}
+{$ifdef fpc}
+ movss xmm4,dword ptr [r8] // FreePascal: load from memory (constref)
+{$else}
+ movss xmm4,xmm2 // Delphi: otherwise from another xmm register
+{$endif}
+ movups xmm0,dqword ptr [rdx+0]
+ movups xmm1,dqword ptr [rdx+16]
+ movups xmm2,dqword ptr [rdx+32]
+ movups xmm3,dqword ptr [rdx+48]
+{$else}
  movups xmm0,dqword ptr [a+0]
  movups xmm1,dqword ptr [a+16]
  movups xmm2,dqword ptr [a+32]
  movups xmm3,dqword ptr [a+48]
  movss xmm4,dword ptr [b]
+{$ifend}
  shufps xmm4,xmm4,$00
  subps xmm0,xmm4
  subps xmm1,xmm4
@@ -9589,15 +10831,37 @@ asm
  movups dqword ptr [StackSave0],xmm6
  movups dqword ptr [StackSave1],xmm7
 {-$endif}
+{$if defined(ExplicitX64SIMDRegs)}
+{$ifdef fpc}
+ movss xmm0,dword ptr [rdx] // FreePascal: load from memory (constref)
+{$else}
+ movss xmm0,xmm1 // Delphi: otherwise from another xmm register
+{$endif}
+{$else}
  movss xmm0,dword ptr [a]
+{$ifend}
  shufps xmm0,xmm0,$00
  movaps xmm1,xmm0
  movaps xmm2,xmm0
  movaps xmm3,xmm0
+{$if defined(ExplicitX64SIMDRegs)}
+{$ifdef fpc}
+ movups xmm4,dqword ptr [r8+0]
+ movups xmm5,dqword ptr [r8+16]
+ movups xmm6,dqword ptr [r8+32]
+ movups xmm7,dqword ptr [r8+48]
+{$else}
+ movups xmm4,dqword ptr [rdx+0]
+ movups xmm5,dqword ptr [rdx+16]
+ movups xmm6,dqword ptr [rdx+32]
+ movups xmm7,dqword ptr [rdx+48]
+{$endif}
+{$else}
  movups xmm4,dqword ptr [b+0]
  movups xmm5,dqword ptr [b+16]
  movups xmm6,dqword ptr [b+32]
  movups xmm7,dqword ptr [b+48]
+{$ifend}
  subps xmm0,xmm4
  subps xmm1,xmm5
  subps xmm2,xmm6
@@ -9643,12 +10907,21 @@ asm
  movups dqword ptr [StackSave1],xmm7
 {-$endif}
 
+{$if defined(ExplicitX64SIMDRegs)}
+ movups xmm0,dqword ptr [r8+0]
+ movups xmm1,dqword ptr [r8+16]
+ movups xmm2,dqword ptr [r8+32]
+ movups xmm3,dqword ptr [r8+48]
+
+ movups xmm7,dqword ptr [rdx+0]
+{$else}
  movups xmm0,dqword ptr [b+0]
  movups xmm1,dqword ptr [b+16]
  movups xmm2,dqword ptr [b+32]
  movups xmm3,dqword ptr [b+48]
 
  movups xmm7,dqword ptr [a+0]
+{$ifend}
  pshufd xmm4,xmm7,$00
  pshufd xmm5,xmm7,$55
  pshufd xmm6,xmm7,$aa
@@ -9662,7 +10935,11 @@ asm
  addps xmm4,xmm6
  movups dqword ptr [result+0],xmm4
 
+{$if defined(ExplicitX64SIMDRegs)}
+ movups xmm7,dqword ptr [rdx+16]
+{$else}
  movups xmm7,dqword ptr [a+16]
+{$ifend}
  pshufd xmm4,xmm7,$00
  pshufd xmm5,xmm7,$55
  pshufd xmm6,xmm7,$aa
@@ -9676,7 +10953,11 @@ asm
  addps xmm4,xmm6
  movups dqword ptr [result+16],xmm4
 
+{$if defined(ExplicitX64SIMDRegs)}
+ movups xmm7,dqword ptr [rdx+32]
+{$else}
  movups xmm7,dqword ptr [a+32]
+{$ifend}
  pshufd xmm4,xmm7,$00
  pshufd xmm5,xmm7,$55
  pshufd xmm6,xmm7,$aa
@@ -9690,7 +10971,11 @@ asm
  addps xmm4,xmm6
  movups dqword ptr [result+32],xmm4
 
+{$if defined(ExplicitX64SIMDRegs)}
+ movups xmm7,dqword ptr [rdx+48]
+{$else}
  movups xmm7,dqword ptr [a+48]
+{$ifend}
  pshufd xmm4,xmm7,$00
  pshufd xmm5,xmm7,$55
  pshufd xmm6,xmm7,$aa
@@ -9734,11 +11019,23 @@ end;
 class operator TpvMatrix4x4.Multiply({$ifdef fpc}constref{$else}const{$endif} a:TpvMatrix4x4;{$ifdef fpc}constref{$else}const{$endif} b:TpvScalar):TpvMatrix4x4;
 {$if defined(SIMD) and (defined(cpu386) or defined(cpux64))}
 asm
+{$if defined(ExplicitX64SIMDRegs)}
+{$ifdef fpc}
+ movss xmm4,dword ptr [r8] // FreePascal: load from memory (constref)
+{$else}
+ movss xmm4,xmm2 // Delphi: otherwise from another xmm register
+{$endif}
+ movups xmm0,dqword ptr [rdx+0]
+ movups xmm1,dqword ptr [rdx+16]
+ movups xmm2,dqword ptr [rdx+32]
+ movups xmm3,dqword ptr [rdx+48]
+{$else}
  movups xmm0,dqword ptr [a+0]
  movups xmm1,dqword ptr [a+16]
  movups xmm2,dqword ptr [a+32]
  movups xmm3,dqword ptr [a+48]
  movss xmm4,dword ptr [b]
+{$ifend}
  shufps xmm4,xmm4,$00
  mulps xmm0,xmm4
  mulps xmm1,xmm4
@@ -9780,15 +11077,37 @@ asm
  movups dqword ptr [StackSave0],xmm6
  movups dqword ptr [StackSave1],xmm7
 {-$endif}
+{$if defined(ExplicitX64SIMDRegs)}
+{$ifdef fpc}
+ movss xmm0,dword ptr [rdx] // FreePascal: load from memory (constref)
+{$else}
+ movss xmm0,xmm1 // Delphi: otherwise from another xmm register
+{$endif}
+{$else}
  movss xmm0,dword ptr [a]
+{$ifend}
  shufps xmm0,xmm0,$00
  movaps xmm1,xmm0
  movaps xmm2,xmm0
  movaps xmm3,xmm0
+{$if defined(ExplicitX64SIMDRegs)}
+{$ifdef fpc}
+ movups xmm4,dqword ptr [r8+0]
+ movups xmm5,dqword ptr [r8+16]
+ movups xmm6,dqword ptr [r8+32]
+ movups xmm7,dqword ptr [r8+48]
+{$else}
+ movups xmm4,dqword ptr [rdx+0]
+ movups xmm5,dqword ptr [rdx+16]
+ movups xmm6,dqword ptr [rdx+32]
+ movups xmm7,dqword ptr [rdx+48]
+{$endif}
+{$else}
  movups xmm4,dqword ptr [b+0]
  movups xmm5,dqword ptr [b+16]
  movups xmm6,dqword ptr [b+32]
  movups xmm7,dqword ptr [b+48]
+{$ifend}
  mulps xmm0,xmm4
  mulps xmm1,xmm5
  mulps xmm2,xmm6
@@ -9848,9 +11167,15 @@ asm
  movups dqword ptr [StackSave1],xmm7
 {-$endif}
  xorps xmm2,xmm2
+{$if defined(ExplicitX64SIMDRegs)}
+ movss xmm0,dword ptr [r8+0]
+ movss xmm1,dword ptr [r8+4]
+ movss xmm2,dword ptr [r8+8]
+{$else}
  movss xmm0,dword ptr [b+0]
  movss xmm1,dword ptr [b+4]
  movss xmm2,dword ptr [b+8]
+{$ifend}
  movlhps xmm0,xmm1
  shufps xmm0,xmm2,$88
 //movups xmm0,dqword ptr [b]     // d c b a
@@ -9875,10 +11200,17 @@ asm
  shufps xmm1,xmm1,$55           // b b b b 01010101b
  shufps xmm2,xmm2,$aa           // c c c c 10101010b
  shufps xmm3,xmm3,$ff           // d d d d 11111111b
+{$if defined(ExplicitX64SIMDRegs)}
+ movups xmm4,dqword ptr [rdx+0]
+ movups xmm5,dqword ptr [rdx+16]
+ movups xmm6,dqword ptr [rdx+32]
+ movups xmm7,dqword ptr [rdx+48]
+{$else}
  movups xmm4,dqword ptr [a+0]
  movups xmm5,dqword ptr [a+16]
  movups xmm6,dqword ptr [a+32]
  movups xmm7,dqword ptr [a+48]
+{$ifend}
  mulps xmm0,xmm4
  mulps xmm1,xmm5
  mulps xmm2,xmm6
@@ -9920,9 +11252,15 @@ asm
  movups dqword ptr [StackSave1],xmm7
 {-$endif}
  xorps xmm2,xmm2
+{$if defined(ExplicitX64SIMDRegs)}
+ movss xmm0,dword ptr [rdx+0]
+ movss xmm1,dword ptr [rdx+4]
+ movss xmm2,dword ptr [rdx+8]
+{$else}
  movss xmm0,dword ptr [a+0]
  movss xmm1,dword ptr [a+4]
  movss xmm2,dword ptr [a+8]
+{$ifend}
  movlhps xmm0,xmm1
  shufps xmm0,xmm2,$88
 //movups xmm0,dqword ptr [a]     // d c b a
@@ -9943,10 +11281,17 @@ asm
  movaps xmm1,xmm0               // d c b a
  movaps xmm2,xmm0               // d c b a
  movaps xmm3,xmm0               // d c b a
+{$if defined(ExplicitX64SIMDRegs)}
+ movups xmm4,dqword ptr [r8+0]
+ movups xmm5,dqword ptr [r8+16]
+ movups xmm6,dqword ptr [r8+32]
+ movups xmm7,dqword ptr [r8+48]
+{$else}
  movups xmm4,dqword ptr [b+0]
  movups xmm5,dqword ptr [b+16]
  movups xmm6,dqword ptr [b+32]
  movups xmm7,dqword ptr [b+48]
+{$ifend}
  mulps xmm0,xmm4
  mulps xmm1,xmm5
  mulps xmm2,xmm6
@@ -9985,7 +11330,11 @@ asm
  movups dqword ptr [StackSave0],xmm6
  movups dqword ptr [StackSave1],xmm7
 {-$endif}
+{$if defined(ExplicitX64SIMDRegs)}
+ movups xmm0,dqword ptr [r8]   // d c b a
+{$else}
  movups xmm0,dqword ptr [b]     // d c b a
+{$ifend}
  movaps xmm1,xmm0               // d c b a
  movaps xmm2,xmm0               // d c b a
  movaps xmm3,xmm0               // d c b a
@@ -9993,10 +11342,17 @@ asm
  shufps xmm1,xmm1,$55           // b b b b 01010101b
  shufps xmm2,xmm2,$aa           // c c c c 10101010b
  shufps xmm3,xmm3,$ff           // d d d d 11111111b
+{$if defined(ExplicitX64SIMDRegs)}
+ movups xmm4,dqword ptr [rdx+0]
+ movups xmm5,dqword ptr [rdx+16]
+ movups xmm6,dqword ptr [rdx+32]
+ movups xmm7,dqword ptr [rdx+48]
+{$else}
  movups xmm4,dqword ptr [a+0]
  movups xmm5,dqword ptr [a+16]
  movups xmm6,dqword ptr [a+32]
  movups xmm7,dqword ptr [a+48]
+{$ifend}
  mulps xmm0,xmm4
  mulps xmm1,xmm5
  mulps xmm2,xmm6
@@ -10029,14 +11385,25 @@ asm
  movups dqword ptr [StackSave0],xmm6
  movups dqword ptr [StackSave1],xmm7
 {-$endif}
+{$if defined(ExplicitX64SIMDRegs)}
+ movups xmm0,dqword ptr [rdx]   // d c b a
+{$else}
  movups xmm0,dqword ptr [a]     // d c b a
+{$ifend}
  movaps xmm1,xmm0               // d c b a
  movaps xmm2,xmm0               // d c b a
  movaps xmm3,xmm0               // d c b a
+{$if defined(ExplicitX64SIMDRegs)}
+ movups xmm4,dqword ptr [r8+0]
+ movups xmm5,dqword ptr [r8+16]
+ movups xmm6,dqword ptr [r8+32]
+ movups xmm7,dqword ptr [r8+48]
+{$else}
  movups xmm4,dqword ptr [b+0]
  movups xmm5,dqword ptr [b+16]
  movups xmm6,dqword ptr [b+32]
  movups xmm7,dqword ptr [b+48]
+{$ifend}
  mulps xmm0,xmm4
  mulps xmm1,xmm5
  mulps xmm2,xmm6
@@ -10078,11 +11445,23 @@ end;
 class operator TpvMatrix4x4.Divide({$ifdef fpc}constref{$else}const{$endif} a:TpvMatrix4x4;{$ifdef fpc}constref{$else}const{$endif} b:TpvScalar):TpvMatrix4x4;
 {$if defined(SIMD) and (defined(cpu386) or defined(cpux64))}
 asm
+{$if defined(ExplicitX64SIMDRegs)}
+{$ifdef fpc}
+ movss xmm4,dword ptr [r8] // FreePascal: load from memory (constref)
+{$else}
+ movss xmm4,xmm2 // Delphi: otherwise from another xmm register
+{$endif}
+ movups xmm0,dqword ptr [rdx+0]
+ movups xmm1,dqword ptr [rdx+16]
+ movups xmm2,dqword ptr [rdx+32]
+ movups xmm3,dqword ptr [rdx+48]
+{$else}
  movups xmm0,dqword ptr [a+0]
  movups xmm1,dqword ptr [a+16]
  movups xmm2,dqword ptr [a+32]
  movups xmm3,dqword ptr [a+48]
  movss xmm4,dword ptr [b]
+{$ifend}
  shufps xmm4,xmm4,$00
  divps xmm0,xmm4
  divps xmm1,xmm4
@@ -10124,15 +11503,37 @@ asm
  movups dqword ptr [StackSave0],xmm6
  movups dqword ptr [StackSave1],xmm7
 {-$endif}
+{$if defined(ExplicitX64SIMDRegs)}
+{$ifdef fpc}
+ movss xmm0,dword ptr [rdx] // FreePascal: load from memory (constref)
+{$else}
+ movss xmm0,xmm1 // Delphi: otherwise from another xmm register
+{$endif}
+{$else}
  movss xmm0,dword ptr [a]
+{$ifend}
  shufps xmm0,xmm0,$00
  movaps xmm1,xmm0
  movaps xmm2,xmm0
  movaps xmm3,xmm0
+{$if defined(ExplicitX64SIMDRegs)}
+{$ifdef fpc}
+ movups xmm4,dqword ptr [r8+0]
+ movups xmm5,dqword ptr [r8+16]
+ movups xmm6,dqword ptr [r8+32]
+ movups xmm7,dqword ptr [r8+48]
+{$else}
+ movups xmm4,dqword ptr [rdx+0]
+ movups xmm5,dqword ptr [rdx+16]
+ movups xmm6,dqword ptr [rdx+32]
+ movups xmm7,dqword ptr [rdx+48]
+{$endif}
+{$else}
  movups xmm4,dqword ptr [b+0]
  movups xmm5,dqword ptr [b+16]
  movups xmm6,dqword ptr [b+32]
  movups xmm7,dqword ptr [b+48]
+{$ifend}
  divps xmm0,xmm4
  divps xmm1,xmm5
  divps xmm2,xmm6
@@ -10175,11 +11576,23 @@ end;
 class operator TpvMatrix4x4.IntDivide({$ifdef fpc}constref{$else}const{$endif} a:TpvMatrix4x4;{$ifdef fpc}constref{$else}const{$endif} b:TpvScalar):TpvMatrix4x4;
 {$if defined(SIMD) and (defined(cpu386) or defined(cpux64))}
 asm
+{$if defined(ExplicitX64SIMDRegs)}
+{$ifdef fpc}
+ movss xmm4,dword ptr [r8] // FreePascal: load from memory (constref)
+{$else}
+ movss xmm4,xmm2 // Delphi: otherwise from another xmm register
+{$endif}
+ movups xmm0,dqword ptr [rdx+0]
+ movups xmm1,dqword ptr [rdx+16]
+ movups xmm2,dqword ptr [rdx+32]
+ movups xmm3,dqword ptr [rdx+48]
+{$else}
  movups xmm0,dqword ptr [a+0]
  movups xmm1,dqword ptr [a+16]
  movups xmm2,dqword ptr [a+32]
  movups xmm3,dqword ptr [a+48]
  movss xmm4,dword ptr [b]
+{$ifend}
  shufps xmm4,xmm4,$00
  divps xmm0,xmm4
  divps xmm1,xmm4
@@ -10221,15 +11634,37 @@ asm
  movups dqword ptr [StackSave0],xmm6
  movups dqword ptr [StackSave1],xmm7
 {-$endif}
+{$if defined(ExplicitX64SIMDRegs)}
+{$ifdef fpc}
+ movss xmm0,dword ptr [rdx] // FreePascal: load from memory (constref)
+{$else}
+ movss xmm0,xmm1 // Delphi: otherwise from another xmm register
+{$endif}
+{$else}
  movss xmm0,dword ptr [a]
+{$ifend}
  shufps xmm0,xmm0,$00
  movaps xmm1,xmm0
  movaps xmm2,xmm0
  movaps xmm3,xmm0
+{$if defined(ExplicitX64SIMDRegs)}
+{$ifdef fpc}
+ movups xmm4,dqword ptr [r8+0]
+ movups xmm5,dqword ptr [r8+16]
+ movups xmm6,dqword ptr [r8+32]
+ movups xmm7,dqword ptr [r8+48]
+{$else}
+ movups xmm4,dqword ptr [rdx+0]
+ movups xmm5,dqword ptr [rdx+16]
+ movups xmm6,dqword ptr [rdx+32]
+ movups xmm7,dqword ptr [rdx+48]
+{$endif}
+{$else}
  movups xmm4,dqword ptr [b+0]
  movups xmm5,dqword ptr [b+16]
  movups xmm6,dqword ptr [b+32]
  movups xmm7,dqword ptr [b+48]
+{$ifend}
  divps xmm0,xmm4
  divps xmm1,xmm5
  divps xmm2,xmm6
@@ -10338,10 +11773,17 @@ asm
  xorps xmm1,xmm1
  xorps xmm2,xmm2
  xorps xmm3,xmm3
+{$if defined(ExplicitX64SIMDRegs)}
+ movups xmm4,dqword ptr [rdx+0]
+ movups xmm5,dqword ptr [rdx+16]
+ movups xmm6,dqword ptr [rdx+32]
+ movups xmm7,dqword ptr [rdx+48]
+{$else}
  movups xmm4,dqword ptr [a+0]
  movups xmm5,dqword ptr [a+16]
  movups xmm6,dqword ptr [a+32]
  movups xmm7,dqword ptr [a+48]
+{$ifend}
  subps xmm0,xmm4
  subps xmm1,xmm5
  subps xmm2,xmm6
@@ -11076,98 +12518,101 @@ begin
 end;
 
 function TpvMatrix4x4.OrthoNormalize:TpvMatrix4x4;
-var Backup:TpvVector3;
 begin
- Backup.x:=RawComponents[0,3];
- Backup.y:=RawComponents[1,3];
- Backup.z:=RawComponents[2,3];
- Normal.xyz:=Normal.xyz.Normalize;
- Tangent.xyz:=(Tangent.xyz-(Normal.xyz*Tangent.xyz.Dot(Normal.xyz))).Normalize;
- Bitangent.xyz:=Normal.xyz.Cross(Tangent.xyz).Normalize;
- Bitangent.xyz:=Bitangent.xyz-(Normal.xyz*Bitangent.xyz.Dot(Normal.xyz));
- Bitangent.xyz:=(Bitangent.xyz-(Tangent.xyz*Bitangent.xyz.Dot(Tangent.xyz))).Normalize;
- Tangent.xyz:=Bitangent.xyz.Cross(Normal.xyz).Normalize;
- Normal.xyz:=Tangent.xyz.Cross(Bitangent.xyz).Normalize;
- result.RawComponents:=RawComponents;
- result.RawComponents[0,3]:=Backup.x;
- result.RawComponents[1,3]:=Backup.y;
- result.RawComponents[2,3]:=Backup.z;
+ result.Normal.xyz:=Normal.xyz.Normalize;
+ result.Tangent.xyz:=(Tangent.xyz-(result.Normal.xyz*Tangent.xyz.Dot(result.Normal.xyz))).Normalize;
+ result.Bitangent.xyz:=result.Normal.xyz.Cross(result.Tangent.xyz).Normalize;
+ result.Bitangent.xyz:=result.Bitangent.xyz-(result.Normal.xyz*result.Bitangent.xyz.Dot(result.Normal.xyz));
+ result.Bitangent.xyz:=(result.Bitangent.xyz-(result.Tangent.xyz*result.Bitangent.xyz.Dot(result.Tangent.xyz))).Normalize;
+ result.Tangent.xyz:=result.Bitangent.xyz.Cross(result.Normal.xyz).Normalize;
+ result.Normal.xyz:=result.Tangent.xyz.Cross(result.Bitangent.xyz).Normalize;
+ result.RawComponents[0,3]:=RawComponents[0,3];
+ result.RawComponents[1,3]:=RawComponents[1,3];
+ result.RawComponents[2,3]:=RawComponents[2,3];
+ result.RawComponents[3,3]:=RawComponents[3,3];
+ result.RawComponents[3,0]:=RawComponents[3,0];
+ result.RawComponents[3,1]:=RawComponents[3,1];
+ result.RawComponents[3,2]:=RawComponents[3,2];
 end;
 
 function TpvMatrix4x4.RobustOrthoNormalize(const Tolerance:TpvScalar=1e-3):TpvMatrix4x4;
-var Backup,Bisector,Axis:TpvVector3;
+var Bisector,Axis:TpvVector3;
 begin
- Backup.x:=RawComponents[0,3];
- Backup.y:=RawComponents[1,3];
- Backup.z:=RawComponents[2,3];
  begin
   if Normal.xyz.Length<Tolerance then begin
-   // Degenerate case, compute new normal
+   // Degenerate case, compute new Normal.xyz
    Normal.xyz:=Tangent.xyz.Cross(Bitangent.xyz);
    if Normal.xyz.Length<Tolerance then begin
-    Tangent.xyz:=TpvVector3.XAxis;
-    Bitangent.xyz:=TpvVector3.YAxis;
-    Normal.xyz:=TpvVector3.ZAxis;
-    RawComponents[0,3]:=Backup.x;
-    RawComponents[1,3]:=Backup.y;
-    RawComponents[2,3]:=Backup.z;
+    result.Tangent.xyz:=TpvVector3.XAxis;
+    result.Bitangent.xyz:=TpvVector3.YAxis;
+    result.Normal.xyz:=TpvVector3.ZAxis;
+    result.RawComponents[0,3]:=RawComponents[0,3];
+    result.RawComponents[1,3]:=RawComponents[1,3];
+    result.RawComponents[2,3]:=RawComponents[2,3];
+    result.RawComponents[3,3]:=RawComponents[3,3];
+    result.RawComponents[3,0]:=RawComponents[3,0];
+    result.RawComponents[3,1]:=RawComponents[3,1];
+    result.RawComponents[3,2]:=RawComponents[3,2];
     exit;
    end;
   end;
-  Normal.xyz:=Normal.xyz.Normalize;
+  result.Normal.xyz:=Normal.xyz.Normalize;
  end;
  begin
-  // Project tangent and bitangent onto the normal orthogonal plane
-  Tangent.xyz:=Tangent.xyz-(Normal.xyz*Tangent.xyz.Dot(Normal.xyz));
-  Bitangent.xyz:=Bitangent.xyz-(Normal.xyz*Bitangent.xyz.Dot(Normal.xyz));
+  // Project Tangent.xyz and Bitangent.xyz onto the Normal.xyz orthogonal plane
+  result.Tangent.xyz:=Tangent.xyz-(result.Normal.xyz*Tangent.xyz.Dot(result.Normal.xyz));
+  result.Bitangent.xyz:=Bitangent.xyz-(result.Normal.xyz*Bitangent.xyz.Dot(result.Normal.xyz));
  end;
  begin
   // Check for several degenerate cases
-  if Tangent.xyz.Length<Tolerance then begin
-   if Bitangent.xyz.Length<Tolerance then begin
-    Tangent.xyz:=Normal.xyz.Normalize;
-    if (Tangent.x<=Tangent.y) and (Tangent.x<=Tangent.z) then begin
-     Tangent.xyz:=TpvVector3.XAxis;
-    end else if (Tangent.y<=Tangent.x) and (Tangent.y<=Tangent.z) then begin
-     Tangent.xyz:=TpvVector3.YAxis;
+  if result.Tangent.xyz.Length<Tolerance then begin
+   if result.Bitangent.xyz.Length<Tolerance then begin
+    result.Tangent.xyz:=result.Normal.xyz.Normalize;
+    if (result.Tangent.xyz.x<=result.Tangent.xyz.y) and (result.Tangent.xyz.x<=result.Tangent.xyz.z) then begin
+     result.Tangent.xyz:=TpvVector3.XAxis;
+    end else if (result.Tangent.xyz.y<=result.Tangent.xyz.x) and (result.Tangent.xyz.y<=result.Tangent.xyz.z) then begin
+     result.Tangent.xyz:=TpvVector3.YAxis;
     end else begin
-     Tangent.xyz:=TpvVector3.ZAxis;
+     result.Tangent.xyz:=TpvVector3.ZAxis;
     end;
-    Tangent.xyz:=Tangent.xyz-(Normal.xyz*Tangent.xyz.Dot(Normal.xyz));
-    Bitangent.xyz:=Normal.xyz.Cross(Tangent.xyz).Normalize;
+    result.Tangent.xyz:=result.Tangent.xyz-(result.Normal.xyz*result.Tangent.xyz.Dot(result.Normal.xyz));
+    result.Bitangent.xyz:=result.Normal.xyz.Cross(result.Tangent.xyz).Normalize;
    end else begin
-    Tangent.xyz:=Bitangent.xyz.Cross(Normal.xyz).Normalize;
+    result.Tangent.xyz:=result.Bitangent.xyz.Cross(result.Normal.xyz).Normalize;
    end;
   end else begin
-   Tangent.xyz:=Tangent.xyz.Normalize;
-   if Bitangent.xyz.Length<Tolerance then begin
-    Bitangent.xyz:=Normal.xyz.Cross(Tangent.xyz).Normalize;
+   result.Tangent.xyz:=result.Tangent.xyz.Normalize;
+   if result.Bitangent.xyz.Length<Tolerance then begin
+    result.Bitangent.xyz:=result.Normal.xyz.Cross(result.Tangent.xyz).Normalize;
    end else begin
-    Bitangent.xyz:=Bitangent.xyz.Normalize;
-    Bisector:=Tangent.xyz+Bitangent.xyz;
+    result.Bitangent.xyz:=result.Bitangent.xyz.Normalize;
+    Bisector:=result.Tangent.xyz+result.Bitangent.xyz;
     if Bisector.Length<Tolerance then begin
-     Bisector:=Tangent.xyz;
+     Bisector:=result.Tangent.xyz;
     end else begin
      Bisector:=Bisector.Normalize;
     end;
-    Axis:=Bisector.Cross(Normal.xyz).Normalize;
+    Axis:=Bisector.Cross(result.Normal.xyz).Normalize;
     if Axis.Dot(Tangent.xyz)>0.0 then begin
-     Tangent.xyz:=(Bisector+Axis).Normalize;
-     Bitangent.xyz:=(Bisector-Axis).Normalize;
+     result.Tangent.xyz:=(Bisector+Axis).Normalize;
+     result.Bitangent.xyz:=(Bisector-Axis).Normalize;
     end else begin
-     Tangent.xyz:=(Bisector-Axis).Normalize;
-     Bitangent.xyz:=(Bisector+Axis).Normalize;
+     result.Tangent.xyz:=(Bisector-Axis).Normalize;
+     result.Bitangent.xyz:=(Bisector+Axis).Normalize;
     end;
    end;
   end;
  end;
- Bitangent.xyz:=Normal.xyz.Cross(Tangent.xyz).Normalize;
- Tangent.xyz:=Bitangent.xyz.Cross(Normal.xyz).Normalize;
- Normal.xyz:=Tangent.xyz.Cross(Bitangent.xyz).Normalize;
- result.RawComponents:=RawComponents;
- result.RawComponents[0,3]:=Backup.x;
- result.RawComponents[1,3]:=Backup.y;
- result.RawComponents[2,3]:=Backup.z;
+ result.Bitangent.xyz:=result.Normal.xyz.Cross(result.Tangent.xyz).Normalize;
+ result.Tangent.xyz:=result.Bitangent.xyz.Cross(result.Normal.xyz).Normalize;
+ result.Normal.xyz:=result.Tangent.xyz.Cross(result.Bitangent.xyz).Normalize;
+ result.RawComponents[0,3]:=RawComponents[0,3];
+ result.RawComponents[1,3]:=RawComponents[1,3];
+ result.RawComponents[2,3]:=RawComponents[2,3];
+ result.RawComponents[3,3]:=RawComponents[3,3];
+ result.RawComponents[3,0]:=RawComponents[3,0];
+ result.RawComponents[3,1]:=RawComponents[3,1];
+ result.RawComponents[3,2]:=RawComponents[3,2];
 end;
 
 function TpvMatrix4x4.ToQuaternion:TpvQuaternion;
@@ -11207,8 +12652,7 @@ begin
  result:=result.Normalize;
 end;
 
-function TpvMatrix4x4.ToQTangent:TpvQuaternion;
-const Threshold=1.0/32767.0;
+function TpvMatrix4x4.ToQTangent(const aThreshold:TpvDouble):TpvQuaternion;
 var Scale,t,s,Renormalization:TpvScalar;
 begin
  if ((((((RawComponents[0,0]*RawComponents[1,1]*RawComponents[2,2])+
@@ -11224,16 +12668,13 @@ begin
     )<0.0 then begin
   // Reflection matrix, so flip y axis in case the tangent frame encodes a reflection
   Scale:=-1.0;
-  RawComponents[2,0]:=-RawComponents[2,0];
-  RawComponents[2,1]:=-RawComponents[2,1];
-  RawComponents[2,2]:=-RawComponents[2,2];
  end else begin
   // Rotation matrix, so nothing is doing to do
   Scale:=1.0;
  end;
  begin
   // Convert to quaternion
-  t:=RawComponents[0,0]+(RawComponents[1,1]+RawComponents[2,2]);
+  t:=RawComponents[0,0]+(RawComponents[1,1]+(RawComponents[2,2]*Scale));
   if t>2.9999999 then begin
    result.x:=0.0;
    result.y:=0.0;
@@ -11241,26 +12682,26 @@ begin
    result.w:=1.0;
   end else if t>0.0000001 then begin
    s:=sqrt(1.0+t)*2.0;
-   result.x:=(RawComponents[1,2]-RawComponents[2,1])/s;
-   result.y:=(RawComponents[2,0]-RawComponents[0,2])/s;
+   result.x:=(RawComponents[1,2]-(RawComponents[2,1]*Scale))/s;
+   result.y:=((RawComponents[2,0]*Scale)-RawComponents[0,2])/s;
    result.z:=(RawComponents[0,1]-RawComponents[1,0])/s;
    result.w:=s*0.25;
-  end else if (RawComponents[0,0]>RawComponents[1,1]) and (RawComponents[0,0]>RawComponents[2,2]) then begin
-   s:=sqrt(1.0+(RawComponents[0,0]-(RawComponents[1,1]+RawComponents[2,2])))*2.0;
+  end else if (RawComponents[0,0]>RawComponents[1,1]) and (RawComponents[0,0]>(RawComponents[2,2]*Scale)) then begin
+   s:=sqrt(1.0+(RawComponents[0,0]-(RawComponents[1,1]+(RawComponents[2,2]*Scale))))*2.0;
    result.x:=s*0.25;
    result.y:=(RawComponents[1,0]+RawComponents[0,1])/s;
-   result.z:=(RawComponents[2,0]+RawComponents[0,2])/s;
-   result.w:=(RawComponents[1,2]-RawComponents[2,1])/s;
-  end else if RawComponents[1,1]>RawComponents[2,2] then begin
-   s:=sqrt(1.0+(RawComponents[1,1]-(RawComponents[0,0]+RawComponents[2,2])))*2.0;
+   result.z:=((RawComponents[2,0]*Scale)+RawComponents[0,2])/s;
+   result.w:=(RawComponents[1,2]-(RawComponents[2,1]*Scale))/s;
+  end else if RawComponents[1,1]>(RawComponents[2,2]*Scale) then begin
+   s:=sqrt(1.0+(RawComponents[1,1]-(RawComponents[0,0]+(RawComponents[2,2]*Scale))))*2.0;
    result.x:=(RawComponents[1,0]+RawComponents[0,1])/s;
    result.y:=s*0.25;
-   result.z:=(RawComponents[2,1]+RawComponents[1,2])/s;
-   result.w:=(RawComponents[2,0]-RawComponents[0,2])/s;
+   result.z:=((RawComponents[2,1]*Scale)+RawComponents[1,2])/s;
+   result.w:=((RawComponents[2,0]*Scale)-RawComponents[0,2])/s;
   end else begin
-   s:=sqrt(1.0+(RawComponents[2,2]-(RawComponents[0,0]+RawComponents[1,1])))*2.0;
-   result.x:=(RawComponents[2,0]+RawComponents[0,2])/s;
-   result.y:=(RawComponents[2,1]+RawComponents[1,2])/s;
+   s:=sqrt(1.0+((RawComponents[2,2]*Scale)-(RawComponents[0,0]+RawComponents[1,1])))*2.0;
+   result.x:=((RawComponents[2,0]*Scale)+RawComponents[0,2])/s;
+   result.y:=((RawComponents[2,1]*Scale)+RawComponents[1,2])/s;
    result.z:=s*0.25;
    result.w:=(RawComponents[0,1]-RawComponents[1,0])/s;
   end;
@@ -11268,15 +12709,15 @@ begin
  end;
  begin
   // Make sure, that we don't end up with 0 as w component
-  if abs(result.w)<=Threshold then begin
-   Renormalization:=sqrt(1.0-sqr(Threshold));
+  if abs(result.w)<=aThreshold then begin
+   Renormalization:=sqrt(1.0-sqr(aThreshold));
    result.x:=result.x*Renormalization;
    result.y:=result.y*Renormalization;
    result.z:=result.z*Renormalization;
    if result.w>0.0 then begin
-    result.w:=Threshold;
+    result.w:=aThreshold;
    end else begin
-    result.w:=-Threshold;
+    result.w:=-aThreshold;
    end;
   end;
  end;
@@ -11536,6 +12977,21 @@ begin
  result.w:=a.w;
 end;
 
+function TpvMatrix4x4.MulAbsBasis({$ifdef fpc}constref{$else}const{$endif} a:TpvVector3):TpvVector3;
+begin
+ result.x:=(abs(RawComponents[0,0])*a.x)+(abs(RawComponents[1,0])*a.y)+(abs(RawComponents[2,0])*a.z);
+ result.y:=(abs(RawComponents[0,1])*a.x)+(abs(RawComponents[1,1])*a.y)+(abs(RawComponents[2,1])*a.z);
+ result.z:=(abs(RawComponents[0,2])*a.x)+(abs(RawComponents[1,2])*a.y)+(abs(RawComponents[2,2])*a.z);
+end;
+
+function TpvMatrix4x4.MulAbsBasis({$ifdef fpc}constref{$else}const{$endif} a:TpvVector4):TpvVector4;
+begin
+ result.x:=(abs(RawComponents[0,0])*a.x)+(abs(RawComponents[1,0])*a.y)+(abs(RawComponents[2,0])*a.z);
+ result.y:=(abs(RawComponents[0,1])*a.x)+(abs(RawComponents[1,1])*a.y)+(abs(RawComponents[2,1])*a.z);
+ result.z:=(abs(RawComponents[0,2])*a.x)+(abs(RawComponents[1,2])*a.y)+(abs(RawComponents[2,2])*a.z);
+ result.w:=a.w;
+end;
+
 function TpvMatrix4x4.MulTransposedBasis({$ifdef fpc}constref{$else}const{$endif} a:TpvVector3):TpvVector3;
 begin
  result.x:=(RawComponents[0,0]*a.x)+(RawComponents[0,1]*a.y)+(RawComponents[0,2]*a.z);
@@ -11554,9 +13010,8 @@ end;
 function TpvMatrix4x4.MulHomogen({$ifdef fpc}constref{$else}const{$endif} a:TpvVector3):TpvVector3;
 var Temporary:TpvVector4;
 begin
- Temporary:=self*TpvVector4.Create(a,1.0);
- Temporary:=Temporary/Temporary.w;
- result:=Temporary.xyz;
+ Temporary:=self*TpvVector4.InlineableCreate(a,1.0);
+ result:=Temporary.xyz/Temporary.w;
 end;
 
 function TpvMatrix4x4.MulHomogen({$ifdef fpc}constref{$else}const{$endif} a:TpvVector4):TpvVector4;
@@ -11623,9 +13078,9 @@ begin
       (LocalMatrix.RawComponents[2,3]<>0.0) then begin
 
     result.Perspective:=PerspectiveMatrix.Inverse.Transpose*TpvVector4.Create(LocalMatrix.RawComponents[0,3],
-                                                                                         LocalMatrix.RawComponents[1,3],
-                                                                                         LocalMatrix.RawComponents[2,3],
-                                                                                         LocalMatrix.RawComponents[3,3]);
+                                                                              LocalMatrix.RawComponents[1,3],
+                                                                              LocalMatrix.RawComponents[2,3],
+                                                                              LocalMatrix.RawComponents[3,3]);
 
     LocalMatrix.RawComponents[0,3]:=0.0;
     LocalMatrix.RawComponents[1,3]:=0.0;
@@ -13606,6 +15061,26 @@ begin
  result.Max:=Max+v;
 end;
 
+procedure TpvAABB.DirectCombine(const WithAABB:TpvAABB);
+begin
+ Min.x:=Math.Min(Min.x,WithAABB.Min.x);
+ Min.y:=Math.Min(Min.y,WithAABB.Min.y);
+ Min.z:=Math.Min(Min.z,WithAABB.Min.z);
+ Max.x:=Math.Max(Max.x,WithAABB.Max.x);
+ Max.y:=Math.Max(Max.y,WithAABB.Max.y);
+ Max.z:=Math.Max(Max.z,WithAABB.Max.z);
+end;
+
+procedure TpvAABB.DirectCombineVector3(const v:TpvVector3);
+begin
+ Min.x:=Math.Min(Min.x,v.x);
+ Min.y:=Math.Min(Min.y,v.y);
+ Min.z:=Math.Min(Min.z,v.z);
+ Max.x:=Math.Max(Max.x,v.x);
+ Max.y:=Math.Max(Max.y,v.y);
+ Max.z:=Math.Max(Max.z,v.z);
+end;
+
 function TpvAABB.Combine(const WithAABB:TpvAABB):TpvAABB;
 begin
  result.Min.x:=Math.Min(Min.x,WithAABB.Min.x);
@@ -13616,7 +15091,7 @@ begin
  result.Max.z:=Math.Max(Max.z,WithAABB.Max.z);
 end;
 
-function TpvAABB.CombineVector3(v:TpvVector3):TpvAABB;
+function TpvAABB.CombineVector3(const v:TpvVector3):TpvAABB;
 begin
  result.Min.x:=Math.Min(Min.x,v.x);
  result.Min.y:=Math.Min(Min.y,v.y);
@@ -14196,7 +15671,88 @@ begin
 end;
 
 function TpvAABB.Transform(const Transform:TpvMatrix3x3):TpvAABB;
-var i,j:TpvInt32;
+var Center,Temp,Extents:TpvVector3;
+begin
+ Center:=(Min+Max)*0.5;
+ Temp:=(Max-Min)*0.5;
+ Extents.x:=(abs(Transform.RawComponents[0,0])*Temp.x)+(abs(Transform.RawComponents[1,0])*Temp.y)+(abs(Transform.RawComponents[2,0])*Temp.z);
+ Extents.y:=(abs(Transform.RawComponents[0,1])*Temp.x)+(abs(Transform.RawComponents[1,1])*Temp.y)+(abs(Transform.RawComponents[2,1])*Temp.z);
+ Extents.z:=(abs(Transform.RawComponents[0,2])*Temp.x)+(abs(Transform.RawComponents[1,2])*Temp.y)+(abs(Transform.RawComponents[2,2])*Temp.z);
+ result.Min:=Center-Extents;
+ result.Max:=Center+Extents;
+end;
+{begin
+ result.Min.x:=0.0;
+ result.Min.y:=0.0;
+ result.Min.z:=0.0;
+ result.Max.x:=0.0;
+ result.Max.y:=0.0;
+ result.Max.z:=0.0;
+ if Transform.RawComponents[0,0]>0.0 then begin
+  result.Min.x:=result.Min.x+(Transform.RawComponents[0,0]*Min.x);
+  result.Max.x:=result.Max.x+(Transform.RawComponents[0,0]*Max.x);
+ end else begin
+  result.Min.x:=result.Min.x+(Transform.RawComponents[0,0]*Max.x);
+  result.Max.x:=result.Max.x+(Transform.RawComponents[0,0]*Min.x);
+ end;
+ if Transform.RawComponents[0,1]>0.0 then begin
+  result.Min.y:=result.Min.y+(Transform.RawComponents[0,1]*Min.x);
+  result.Max.y:=result.Max.y+(Transform.RawComponents[0,1]*Max.x);
+ end else begin
+  result.Min.y:=result.Min.y+(Transform.RawComponents[0,1]*Max.x);
+  result.Max.y:=result.Max.y+(Transform.RawComponents[0,1]*Min.x);
+ end;
+ if Transform.RawComponents[0,2]>0.0 then begin
+  result.Min.z:=result.Min.z+(Transform.RawComponents[0,2]*Min.x);
+  result.Max.z:=result.Max.z+(Transform.RawComponents[0,2]*Max.x);
+ end else begin
+  result.Min.z:=result.Min.z+(Transform.RawComponents[0,2]*Max.x);
+  result.Max.z:=result.Max.z+(Transform.RawComponents[0,2]*Min.x);
+ end;
+ if Transform.RawComponents[1,0]>0.0 then begin
+  result.Min.x:=result.Min.x+(Transform.RawComponents[1,0]*Min.y);
+  result.Max.x:=result.Max.x+(Transform.RawComponents[1,0]*Max.y);
+ end else begin
+  result.Min.x:=result.Min.x+(Transform.RawComponents[1,0]*Max.y);
+  result.Max.x:=result.Max.x+(Transform.RawComponents[1,0]*Min.y);
+ end;
+ if Transform.RawComponents[1,1]>0.0 then begin
+  result.Min.y:=result.Min.y+(Transform.RawComponents[1,1]*Min.y);
+  result.Max.y:=result.Max.y+(Transform.RawComponents[1,1]*Max.y);
+ end else begin
+  result.Min.y:=result.Min.y+(Transform.RawComponents[1,1]*Max.y);
+  result.Max.y:=result.Max.y+(Transform.RawComponents[1,1]*Min.y);
+ end;
+ if Transform.RawComponents[1,2]>0.0 then begin
+  result.Min.z:=result.Min.z+(Transform.RawComponents[1,2]*Min.y);
+  result.Max.z:=result.Max.z+(Transform.RawComponents[1,2]*Max.y);
+ end else begin
+  result.Min.z:=result.Min.z+(Transform.RawComponents[1,2]*Max.y);
+  result.Max.z:=result.Max.z+(Transform.RawComponents[1,2]*Min.y);
+ end;
+ if Transform.RawComponents[2,0]>0.0 then begin
+  result.Min.x:=result.Min.x+(Transform.RawComponents[2,0]*Min.z);
+  result.Max.x:=result.Max.x+(Transform.RawComponents[2,0]*Max.z);
+ end else begin
+  result.Min.x:=result.Min.x+(Transform.RawComponents[2,0]*Max.z);
+  result.Max.x:=result.Max.x+(Transform.RawComponents[2,0]*Min.z);
+ end;
+ if Transform.RawComponents[2,1]>0.0 then begin
+  result.Min.y:=result.Min.y+(Transform.RawComponents[2,1]*Min.z);
+  result.Max.y:=result.Max.y+(Transform.RawComponents[2,1]*Max.z);
+ end else begin
+  result.Min.y:=result.Min.y+(Transform.RawComponents[2,1]*Max.z);
+  result.Max.y:=result.Max.y+(Transform.RawComponents[2,1]*Min.z);
+ end;
+ if Transform.RawComponents[2,2]>0.0 then begin
+  result.Min.z:=result.Min.z+(Transform.RawComponents[2,2]*Min.z);
+  result.Max.z:=result.Max.z+(Transform.RawComponents[2,2]*Max.z);
+ end else begin
+  result.Min.z:=result.Min.z+(Transform.RawComponents[2,2]*Max.z);
+  result.Max.z:=result.Max.z+(Transform.RawComponents[2,2]*Min.z);
+ end;
+end;}
+{var i,j:TpvInt32;
     a,b:TpvScalar;
 begin
  result.Min.x:=0.0;
@@ -14218,10 +15774,105 @@ begin
    end;
   end;
  end;
-end;
+end;}
 
 function TpvAABB.Transform(const Transform:TpvMatrix4x4):TpvAABB;
-var i,j:TpvInt32;
+var Center,Extents:TpvVector3;
+begin
+ Center:=(Transform*TpvVector4.InlineableCreate((Min+Max)*0.5,1.0)).xyz;
+ Extents:=Transform.MulAbsBasis((Max-Min)*0.5);
+ result.Min:=Center-Extents;
+ result.Max:=Center+Extents;
+end;
+{begin
+ result.Min.x:=Transform.RawComponents[3,0];
+ result.Min.y:=Transform.RawComponents[3,1];
+ result.Min.z:=Transform.RawComponents[3,2];
+ result.Max:=result.Min;
+ if Transform.RawComponents[0,0]>0.0 then begin
+  result.Min.x:=result.Min.x+(Transform.RawComponents[0,0]*Min.x);
+  result.Max.x:=result.Max.x+(Transform.RawComponents[0,0]*Max.x);
+ end else begin
+  result.Min.x:=result.Min.x+(Transform.RawComponents[0,0]*Max.x);
+  result.Max.x:=result.Max.x+(Transform.RawComponents[0,0]*Min.x);
+ end;
+ if Transform.RawComponents[0,1]>0.0 then begin
+  result.Min.y:=result.Min.y+(Transform.RawComponents[0,1]*Min.x);
+  result.Max.y:=result.Max.y+(Transform.RawComponents[0,1]*Max.x);
+ end else begin
+  result.Min.y:=result.Min.y+(Transform.RawComponents[0,1]*Max.x);
+  result.Max.y:=result.Max.y+(Transform.RawComponents[0,1]*Min.x);
+ end;
+ if Transform.RawComponents[0,2]>0.0 then begin
+  result.Min.z:=result.Min.z+(Transform.RawComponents[0,2]*Min.x);
+  result.Max.z:=result.Max.z+(Transform.RawComponents[0,2]*Max.x);
+ end else begin
+  result.Min.z:=result.Min.z+(Transform.RawComponents[0,2]*Max.x);
+  result.Max.z:=result.Max.z+(Transform.RawComponents[0,2]*Min.x);
+ end;
+ if Transform.RawComponents[1,0]>0.0 then begin
+  result.Min.x:=result.Min.x+(Transform.RawComponents[1,0]*Min.y);
+  result.Max.x:=result.Max.x+(Transform.RawComponents[1,0]*Max.y);
+ end else begin
+  result.Min.x:=result.Min.x+(Transform.RawComponents[1,0]*Max.y);
+  result.Max.x:=result.Max.x+(Transform.RawComponents[1,0]*Min.y);
+ end;
+ if Transform.RawComponents[1,1]>0.0 then begin
+  result.Min.y:=result.Min.y+(Transform.RawComponents[1,1]*Min.y);
+  result.Max.y:=result.Max.y+(Transform.RawComponents[1,1]*Max.y);
+ end else begin
+  result.Min.y:=result.Min.y+(Transform.RawComponents[1,1]*Max.y);
+  result.Max.y:=result.Max.y+(Transform.RawComponents[1,1]*Min.y);
+ end;
+ if Transform.RawComponents[1,2]>0.0 then begin
+  result.Min.z:=result.Min.z+(Transform.RawComponents[1,2]*Min.y);
+  result.Max.z:=result.Max.z+(Transform.RawComponents[1,2]*Max.y);
+ end else begin
+  result.Min.z:=result.Min.z+(Transform.RawComponents[1,2]*Max.y);
+  result.Max.z:=result.Max.z+(Transform.RawComponents[1,2]*Min.y);
+ end;
+ if Transform.RawComponents[2,0]>0.0 then begin
+  result.Min.x:=result.Min.x+(Transform.RawComponents[2,0]*Min.z);
+  result.Max.x:=result.Max.x+(Transform.RawComponents[2,0]*Max.z);
+ end else begin
+  result.Min.x:=result.Min.x+(Transform.RawComponents[2,0]*Max.z);
+  result.Max.x:=result.Max.x+(Transform.RawComponents[2,0]*Min.z);
+ end;
+ if Transform.RawComponents[2,1]>0.0 then begin
+  result.Min.y:=result.Min.y+(Transform.RawComponents[2,1]*Min.z);
+  result.Max.y:=result.Max.y+(Transform.RawComponents[2,1]*Max.z);
+ end else begin
+  result.Min.y:=result.Min.y+(Transform.RawComponents[2,1]*Max.z);
+  result.Max.y:=result.Max.y+(Transform.RawComponents[2,1]*Min.z);
+ end;
+ if Transform.RawComponents[2,2]>0.0 then begin
+  result.Min.z:=result.Min.z+(Transform.RawComponents[2,2]*Min.z);
+  result.Max.z:=result.Max.z+(Transform.RawComponents[2,2]*Max.z);
+ end else begin
+  result.Min.z:=result.Min.z+(Transform.RawComponents[2,2]*Max.z);
+  result.Max.z:=result.Max.z+(Transform.RawComponents[2,2]*Min.z);
+ end;
+end;}
+{var Size:TpvVector3;
+    Basis:array[0..2] of TpvVector3;
+    Temp:array[0..7] of TpvVector3;
+begin
+ Size:=Max-Min;
+ Basis[0]:=TpvVector3.InlineableCreate(Transform.RawComponents[0,0],Transform.RawComponents[0,1],Transform.RawComponents[0,2])*Size;
+ Basis[1]:=TpvVector3.InlineableCreate(Transform.RawComponents[1,0],Transform.RawComponents[1,1],Transform.RawComponents[1,2])*Size;
+ Basis[2]:=TpvVector3.InlineableCreate(Transform.RawComponents[2,0],Transform.RawComponents[2,1],Transform.RawComponents[2,2])*Size;
+ Temp[0]:=(Transform*TpvVector4.InlineableCreate(Min,1.0)).xyz;
+ Temp[1]:=Temp[0]+Basis[0];
+ Temp[2]:=Temp[0]+Basis[1];
+ Temp[3]:=Temp[1]+Basis[1];
+ Temp[4]:=Temp[0]+Basis[2];
+ Temp[5]:=Temp[1]+Basis[2];
+ Temp[6]:=Temp[2]+Basis[2];
+ Temp[7]:=Temp[3]+Basis[2];
+ result.Min:=Temp[0].Min(Temp[1].Min(Temp[2].Min(Temp[3].Min(Temp[4].Min(Temp[5].Min(Temp[6].Min(Temp[7])))))));
+ result.Max:=Temp[0].Max(Temp[1].Max(Temp[2].Max(Temp[3].Max(Temp[4].Max(Temp[5].Max(Temp[6].Max(Temp[7])))))));
+end;}
+{var i,j:TpvInt32;
     a,b:TpvScalar;
 begin
  result.Min.x:=Transform[3,0];
@@ -14241,103 +15892,91 @@ begin
    end;
   end;
  end;
+end;}
+
+function TpvAABB.HomogenTransform(const aTransform:TpvMatrix4x4):TpvAABB;
+var Center,Extents:TpvVector3;
+begin
+ if (abs(aTransform.RawComponents[0,3])+abs(aTransform.RawComponents[1,3])+abs(aTransform.RawComponents[2,3])+(abs(aTransform.RawComponents[3,3]-1.0))<1e-6) then begin
+  // Affine => fast but more specialized code path
+  Center:=(aTransform*TpvVector4.InlineableCreate((Min+Max)*0.5,1.0)).xyz;
+  Extents:=aTransform.MulAbsBasis((Max-Min)*0.5);
+  result.Min:=Center-Extents;
+  result.Max:=Center+Extents;
+ end else begin
+  // Non-affine => slow but more flexible code path
+  result:=MatrixMul(aTransform);
+ end;
 end;
 
 function TpvAABB.MatrixMul(const Transform:TpvMatrix3x3):TpvAABB;
-var Rotation:TpvMatrix3x3;
-    v:array[0..7] of TpvVector3;
-    Center,MinVector,MaxVector:TpvVector3;
-    i:TpvInt32;
+var Index:TpvInt32;
+    v:TpvVector3;
 begin
-
- Center:=(Min+Max)*0.5;
-
- MinVector:=Min-Center;
- MaxVector:=Max-Center;
-
- v[0]:=Transform*TpvVector3.Create(MinVector.x,MinVector.y,MinVector.z);
- v[1]:=Transform*TpvVector3.Create(MaxVector.x,MinVector.y,MinVector.z);
- v[2]:=Transform*TpvVector3.Create(MaxVector.x,MaxVector.y,MinVector.z);
- v[3]:=Transform*TpvVector3.Create(MaxVector.x,MaxVector.y,MaxVector.z);
- v[4]:=Transform*TpvVector3.Create(MinVector.x,MaxVector.y,MaxVector.z);
- v[5]:=Transform*TpvVector3.Create(MinVector.x,MinVector.y,MaxVector.z);
- v[6]:=Transform*TpvVector3.Create(MaxVector.x,MinVector.y,MaxVector.z);
- v[7]:=Transform*TpvVector3.Create(MinVector.x,MaxVector.y,MinVector.z);
-
- result.Min:=v[0];
- result.Max:=v[0];
- for i:=0 to 7 do begin
-  if result.Min.x>v[i].x then begin
-   result.Min.x:=v[i].x;
-  end;
-  if result.Min.y>v[i].y then begin
-   result.Min.y:=v[i].y;
-  end;
-  if result.Min.z>v[i].z then begin
-   result.Min.z:=v[i].z;
-  end;
-  if result.Max.x<v[i].x then begin
-   result.Max.x:=v[i].x;
-  end;
-  if result.Max.y<v[i].y then begin
-   result.Max.y:=v[i].y;
-  end;
-  if result.Max.z<v[i].z then begin
-   result.Max.z:=v[i].z;
+ for Index:=0 to 7 do begin
+  v:=Transform*TpvVector3.InlineableCreate(MinMax[(Index shr 0) and 1].x,
+                                           MinMax[(Index shr 1) and 1].y,
+                                           MinMax[(Index shr 2) and 1].z);
+  if Index=0 then begin
+   result.Min:=v;
+   result.Max:=v;
+  end else begin
+   if result.Min.x>v.x then begin
+    result.Min.x:=v.x;
+   end;
+   if result.Min.y>v.y then begin
+    result.Min.y:=v.y;
+   end;
+   if result.Min.z>v.z then begin
+    result.Min.z:=v.z;
+   end;
+   if result.Max.x<v.x then begin
+    result.Max.x:=v.x;
+   end;
+   if result.Max.y<v.y then begin
+    result.Max.y:=v.y;
+   end;
+   if result.Max.z<v.z then begin
+    result.Max.z:=v.z;
+   end;
   end;
  end;
- result.Min:=result.Min+Center;
- result.Max:=result.Max+Center;
 end;
 
 function TpvAABB.MatrixMul(const Transform:TpvMatrix4x4):TpvAABB;
-var Rotation:TpvMatrix4x4;
-    v:array[0..7] of TpvVector3;
-    Center,NewCenter,MinVector,MaxVector:TpvVector3;
-    i:TpvInt32;
+var Index:TpvInt32;
+    v:TpvVector4;
 begin
- Rotation:=TpvMatrix4x4.CreateRotation(Transform);
-
- Center:=(Min+Max)*0.5;
-
- MinVector:=Min-Center;
- MaxVector:=Max-Center;
-
- NewCenter:=Center+(Transform*TpvVector3.Origin);
-
- v[0]:=Rotation*TpvVector3.Create(MinVector.x,MinVector.y,MinVector.z);
- v[1]:=Rotation*TpvVector3.Create(MaxVector.x,MinVector.y,MinVector.z);
- v[2]:=Rotation*TpvVector3.Create(MaxVector.x,MaxVector.y,MinVector.z);
- v[3]:=Rotation*TpvVector3.Create(MaxVector.x,MaxVector.y,MaxVector.z);
- v[4]:=Rotation*TpvVector3.Create(MinVector.x,MaxVector.y,MaxVector.z);
- v[5]:=Rotation*TpvVector3.Create(MinVector.x,MinVector.y,MaxVector.z);
- v[6]:=Rotation*TpvVector3.Create(MaxVector.x,MinVector.y,MaxVector.z);
- v[7]:=Rotation*TpvVector3.Create(MinVector.x,MaxVector.y,MinVector.z);
-
- result.Min:=v[0];
- result.Max:=v[0];
- for i:=0 to 7 do begin
-  if result.Min.x>v[i].x then begin
-   result.Min.x:=v[i].x;
-  end;
-  if result.Min.y>v[i].y then begin
-   result.Min.y:=v[i].y;
-  end;
-  if result.Min.z>v[i].z then begin
-   result.Min.z:=v[i].z;
-  end;
-  if result.Max.x<v[i].x then begin
-   result.Max.x:=v[i].x;
-  end;
-  if result.Max.y<v[i].y then begin
-   result.Max.y:=v[i].y;
-  end;
-  if result.Max.z<v[i].z then begin
-   result.Max.z:=v[i].z;
+ for Index:=0 to 7 do begin
+  v:=Transform*TpvVector4.InlineableCreate(MinMax[(Index shr 0) and 1].x,
+                                           MinMax[(Index shr 1) and 1].y,
+                                           MinMax[(Index shr 2) and 1].z,
+                                           1.0);
+  v.xyz:=v.xyz/v.w;
+  if Index=0 then begin
+   result.Min:=v.xyz;
+   result.Max:=v.xyz;
+  end else begin
+   if result.Min.x>v.x then begin
+    result.Min.x:=v.x;
+   end;
+   if result.Min.y>v.y then begin
+    result.Min.y:=v.y;
+   end;
+   if result.Min.z>v.z then begin
+    result.Min.z:=v.z;
+   end;
+   if result.Max.x<v.x then begin
+    result.Max.x:=v.x;
+   end;
+   if result.Max.y<v.y then begin
+    result.Max.y:=v.y;
+   end;
+   if result.Max.z<v.z then begin
+    result.Max.z:=v.z;
+   end;
   end;
  end;
- result.Min:=result.Min+NewCenter;
- result.Max:=result.Max+NewCenter;
 end;
 
 function TpvAABB.ScissorRect(out Scissor:TpvClipRect;const mvp:TpvMatrix4x4;const vp:TpvClipRect;zcull:boolean):boolean;
@@ -14613,6 +16252,12 @@ begin
  Radius:=pRadius;
 end;
 
+constructor TpvSphere.Create(const aVector:TpvVector4);
+begin
+ Center:=aVector.xyz;
+ Radius:=aVector.w;
+end;
+
 constructor TpvSphere.CreateFromAABB(const ppvAABB:TpvAABB);
 begin
  Center:=(ppvAABB.Min+ppvAABB.Max)*0.5;
@@ -14627,6 +16272,11 @@ begin
  Width:=Height*AspectRatio;
  Radius:=TpvVector3.Create(Width,Height,ViewLen).DistanceTo(TpvVector3.Create(0.0,0.0,zNear+(ViewLen*0.5)));
  Center:=Position+(Direction*((ViewLen*0.5)+zNear));
+end;
+
+function TpvSphere.ToVector4:TpvVector4;
+begin
+ result:=TpvVector4.InlineableCreate(Center,Radius);
 end;
 
 function TpvSphere.ToAABB(const pScale:TpvScalar=1.0):TpvAABB;
@@ -14697,39 +16347,69 @@ end;
 
 function TpvSphere.RayIntersection(const Origin,Direction:TpvVector3;out Time:TpvScalar):boolean;
 var SphereCenterToRayOrigin:TpvVector3;
-    a,b,c,t1,t2:TpvScalar;
+    a,b,c,t0,t1:TpvScalar;
 begin
- result:=false;
  SphereCenterToRayOrigin:=Origin-Center;
  a:=Direction.SquaredLength;
  b:=2.0*SphereCenterToRayOrigin.Dot(Direction);
  c:=SphereCenterToRayOrigin.SquaredLength-sqr(Radius);
- if SolveQuadraticRoots(a,b,c,t1,t2) then begin
-  if t1<0.0 then begin
-   if t2<0.0 then begin
-    // sphere is behind, abort
+ if SolveQuadraticRoots(a,b,c,t0,t1) then begin
+  if t0<0.0 then begin
+   if t1<0.0 then begin
+    // Sphere is behind, abort
+    result:=false;
     exit;
    end else begin
-    // inside sphere
-    Time:=t2;
+    // Inside sphere
+    Time:=t1;
     result:=true;
    end;
   end else begin
-   if t2<0.0 then begin
-    // inside sphere
-    Time:=t1;
+   if t1<0.0 then begin
+    // Inside sphere
+    Time:=t0;
    end else begin
-    // sphere is ahead, return the nearest value
-    if t1<t2 then begin
-     Time:=t1;
+    // Sphere is ahead, return the nearest value
+    if t0<t1 then begin
+     Time:=t0;
     end else begin
-     Time:=t2;
+     Time:=t1;
     end;
    end;
    result:=true;
   end;
+ end else begin
+  result:=false;
  end;
 end;
+
+{function TpvSphere.RayIntersection(const Origin,Direction:TpvVector3;out Time:TpvScalar):boolean;
+var SphereCenterToRayOrigin:TpvVector3;
+    a,b,c,t0,t1,t:TpvScalar;
+begin
+ SphereCenterToRayOrigin:=Origin-Center;
+ a:=Direction.SquaredLength;
+ b:=2.0*SphereCenterToRayOrigin.Dot(Direction);
+ c:=SphereCenterToRayOrigin.SquaredLength-sqr(Radius);
+ if SolveQuadraticRoots(a,b,c,t0,t1) then begin
+  if t0>t1 then begin
+   t:=t0;
+   t0:=t1;
+   t1:=t;
+  end;
+  if t0<0.0 then begin
+   t0:=t1;
+   if t0<0.0 then begin
+    result:=false;
+    exit;
+   end;
+  end;
+  Time:=t0;
+  result:=true;
+ end else begin
+  result:=false;
+ end;
+end;}
 
 function TpvSphere.Extends(const WithSphere:TpvSphere):TpvSphere;
 var x0,y0,z0,r0,x1,y1,z1,r1,xn,yn,zn,dn,t:TpvScalar;
@@ -15024,6 +16704,12 @@ end;
 procedure TpvRect.SetSize(const aSize:TpvVector2);
 begin
  Max:=Min+aSize;
+end;
+
+function Exp2(const aValue:TpvDouble):TpvDouble;
+begin
+ result:=Power(2.0,aValue);
+//result:=Exp(aValue*LN2);
 end;
 
 function Cross(const a,b:TpvVector2):TpvVector2; overload; {$ifdef CAN_INLINE}inline;{$endif}
@@ -16358,6 +18044,28 @@ begin
  result:=not ((isect1[1]<isect2[0]) or (isect2[1]<isect1[0]));
 end;
 
+function UnclampedClosestPointToLine(const LineStartPoint,LineEndPoint,Point:TpvVector3;const ClosestPointOnLine:PpvVector3=nil;const Time:PpvScalar=nil):TpvScalar;
+var LineSegmentPointsDifference,ClosestPoint:TpvVector3;
+    LineSegmentLengthSquared,PointOnLineSegmentTime:TpvScalar;
+begin
+ LineSegmentPointsDifference:=LineEndPoint-LineStartPoint;
+ LineSegmentLengthSquared:=LineSegmentPointsDifference.SquaredLength;
+ if LineSegmentLengthSquared<EPSILON then begin
+  PointOnLineSegmentTime:=0.0;
+  ClosestPoint:=LineStartPoint;
+ end else begin
+  PointOnLineSegmentTime:=(Point-LineStartPoint).Dot(LineSegmentPointsDifference)/LineSegmentLengthSquared;
+  ClosestPoint:=LineStartPoint+(LineSegmentPointsDifference*PointOnLineSegmentTime);
+ end;
+ if assigned(ClosestPointOnLine) then begin
+  ClosestPointOnLine^:=ClosestPoint;
+ end;
+ if assigned(Time) then begin
+  Time^:=PointOnLineSegmentTime;
+ end;
+ result:=Point.DistanceTo(ClosestPoint);
+end;
+
 function ClosestPointToLine(const LineStartPoint,LineEndPoint,Point:TpvVector3;const ClosestPointOnLine:PpvVector3=nil;const Time:PpvScalar=nil):TpvScalar;
 var LineSegmentPointsDifference,ClosestPoint:TpvVector3;
     LineSegmentLengthSquared,PointOnLineSegmentTime:TpvScalar;
@@ -16388,7 +18096,18 @@ begin
  result:=Point.DistanceTo(ClosestPoint);
 end;
 
-function ClosestPointToAABB(const AABB:TpvAABB;const Point:TpvVector3;const ClosestPointOnAABB:PpvVector3=nil):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
+function ClosestPointToRect(const Rect:TpvRect;const Point:TpvVector2;const ClosestPointOnRect:PpvVector2):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
+var ClosestPoint:TpvVector2;
+begin
+ ClosestPoint.x:=Min(Max(Point.x,Rect.Min.x),Rect.Max.x);
+ ClosestPoint.y:=Min(Max(Point.y,Rect.Min.y),Rect.Max.y);
+ if assigned(ClosestPointOnRect) then begin
+  ClosestPointOnRect^:=ClosestPoint;
+ end;
+ result:=ClosestPoint.DistanceTo(Point);
+end;
+
+function ClosestPointToAABB(const AABB:TpvAABB;const Point:TpvVector3;const ClosestPointOnAABB:PpvVector3):TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
 var ClosestPoint:TpvVector3;
 begin
  ClosestPoint.x:=Min(Max(Point.x,AABB.Min.x),AABB.Max.x);
@@ -16475,7 +18194,7 @@ begin
  pc.y:=p.y-c.y;
  pc.z:=p.z-c.z;
 
- // Determine the parametric position s for the projection of P onto AB (i.e. P’ = A+s*AB, where
+ // Determine the parametric position s for the projection of P onto AB (i.e. Pï¿½ = A+s*AB, where
  // s = snom/(snom+sdenom), and then parametric position t for P projected onto AC
  snom:=(ab.x*pa.x)+(ab.y*pa.y)+(ab.z*pa.z);
  sdenom:=(pb.x*(a.x-b.x))+(pb.y*(a.y-b.y))+(pb.z*(a.z-b.z));
@@ -16788,6 +18507,73 @@ begin
  end;
  result:=a+((b-a)*x);}
  result:=a+(AngleDiff(a,b)*x);
+end;
+
+function UnitTimeClamp(a:TpvDouble):TpvDouble;
+begin
+ a:=ModuloPos(a,1.0);
+ while a<0.0 do begin
+  a:=a+1.0;
+ end;
+ while a>1.0 do begin
+  a:=a-1.0;
+ end;
+ result:=a;
+end;
+
+function UnitTimeDiff(a,b:TpvDouble;const aBackwards:boolean):TpvDouble;
+begin
+ a:=ModuloPos(a,1.0);
+ b:=ModuloPos(b,1.0);
+ if aBackwards then begin
+  if a<b then begin
+   a:=a+1.0;
+  end;
+ end else begin
+  if b<a then begin
+   b:=b+1.0;
+  end;
+ end;
+ result:=b-a;
+end;
+
+function UnitTimeLerp(a,b,x:TpvDouble;const aBackwards:boolean):TpvDouble;
+begin
+ a:=frac(frac(a)+1.0);
+ b:=frac(frac(b)+1.0);
+ if aBackwards then begin
+  if a<b then begin
+   a:=a+1.0;
+  end;
+ end else begin
+  if b<a then begin
+   b:=b+1.0;
+  end;
+ end;
+ if x<=0.0 then begin
+  result:=a;
+ end else if x>=1.0 then begin
+  result:=b;
+ end else begin
+  result:=(a*(1.0-x))+(b*x);
+ end;
+ result:=frac(result);
+end;
+
+function UnitTimeLerp(a,b,x:TpvDouble):TpvDouble;
+begin
+ result:=UnitTimeLerp(a,b,x,b<a);
+end;
+
+function NonUnitTimeLerp(a,b,x:TpvDouble):TpvDouble;
+begin
+ if x<=0.0 then begin
+  result:=a;
+ end else if x>=1.0 then begin
+  result:=b;
+ end else begin
+  result:=(a*(1.0-x))+(b*x);
+ end;
 end;
 
 function InertiaTensorTransform(const Inertia,Transform:TpvMatrix3x3):TpvMatrix3x3; {$ifdef CAN_INLINE}inline;{$endif}
@@ -17235,31 +19021,165 @@ begin
  result:=(Float32ToFloat11(r) and $7ff) or ((Float32ToFloat11(g) and $7ff) shl 11) or ((Float32ToFloat10(b) and $3ff) shl 22);
 end;
 
-function PackTangentSpace(const aTangent,aBitangent,aNormal:TpvVector3):TpvPackedTangentSpace;
+function EncodeAsRGB10A2UNorm(const aVector:TpvVector4):TpvUInt32;
+var r,g,b,a:TpvUInt32;
+begin
+ r:=round(Min(Max(aVector.r,0.0),1.0)*1023.0);
+ g:=round(Min(Max(aVector.g,0.0),1.0)*1023.0);
+ b:=round(Min(Max(aVector.b,0.0),1.0)*1023.0);
+ a:=round(Min(Max(aVector.a,0.0),1.0)*3.0);
+ result:=(r and $3ff) or ((g and $3ff) shl 10) or ((b and $3ff) shl 20) or ((a and 3) shl 30);
+end;
+
+function DecodeFromRGB10A2UNorm(const aValue:TpvUInt32):TpvVector4;
+var r,g,b,a:TpvUInt32;
+begin
+ r:=(aValue shr 0) and $3ff;
+ g:=(aValue shr 10) and $3ff;
+ b:=(aValue shr 20) and $3ff;
+ a:=(aValue shr 30) and 3;
+ result.r:=r/1023.0;
+ result.g:=g/1023.0;
+ result.b:=b/1023.0;
+ result.a:=a/3.0;
+end;
+
+function EncodeAsRGB10A2SNorm(const aVector:TpvVector4):TpvUInt32;
+var r,g,b,a:TpvUInt32;
+begin
+ r:=TpvUInt32(TpvInt32(round(Min(Max(aVector.r,-1.0),1.0)*511.0)));
+ g:=TpvUInt32(TpvInt32(round(Min(Max(aVector.g,-1.0),1.0)*511.0)));
+ b:=TpvUInt32(TpvInt32(round(Min(Max(aVector.b,-1.0),1.0)*511.0)));
+ a:=TpvUInt32(TpvInt32(round(Min(Max(aVector.a,-1.0),1.0)*1.0)));
+ result:=(r and $3ff) or ((g and $3ff) shl 10) or ((b and $3ff) shl 20) or ((a and 3) shl 30);
+end;
+
+function DecodeFromRGB10A2SNorm(const aValue:TpvUInt32):TpvVector4;
+var r,g,b,a:TpvUInt32;
+begin
+{$if declared(SARLongint)}
+{$if true}
+ 
+ // More efficient version
+
+ // Extract the red, green, blue and alpha components, together with sign extension
+ r:=TpvUInt32(TpvInt32(SARLongint(TpvInt32(TpvUInt32(aValue shl 22)),22)));
+ g:=TpvUInt32(TpvInt32(SARLongint(TpvInt32(TpvUInt32(aValue shl 12)),22)));
+ b:=TpvUInt32(TpvInt32(SARLongint(TpvInt32(TpvUInt32(aValue shl 2)),22)));
+ a:=TpvUInt32(TpvInt32(SARLongint(TpvInt32(TpvUInt32(aValue shl 0)),30)));
+
+{$else}
+
+ // More readable version (slower), which is equivalent to the above version, but which shows more what is happening    
+
+ // Extract the red, green, blue and alpha components, together with sign extension
+ r:=TpvUInt32(TpvInt32(SARLongint(TpvInt32(TpvUInt32((aValue shr 0) and $3ff)) shl 22,22)));
+ g:=TpvUInt32(TpvInt32(SARLongint(TpvInt32(TpvUInt32((aValue shr 10) and $3ff)) shl 22,22)));
+ b:=TpvUInt32(TpvInt32(SARLongint(TpvInt32(TpvUInt32((aValue shr 20) and $3ff)) shl 22,22)));
+ a:=TpvUInt32(TpvInt32(SARLongint(TpvInt32(TpvUInt32((aValue shr 30) and 3)) shl 30,30)));
+
+{$ifend} 
+{$else}
+ 
+ // Fallback version when SARLongint is not available for artithmetic right shiftings, and it is the even more readable 
+ // reference version at the same time.
+
+ // Extract the red, green, blue and alpha components
+ r:=(aValue shr 0) and $3ff;
+ g:=(aValue shr 10) and $3ff;
+ b:=(aValue shr 20) and $3ff;
+ a:=(aValue shr 30) and 3;
+
+ // Sign extend the red, green and blue components
+ if (r and $200)<>0 then begin
+  r:=r or $fffffc00;
+ end;
+ if (g and $200)<>0 then begin
+  g:=g or $fffffc00;
+ end;
+ if (b and $200)<>0 then begin
+  b:=b or $fffffc00;
+ end;
+ if (a and 2)<>0 then begin
+  a:=a or $fffffffc;
+ end;
+
+{$ifend} 
+
+ // Normalize the red, green, blue and alpha components
+ result.r:=TpvInt32(r)/511.0;
+ result.g:=TpvInt32(g)/511.0;
+ result.b:=TpvInt32(b)/511.0;
+ result.a:=TpvInt32(a){/1.0}; // No need to normalize the alpha component, because it is already normalized
+
+end;
+
+function PackInt8TangentSpace(const aTangent,aBitangent,aNormal:TpvVector3):TpvInt8PackedTangentSpace;
+begin
+ result.x:=Min(Max(round((ArcSin(aNormal.z)/PI)*127.0),-128),127);
+ result.y:=Min(Max(round((ArcTan2(aNormal.y,aNormal.x)/PI)*127.0),-128),127);
+ result.z:=Min(Max(round((ArcSin(aTangent.z)/PI)*127.0),-128),127);
+ result.w:=Min(Max(round((ArcTan2(aTangent.y,aTangent.x)/PI)*127.0),-128),127);
+end;
+
+procedure UnpackInt8TangentSpace(const aPackedTangentSpace:TpvInt8PackedTangentSpace;out aTangent,aBitangent,aNormal:TpvVector3);
+var Latitude,Longitude:TpvScalar;
+begin
+ Latitude:=(aPackedTangentSpace.x/127.0)*PI;
+ Longitude:=(aPackedTangentSpace.y/127.0)*PI;
+ aNormal.x:=cos(Latitude)*cos(Longitude);
+ aNormal.y:=cos(Latitude)*sin(Longitude);
+ aNormal.z:=sin(Latitude);
+ Latitude:=(aPackedTangentSpace.z/127.0)*PI;
+ Longitude:=(aPackedTangentSpace.w/127.0)*PI;
+ aTangent.x:=cos(Latitude)*cos(Longitude);
+ aTangent.y:=cos(Latitude)*sin(Longitude);
+ aTangent.z:=sin(Latitude);
+ aBitangent:=(aNormal.Cross(aTangent)).Normalize;
+end;
+
+function PackInt16TangentSpace(const aTangent,aBitangent,aNormal:TpvVector3):TpvInt16PackedTangentSpace;
+begin
+ result.x:=Min(Max(round((ArcSin(aNormal.z)/PI)*32767.0),-32768),32767);
+ result.y:=Min(Max(round((ArcTan2(aNormal.y,aNormal.x)/PI)*32767.0),-32768),32767);
+ result.z:=Min(Max(round((ArcSin(aTangent.z)/PI)*32767.0),-32768),32767);
+ result.w:=Min(Max(round((ArcTan2(aTangent.y,aTangent.x)/PI)*32767.0),-32768),32767);
+end;
+
+procedure UnpackInt16TangentSpace(const aPackedTangentSpace:TpvInt16PackedTangentSpace;out aTangent,aBitangent,aNormal:TpvVector3);
+var Latitude,Longitude:TpvScalar;
+begin
+ Latitude:=(aPackedTangentSpace.x/32767.0)*PI;
+ Longitude:=(aPackedTangentSpace.y/32767.0)*PI;
+ aNormal.x:=cos(Latitude)*cos(Longitude);
+ aNormal.y:=cos(Latitude)*sin(Longitude);
+ aNormal.z:=sin(Latitude);
+ Latitude:=(aPackedTangentSpace.z/32767.0)*PI;
+ Longitude:=(aPackedTangentSpace.w/32767.0)*PI;
+ aTangent.x:=cos(Latitude)*cos(Longitude);
+ aTangent.y:=cos(Latitude)*sin(Longitude);
+ aTangent.z:=sin(Latitude);
+ aBitangent:=(aNormal.Cross(aTangent)).Normalize;
+end;
+
+function PackInt8QTangentSpace(const aTangent,aBitangent,aNormal:TpvVector3):TpvInt8PackedTangentSpace;
 var q:TpvQuaternion;
 begin
- q:=TpvMatrix3x3.Create(aTangent,aBitangent,aNormal).ToQTangent;
- result.x:=Min(Max((round(q.x*127)+128),0),255);
- result.y:=Min(Max((round(q.y*127)+128),0),255);
- result.z:=Min(Max((round(q.z*127)+128),0),255);
- result.w:=Min(Max((round(q.w*127)+128),0),255);
+ q:=TpvMatrix3x3.Create(aTangent,aBitangent,aNormal).ToQTangent(QTangentThreshold8Bit);
+ result.x:=Min(Max(round(q.x*127.0),-128),127);
+ result.y:=Min(Max(round(q.y*127.0),-128),127);
+ result.z:=Min(Max(round(q.z*127.0),-128),127);
+ result.w:=Min(Max(round(q.w*127.0),-128),127);
 end;
-{
-begin
- result.x:=Min(Max((round((ArcSin(aNormal.z)/PI)*127)+128),0),255);
- result.y:=Min(Max((round((ArcTan2(aNormal.y,aNormal.x)/PI)*127)+128),0),255);
- result.z:=Min(Max((round((ArcSin(aTangent.z)/PI)*127)+128),0),255);
- result.w:=Min(Max((round((ArcTan2(aTangent.y,aTangent.x)/PI)*127)+128),0),255);
-end;//}
 
-procedure UnpackTangentSpace(const aPackedTangentSpace:TpvPackedTangentSpace;out aTangent,aBitangent,aNormal:TpvVector3);
+procedure UnpackInt8QTangentSpace(const aPackedTangentSpace:TpvInt8PackedTangentSpace;out aTangent,aBitangent,aNormal:TpvVector3);
 var q:TpvQuaternion;
     m:TpvMatrix3x3;
 begin
- q.x:=(aPackedTangentSpace.x-128)/127;
- q.y:=(aPackedTangentSpace.y-128)/127;
- q.z:=(aPackedTangentSpace.z-128)/127;
- q.w:=(aPackedTangentSpace.w-128)/127;
+ q.x:=aPackedTangentSpace.x/127.0;
+ q.y:=aPackedTangentSpace.y/127.0;
+ q.z:=aPackedTangentSpace.z/127.0;
+ q.w:=aPackedTangentSpace.w/127.0;
  m:=TpvMatrix3x3.CreateFromQTangent(q);
  aTangent.x:=m[0,0];
  aTangent.y:=m[0,1];
@@ -17271,20 +19191,156 @@ begin
  aNormal.y:=m[2,1];
  aNormal.z:=m[2,2];
 end;
-{var Latitude,Longitude:single;
+
+function PackInt16QTangentSpace(const aTangent,aBitangent,aNormal:TpvVector3):TpvInt16PackedTangentSpace;
+var q:TpvQuaternion;
 begin
- Latitude:=((aPackedTangentSpace.x-128)/127)*PI;
- Longitude:=((aPackedTangentSpace.y-128)/127)*PI;
+ q:=TpvMatrix3x3.Create(aTangent,aBitangent,aNormal).ToQTangent(QTangentThreshold16Bit);
+ result.x:=Min(Max(round(q.x*32767.0),-32768),32767);
+ result.y:=Min(Max(round(q.y*32767.0),-32768),32767);
+ result.z:=Min(Max(round(q.z*32767.0),-32768),32767);
+ result.w:=Min(Max(round(q.w*32767.0),-32768),32767);
+end;
+
+procedure UnpackInt16QTangentSpace(const aPackedTangentSpace:TpvInt16PackedTangentSpace;out aTangent,aBitangent,aNormal:TpvVector3);
+var q:TpvQuaternion;
+    m:TpvMatrix3x3;
+begin
+ q.x:=aPackedTangentSpace.x/32767.0;
+ q.y:=aPackedTangentSpace.y/32767.0;
+ q.z:=aPackedTangentSpace.z/32767.0;
+ q.w:=aPackedTangentSpace.w/32767.0;
+ m:=TpvMatrix3x3.CreateFromQTangent(q);
+ aTangent.x:=m[0,0];
+ aTangent.y:=m[0,1];
+ aTangent.z:=m[0,2];
+ aBitangent.x:=m[1,0];
+ aBitangent.y:=m[1,1];
+ aBitangent.z:=m[1,2];
+ aNormal.x:=m[2,0];
+ aNormal.y:=m[2,1];
+ aNormal.z:=m[2,2];
+end;
+
+function PackUInt8TangentSpace(const aTangent,aBitangent,aNormal:TpvVector3):TpvUInt8PackedTangentSpace;
+begin
+ result.x:=Min(Max((round((ArcSin(aNormal.z)/PI)*127.0)+128),0),255);
+ result.y:=Min(Max((round((ArcTan2(aNormal.y,aNormal.x)/PI)*127.0)+128),0),255);
+ result.z:=Min(Max((round((ArcSin(aTangent.z)/PI)*127.0)+128),0),255);
+ result.w:=Min(Max((round((ArcTan2(aTangent.y,aTangent.x)/PI)*127.0)+128),0),255);
+end;
+
+procedure UnpackUInt8TangentSpace(const aPackedTangentSpace:TpvUInt8PackedTangentSpace;out aTangent,aBitangent,aNormal:TpvVector3);
+var Latitude,Longitude:TpvScalar;
+begin
+ Latitude:=((aPackedTangentSpace.x-128.0)/127.0)*PI;
+ Longitude:=((aPackedTangentSpace.y-128.0)/127.0)*PI;
  aNormal.x:=cos(Latitude)*cos(Longitude);
  aNormal.y:=cos(Latitude)*sin(Longitude);
  aNormal.z:=sin(Latitude);
- Latitude:=((aPackedTangentSpace.z-128)/127)*PI;
- Longitude:=((aPackedTangentSpace.w-128)/127)*PI;
+ Latitude:=((aPackedTangentSpace.z-128.0)/127.0)*PI;
+ Longitude:=((aPackedTangentSpace.w-128.0)/127.0)*PI;
  aTangent.x:=cos(Latitude)*cos(Longitude);
  aTangent.y:=cos(Latitude)*sin(Longitude);
  aTangent.z:=sin(Latitude);
- aBitangent:=Vector3Norm(Vector3Cross(aNormal,aTangent));
-end;//}
+ aBitangent:=(aNormal.Cross(aTangent)).Normalize;
+end;
+
+function PackUInt16TangentSpace(const aTangent,aBitangent,aNormal:TpvVector3):TpvUInt16PackedTangentSpace;
+begin
+ result.x:=Min(Max((round((ArcSin(aNormal.z)/PI)*32767.0)+32768),0),65535);
+ result.y:=Min(Max((round((ArcTan2(aNormal.y,aNormal.x)/PI)*32767.0)+32768),0),65535);
+ result.z:=Min(Max((round((ArcSin(aTangent.z)/PI)*32767.0)+32768),0),255);
+ result.w:=Min(Max((round((ArcTan2(aTangent.y,aTangent.x)/PI)*32767.0)+32768),0),65535);
+end;
+
+procedure UnpackUInt16TangentSpace(const aPackedTangentSpace:TpvUInt16PackedTangentSpace;out aTangent,aBitangent,aNormal:TpvVector3);
+var Latitude,Longitude:TpvScalar;
+begin
+ Latitude:=((aPackedTangentSpace.x-32768.0)/32767.0)*PI;
+ Longitude:=((aPackedTangentSpace.y-32768.0)/32767.0)*PI;
+ aNormal.x:=cos(Latitude)*cos(Longitude);
+ aNormal.y:=cos(Latitude)*sin(Longitude);
+ aNormal.z:=sin(Latitude);
+ Latitude:=((aPackedTangentSpace.z-32768.0)/32767.0)*PI;
+ Longitude:=((aPackedTangentSpace.w-32768.0)/32767.0)*PI;
+ aTangent.x:=cos(Latitude)*cos(Longitude);
+ aTangent.y:=cos(Latitude)*sin(Longitude);
+ aTangent.z:=sin(Latitude);
+ aBitangent:=(aNormal.Cross(aTangent)).Normalize;
+end;
+
+function PackUInt8QTangentSpace(const aTangent,aBitangent,aNormal:TpvVector3):TpvUInt8PackedTangentSpace;
+var q:TpvQuaternion;
+begin
+ q:=TpvMatrix3x3.Create(aTangent,aBitangent,aNormal).ToQTangent(QTangentThreshold8Bit);
+ result.x:=Min(Max((round(q.x*127.0)+128),0),255);
+ result.y:=Min(Max((round(q.y*127.0)+128),0),255);
+ result.z:=Min(Max((round(q.z*127.0)+128),0),255);
+ result.w:=Min(Max((round(q.w*127.0)+128),0),255);
+end;
+
+procedure UnpackUInt8QTangentSpace(const aPackedTangentSpace:TpvUInt8PackedTangentSpace;out aTangent,aBitangent,aNormal:TpvVector3);
+var q:TpvQuaternion;
+    m:TpvMatrix3x3;
+begin
+ q.x:=(aPackedTangentSpace.x-128.0)/127.0;
+ q.y:=(aPackedTangentSpace.y-128.0)/127.0;
+ q.z:=(aPackedTangentSpace.z-128.0)/127.0;
+ q.w:=(aPackedTangentSpace.w-128.0)/127.0;
+ m:=TpvMatrix3x3.CreateFromQTangent(q);
+ aTangent.x:=m[0,0];
+ aTangent.y:=m[0,1];
+ aTangent.z:=m[0,2];
+ aBitangent.x:=m[1,0];
+ aBitangent.y:=m[1,1];
+ aBitangent.z:=m[1,2];
+ aNormal.x:=m[2,0];
+ aNormal.y:=m[2,1];
+ aNormal.z:=m[2,2];
+end;
+
+function PackUInt16QTangentSpace(const aTangent,aBitangent,aNormal:TpvVector3):TpvUInt16PackedTangentSpace;
+var q:TpvQuaternion;
+begin
+ q:=TpvMatrix3x3.Create(aTangent,aBitangent,aNormal).ToQTangent(QTangentThreshold16Bit);
+ result.x:=Min(Max((round(q.x*32767.0)+32768),0),65535);
+ result.y:=Min(Max((round(q.y*32767.0)+32768),0),65535);
+ result.z:=Min(Max((round(q.z*32767.0)+32768),0),65535);
+ result.w:=Min(Max((round(q.w*32767.0)+32768),0),65535);
+end;
+
+procedure UnpackUInt16QTangentSpace(const aPackedTangentSpace:TpvUInt16PackedTangentSpace;out aTangent,aBitangent,aNormal:TpvVector3);
+var q:TpvQuaternion;
+    m:TpvMatrix3x3;
+begin
+ q.x:=(aPackedTangentSpace.x-32768.0)/32767.0;
+ q.y:=(aPackedTangentSpace.y-32768.0)/32767.0;
+ q.z:=(aPackedTangentSpace.z-32768.0)/32767.0;
+ q.w:=(aPackedTangentSpace.w-32768.0)/32767.0;
+ m:=TpvMatrix3x3.CreateFromQTangent(q);
+ aTangent.x:=m[0,0];
+ aTangent.y:=m[0,1];
+ aTangent.z:=m[0,2];
+ aBitangent.x:=m[1,0];
+ aBitangent.y:=m[1,1];
+ aBitangent.z:=m[1,2];
+ aNormal.x:=m[2,0];
+ aNormal.y:=m[2,1];
+ aNormal.z:=m[2,2];
+end;
+
+function ConvertLinearToSRGB(const aColor:TpvFloat):TpvFloat;
+const InverseGamma=1.0/2.4;
+begin
+ if aColor<0.0031308 then begin
+  result:=aColor*12.92;
+ end else if aColor<1.0 then begin
+  result:=(Power(aColor,InverseGamma)*1.055)-0.055;
+ end else begin
+  result:=1.0;
+ end;
+end;
 
 function ConvertLinearToSRGB(const aColor:TpvVector3):TpvVector3;
 const InverseGamma=1.0/2.4;
@@ -17315,6 +19371,18 @@ begin
   end;
  end;
  result.a:=aColor.a;
+end;
+
+function ConvertSRGBToLinear(const aColor:TpvFloat):TpvFloat;
+const Inverse12d92=1.0/12.92;
+begin
+ if aColor<0.04045 then begin
+  result:=aColor*Inverse12d92;
+ end else if aColor<1.0 then begin
+  result:=Power((aColor+0.055)/1.055,2.4);
+ end else begin
+  result:=1.0;
+ end;
 end;
 
 function ConvertSRGBToLinear(const aColor:TpvVector3):TpvVector3;
@@ -18628,6 +20696,431 @@ begin
    end;
   end;
  end;
+end;
+
+// 32-bit normal encoding from Journal of Computer Graphics Techniques Vol. 3, No. 2, 2014
+function EncodeNormalAsUInt32(const aNormal:TpvVector3):TpvUInt32;
+var Projected0,Projected1:TpvUInt32;
+    InversedL1Norm,Encoded0,Encoded1:TpvScalar;
+begin
+ InversedL1Norm:=1.0/(abs(aNormal.x)+abs(aNormal.y)+abs(aNormal.z));
+ if aNormal.z<0.0 then begin
+  Encoded0:=1.0-abs(aNormal.y*InversedL1Norm)*SignNonZero(aNormal.x);
+  Encoded1:=1.0-abs(aNormal.x*InversedL1Norm)*SignNonZero(aNormal.y);
+ end else begin
+  Encoded0:=aNormal.x*InversedL1Norm;
+  Encoded1:=aNormal.y*InversedL1Norm;
+ end;
+ Projected0:=((CastFloatToUInt32(Encoded0) and TpvUInt32($80000000)) shr 16) or ((CastFloatToUInt32((abs(Encoded0)+2.0)*0.5) and TpvUInt32($7fffff)) shr 8);
+ Projected1:=((CastFloatToUInt32(Encoded1) and TpvUInt32($80000000)) shr 16) or ((CastFloatToUInt32((abs(Encoded1)+2.0)*0.5) and TpvUInt32($7fffff)) shr 8);
+ if (Projected0 and $7fff)=0 then begin
+  Projected0:=0;
+ end;
+ if (Projected1 and $7fff)=0 then begin
+  Projected1:=0;
+ end;
+ result:=(Projected1 shl 16) or Projected0;
+end;
+
+function DecodeNormalFromUInt32(const aNormal:TpvUInt32):TpvVector3;
+var Projected0,Projected1:TpvUInt32;
+    t:TpvScalar;
+begin
+ Projected0:=aNormal and TpvUInt32($ffff);
+ Projected1:=aNormal shr 16;
+ result.x:=CastUInt32ToFloat(CastFloatToUInt32((CastUInt32ToFloat(TpvUInt32($3f800000) or ((Projected0 and TpvUInt32($7fff)) shl 8))*2.0)-2.0) or ((Projected0 and TpvUInt32($8000)) shl 16));
+ result.y:=CastUInt32ToFloat(CastFloatToUInt32((CastUInt32ToFloat(TpvUInt32($3f800000) or ((Projected1 and TpvUInt32($7fff)) shl 8))*2.0)-2.0) or ((Projected1 and TpvUInt32($8000)) shl 16));
+ result.z:=1.0-(abs(result.x)+abs(result.y));
+ if result.z<0.0 then begin
+  t:=result.x;
+  result.x:=(1.0-abs(result.y))*SignNonZero(t);
+  result.y:=(1.0-abs(t))*SignNonZero(result.y);
+ end;
+ result:=result.Normalize;
+end;
+
+function OctahedralProjectionMappingEncode(const aVector:TpvVector3):TpvVector2;
+var Vector:TpvVector3;
+begin
+ Vector:=aVector.Normalize;
+ result:=Vector.xy/(abs(Vector.x)+abs(Vector.y)+abs(Vector.z));
+ if Vector.z<0.0 then begin
+  result:=(TpvVector2.InlineableCreate(1.0,1.0)-result.yx.Abs)*
+           TpvVector2.InlineableCreate(SignNonZero(result.x),SignNonZero(result.y));
+ end;
+ result:=(result*0.5)+TpvVector2.InlineableCreate(0.5,0.5);
+end;
+
+function OctahedralProjectionMappingDecode(const aVector:TpvVector2):TpvVector3;
+var ix,iy:TpvInt32;
+begin
+ ix:=floor(aVector.x);
+ iy:=floor(aVector.y);
+ result.x:=aVector.x-ix;
+ result.y:=aVector.y-iy;
+ if ((ix+iy) and 1)<>0 then begin
+  result.xy:=TpvVector2.InlineableCreate(1.0,1.0)-result.xy;
+ end;
+ result.xy:=(result.xy*2.0)-TpvVector2.InlineableCreate(1.0,1.0);
+ result.z:=(1.0-abs(result.x))-abs(result.y);
+ if result.z<0 then begin
+  result.xy:=(TpvVector2.InlineableCreate(1.0,1.0)-result.yx.Abs)*TpvVector2.InlineableCreate(SignNonZero(result.x),SignNonZero(result.y));
+ end;
+ result:=result.Normalize;
+end;
+
+function OctahedralProjectionMappingSignedEncode(const aVector:TpvVector3):TpvVector2;
+var Vector:TpvVector3;
+begin
+ Vector:=aVector.Normalize;
+ result:=Vector.xy/(abs(Vector.x)+abs(Vector.y)+abs(Vector.z));
+ if Vector.z<0.0 then begin
+  result:=(TpvVector2.InlineableCreate(1.0,1.0)-result.yx.Abs)*
+           TpvVector2.InlineableCreate(SignNonZero(result.x),SignNonZero(result.y));
+ end;
+end;
+
+function OctahedralProjectionMappingSignedDecode(const aVector:TpvVector2):TpvVector3;
+begin
+ result:=TpvVector3.InlineableCreate(aVector.xy,(1.0-abs(aVector.x))-abs(aVector.y));
+ if result.z<0 then begin
+  result.xy:=(TpvVector2.InlineableCreate(1.0,1.0)-result.yx.Abs)*TpvVector2.InlineableCreate(SignNonZero(result.x),SignNonZero(result.y));
+ end;
+ result:=result.Normalize;
+end;
+
+function OctEncode(const aVector:TpvVector3;const aFloorX,aFloorY:Boolean):TpvInt16Vector2; overload;
+var Vector:TpvVector3;
+    x,y,s,tx,ty:TpvScalar;
+begin
+ Vector:=aVector.Normalize;
+ s:=abs(Vector.x)+abs(Vector.y)+abs(Vector.z);
+ x:=Vector.x/s;
+ y:=Vector.y/s;
+ if Vector.z<0.0 then begin
+  tx:=1.0-abs(y);
+  if x<0.0 then begin
+   tx:=-tx;
+  end;
+  ty:=1.0-abs(x);
+  if y<0.0 then begin
+   ty:=-ty;
+  end;
+  x:=tx;
+  y:=ty;
+ end;
+ if aFloorX then begin
+  result.x:=Min(Max(trunc(Floor(x*32767.0)),-32767),32767);
+ end else begin
+  result.x:=Min(Max(trunc(Ceil(x*32767.0)),-32767),32767);
+ end;
+ if aFloorY then begin
+  result.y:=Min(Max(trunc(Floor(y*32767.0)),-32767),32767);
+ end else begin
+  result.y:=Min(Max(trunc(Ceil(y*32767.0)),-32767),32767);
+ end;
+end;
+
+function OctDecode(const aOct:TpvInt16Vector2):TpvVector3;
+var x,y,z,s,tx,ty:TpvScalar;
+begin
+ x:=Max(-32767,aOct.x)/32767.0;
+ y:=Max(-32767,aOct.y)/32767.0;
+ z:=(1.0-abs(x))-abs(y);
+ if z<0 then begin
+  tx:=1.0-abs(y);
+  if x<0.0 then begin
+   tx:=-tx;
+  end;
+  ty:=1.0-abs(x);
+  if y<0.0 then begin
+   ty:=-ty;
+  end;
+  x:=tx;
+  y:=ty;
+ end;
+ result:=TpvVector3.Create(x,y,z).Normalize;
+end;
+
+function OctEncode(const aVector:TpvVector3):TpvInt16Vector2; overload;
+var Vector:TpvVector3;
+    Oct:TpvInt16Vector2;
+    BestDot,Dot:TpvScalar;
+begin
+
+ Vector:=aVector.Normalize;
+
+ result:=OctEncode(Vector,false,false);
+ BestDot:=Vector.Dot(OctDecode(result));
+
+ Oct:=OctEncode(Vector,false,true);
+ Dot:=Vector.Dot(OctDecode(Oct));
+ if BestDot>Dot then begin
+  result:=Oct;
+  BestDot:=Dot;
+ end;
+
+ Oct:=OctEncode(Vector,true,true);
+ Dot:=Vector.Dot(OctDecode(Oct));
+ if BestDot>Dot then begin
+  result:=Oct;
+  BestDot:=Dot;
+ end;
+
+ Oct:=OctEncode(Vector,true,false);
+ Dot:=Vector.Dot(OctDecode(Oct));
+ if BestDot>Dot then begin
+  result:=Oct;
+  BestDot:=Dot;
+ end;
+
+end;
+
+function EncodeDiamondUnsigned(const aVector:TpvVector2):TpvScalar;
+var SignYOver4:TpvScalar;
+begin
+ SignYOver4:=SignNonZero(aVector.y)*0.25;
+ result:=(0.5+SignYOver4)-(SignYOver4*(aVector.x/(abs(aVector.x)+abs(aVector.y))));
+end;
+
+function DecodeDiamondUnsigned(const aValue:TpvScalar):TpvVector2;
+var SignPMinusHalf,x,y:TpvScalar;
+begin
+ SignPMinusHalf:=SignNonZero(aValue-0.5);
+ x:=(1.0+(SignPMinusHalf*2.0))-(SignPMinusHalf*4.0*aValue);
+ y:=SignPMinusHalf*(1.0-abs(x));
+ result:=TpvVector2.InlineableCreate(x,y).Normalize;
+end;
+
+function EncodeDiamondSigned(const aVector:TpvVector2):TpvScalar;
+begin
+ result:=(1.0-(aVector.x/(abs(aVector.x)+abs(aVector.y))))*SignNonZero(aVector.y)*0.5;
+end;
+
+function DecodeDiamondSigned(const aValue:TpvScalar):TpvVector2;
+var SignPMinusHalf,x,y:TpvScalar;
+begin
+ SignPMinusHalf:=SignNonZero(aValue);
+ x:=1.0-(aValue*SignPMinusHalf*2.0);
+ y:=SignPMinusHalf*(1.0-abs(x));
+ result:=TpvVector2.InlineableCreate(x,y).Normalize;
+end;
+
+function EncodeTangentSpaceAsRGB10A2SNorm(const aTangent,aBitangent,aNormal:TpvVector3):TpvUInt32;
+var OctahedronNormal,TangentInCanonicalSpace:TpvVector2;
+    Normal,Tangent,CanonicalDirectionA,CanonicalDirectionB:TpvVector3;
+    TangentDiamond,BitangentSign:TpvScalar;
+    TemporaryVector4:TpvVector4;
+begin
+
+ Normal:=aNormal.Normalize;
+ Tangent:=aTangent.Normalize;
+
+ // Encode the normal as octahedron normal
+ OctahedronNormal:=OctahedralProjectionMappingSignedEncode(Normal);
+
+ // Find the canonical directions
+ CanonicalDirectionA:=(Normal.zxy-(Normal.zxy.Dot(Normal))).Normalize.Cross(Normal);
+ CanonicalDirectionB:=Normal.Cross(CanonicalDirectionA);
+
+ TangentInCanonicalSpace:=TpvVector2.InlineableCreate(Tangent.Dot(CanonicalDirectionA),Tangent.Dot(CanonicalDirectionB));
+
+ TangentDiamond:=EncodeDiamondSigned(TangentInCanonicalSpace);
+
+ BitangentSign:=SignNonZero(Normal.Cross(Tangent).Dot(aBitangent));
+
+ TemporaryVector4:=TpvVector4.InlineableCreate(OctahedronNormal.x,OctahedronNormal.y,TangentDiamond,BitangentSign);
+
+ result:=EncodeAsRGB10A2SNorm(TemporaryVector4);
+
+end;
+
+function EncodeTangentSpaceAsRGB10A2SNorm(const aMatrix:TpvMatrix3x3):TpvUInt32;
+begin
+ result:=EncodeTangentSpaceAsRGB10A2SNorm(aMatrix.Tangent,aMatrix.Bitangent,aMatrix.Normal);
+end;
+
+procedure DecodeTangentSpaceFromRGB10A2SNorm(const aValue:TpvUInt32;out aTangent,aBitangent,aNormal:TpvVector3);
+var TemporaryVector4:TpvVector4;
+    OctahedronNormal,TangentInCanonicalSpace:TpvVector2;
+    Normal,Tangent,CanonicalDirectionA,CanonicalDirectionB:TpvVector3;
+begin
+
+ TemporaryVector4:=DecodeFromRGB10A2SNorm(aValue);
+
+ OctahedronNormal:=TemporaryVector4.xy;
+
+ Normal:=OctahedralProjectionMappingSignedDecode(OctahedronNormal);
+
+ // Find the canonical directions
+ CanonicalDirectionA:=(Normal.zxy-(Normal.zxy.Dot(Normal))).Normalize.Cross(Normal);
+ CanonicalDirectionB:=Normal.Cross(CanonicalDirectionA);
+
+ TangentInCanonicalSpace:=DecodeDiamondSigned(TemporaryVector4.z);
+
+ Tangent:=((CanonicalDirectionA*TangentInCanonicalSpace.x)+(CanonicalDirectionB*TangentInCanonicalSpace.y)).Normalize;
+
+ aTangent:=Tangent;
+ aBitangent:=Normal.Cross(Tangent).Normalize*TemporaryVector4.w;
+ aNormal:=Normal;
+
+end;
+
+procedure DecodeTangentSpaceFromRGB10A2SNorm(const aValue:TpvUInt32;out aMatrix3x3:TpvMatrix3x3);
+var Tangent,Bitangent,Normal:TpvVector3;
+begin
+ DecodeTangentSpaceFromRGB10A2SNorm(aValue,Tangent,Bitangent,Normal);
+ aMatrix3x3.Tangent:=Tangent;
+ aMatrix3x3.Bitangent:=Bitangent;
+ aMatrix3x3.Normal:=Normal;
+end;
+
+// 10bit 10bit 9bit for the 3 smaller components of the quaternion and 1bit for the sign of the bitangent and 2bit for the
+// largest component index for the reconstruction of the largest component of the quaternion.
+// Since the three smallest components of a quaternion are between -1/sqrt(2) and 1/sqrt(2), we can rescale them to -1 .. 1
+// while encoding, and then rescale them back to -1/sqrt(2) .. 1/sqrt(2) while decoding, for a better precision.
+function EncodeQTangentUI32(const aTangent,aBitangent:TpvVector3;aNormal:TpvVector3):TpvUInt32;
+var Scale,t,s:TpvScalar;
+    q:TpvVector4;
+    AbsQ:TpvVector4;
+    MaxComponentIndex:TpvInt32;
+begin
+ if ((((((aTangent.x*aBitangent.y*aNormal.z)+
+         (aTangent.y*aBitangent.z*aNormal.x)
+        )+
+        (aTangent.z*aBitangent.x*aNormal.y)
+       )-
+       (aTangent.z*aBitangent.y*aNormal.x)
+      )-
+      (aTangent.y*aBitangent.x*aNormal.z)
+     )-
+     (aTangent.x*aBitangent.z*aNormal.y)
+    )<0.0 then begin
+  // Reflection matrix, so flip y axis in case the tangent frame encodes a reflection
+  Scale:=-1.0;
+  aNormal:=-aNormal;
+ end else begin
+  // Rotation matrix, so nothing is doing to do
+  Scale:=1.0;
+ end;
+ t:=aTangent.x+(aBitangent.y+aNormal.z);
+ if t>2.9999999 then begin
+  q:=TpvVector4.InlineableCreate(0.0,0.0,0.0,1.0);
+ end else if t>0.0000001 then begin
+  s:=sqrt(1.0+t)*2.0;
+  q:=TpvVector4.InlineableCreate(TpvVector3.InlineableCreate(aBitangent.z-aNormal.y,aNormal.x-aTangent.z,aTangent.y-aBitangent.x)/s,s*0.25).Normalize;
+ end else if (aTangent.x>aBitangent.y) and (aTangent.x>aNormal.z) then begin
+  s:=sqrt(1.0+(aTangent.x-(aBitangent.y+aNormal.z)))*2.0;
+  q:=TpvVector4.InlineableCreate(TpvVector3.InlineableCreate(aBitangent.x+aTangent.y,aNormal.x+aTangent.z,aBitangent.z-aNormal.y)/s,s*0.25).wxyz.Normalize;
+ end else if aBitangent.y>aNormal.z then begin
+  s:=sqrt(1.0+(aBitangent.y-(aTangent.x+aNormal.z)))*2.0;
+  q:=TpvVector4.InlineableCreate(TpvVector3.InlineableCreate(aBitangent.x+aTangent.y,aNormal.y+aBitangent.z,aNormal.x-aTangent.z)/s,s*0.25).xwyz.Normalize;
+ end else begin
+  s:=sqrt(1.0+(aNormal.z-(aTangent.x+aBitangent.y)))*2.0;
+  q:=TpvVector4.InlineableCreate(TpvVector3.InlineableCreate(aNormal.x+aTangent.z,aNormal.y+aBitangent.z,aTangent.y-aBitangent.x)/s,s*0.25).xywz.Normalize;
+ end;
+ AbsQ:=q.Abs;
+ if AbsQ.x>AbsQ.y then begin
+  if AbsQ.x>AbsQ.z then begin
+   if AbsQ.x>AbsQ.w then begin
+    MaxComponentIndex:=0;
+   end else begin
+    MaxComponentIndex:=3;
+   end;
+  end else begin
+   if AbsQ.z>AbsQ.w then begin
+    MaxComponentIndex:=2;
+   end else begin
+    MaxComponentIndex:=3;
+   end;
+  end;
+ end else begin
+  if AbsQ.y>AbsQ.z then begin
+   if AbsQ.y>AbsQ.w then begin
+    MaxComponentIndex:=1;
+   end else begin
+    MaxComponentIndex:=3;
+   end;
+  end else begin
+   if AbsQ.z>AbsQ.w then begin
+    MaxComponentIndex:=2;
+   end else begin
+    MaxComponentIndex:=3;
+   end;
+  end;
+ end;
+ case MaxComponentIndex of
+  0:begin
+   q:=q.yzwx;
+  end;
+  1:begin
+   q:=q.xzwy;
+  end; 
+  2:begin
+   q:=q.xywz;
+  end;
+  else {3:}begin
+   q:=q.xyzw;
+  end;
+ end;
+ q.xyz:=q.xyz*1.4142135623730951;
+ if q.w<0.0 then begin
+  q:=-q;
+ end;
+ result:=((TpvUInt32(round(clamp(q.x*511.0,-511.0,511.0)+512.0)) and $3ff) shl 0) or
+         ((TpvUInt32(round(clamp(q.y*511.0,-511.0,511.0)+512.0)) and $3ff) shl 10) or
+         ((TpvUInt32(round(clamp(q.z*255.0,-255.0,255.0)+256.0)) and $1ff) shl 20) or
+         (TpvUInt32(Ord((aTangent.Cross(aNormal).Dot(aBitangent)*Scale)<0.0) and 1) shl 29) or
+         ((TpvUInt32(MaxComponentIndex and 3) shl 30));
+end;
+
+function EncodeQTangentUI32(const aMatrix:TpvMatrix3x3):TpvUInt32;
+begin
+ result:=EncodeQTangentUI32(aMatrix.Tangent,aMatrix.Bitangent,aMatrix.Normal);
+end;
+
+function EncodeQTangentUI32(const aMatrix:TpvMatrix4x4):TpvUInt32;
+begin
+ result:=EncodeQTangentUI32(aMatrix.Tangent.xyz,aMatrix.Bitangent.xyz,aMatrix.Normal.xyz);
+end;
+
+procedure DecodeQTangentUI32Vectors(const aValue:TpvUInt32;out aTangent,aBitangent,aNormal:TpvVector3);
+const DivVector3:TpvVector3=(x:511.0;y:511.0;z:255.0);
+var q:TpvVector4;
+    t2,tx,ty,tz:TpvVector3;
+begin
+ q:=TpvVector4.InlineableCreate((TpvVector3.InlineableCreate(
+                                  TpvInt32((aValue shr 0) and $3ff)-512,
+                                  TpvInt32((aValue shr 10) and $3ff)-512,
+                                  TpvInt32((aValue shr 20) and $1ff)-256
+                                 )/DivVector3)*0.7071067811865475,0.0);
+ q.w:=sqrt(1.0-Clamp(q.xyz.SquaredLength,0.0,1.0));
+ case (aValue shr 30) and 3 of
+  0:begin
+   q:=q.wxyz.Normalize;
+  end;
+  1:begin
+   q:=q.xwyz.Normalize;
+  end;
+  2:begin
+   q:=q.xywz.Normalize;
+  end;
+  else {3:}begin
+   q:=q.xyzw.Normalize;
+  end;
+ end;
+ t2:=q.xyz*2.0;
+ tx:=q.xxx*t2.xyz;
+ ty:=q.yyy*t2.xyz;
+ tz:=q.www*t2.xyz;
+ aTangent:=TpvVector3.InlineableCreate(1.0-(ty.y+(q.z*t2.z)),tx.y+tz.z,tx.z-tz.y).Normalize;
+ aNormal:=TpvVector3.InlineableCreate(tx.z+tz.y,ty.z-tz.x,1.0-(tx.x+ty.y)).Normalize;
+ aBitangent:=aTangent.Cross(aNormal)*TpvScalar(TpvInt32(1-((Ord((aValue and (TpvUInt32(1) shl 29))<>0) and 1) shl 1)));
+end;
+
+function DecodeQTangentUI32(const aValue:TpvUInt32):TpvMatrix3x3;
+begin
+ DecodeQTangentUI32Vectors(aValue,result.Tangent,result.Bitangent,result.Normal);
 end;
 
 initialization

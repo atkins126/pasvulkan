@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -81,7 +81,6 @@ type { TpvScene3DRendererPassesHUDMipMapCustomPass }
       private
        fInstance:TpvScene3DRendererInstance;
        fResourceInput:TpvFrameGraph.TPass.TUsedImageResource;
-       fVulkanSampler:TpvVulkanSampler;
        fVulkanImageViews:array[0..MaxInFlightFrames-1] of TpvVulkanImageView;
       public
        constructor Create(const aFrameGraph:TpvFrameGraph;const aInstance:TpvScene3DRendererInstance); reintroduce;
@@ -136,24 +135,6 @@ begin
 
  inherited AcquireVolatileResources;
 
- fVulkanSampler:=TpvVulkanSampler.Create(fInstance.Renderer.VulkanDevice,
-                                         TVkFilter.VK_FILTER_NEAREST,
-                                         TVkFilter.VK_FILTER_NEAREST,
-                                         TVkSamplerMipmapMode.VK_SAMPLER_MIPMAP_MODE_NEAREST,
-                                         VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-                                         VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-                                         VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-                                         0.0,
-                                         false,
-                                         0.0,
-                                         false,
-                                         VK_COMPARE_OP_ALWAYS,
-                                         0.0,
-                                         0.0,
-                                         VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK,
-                                         false);
-
-
  ImageViewType:=TVkImageViewType(VK_IMAGE_VIEW_TYPE_2D);
 
  for InFlightFrameIndex:=0 to FrameGraph.CountInFlightFrames-1 do begin
@@ -181,7 +162,6 @@ begin
  for InFlightFrameIndex:=0 to fInstance.Renderer.CountInFlightFrames-1 do begin
   FreeAndNil(fVulkanImageViews[InFlightFrameIndex]);
  end;
- FreeAndNil(fVulkanSampler);
  inherited ReleaseVolatileResources;
 end;
 
@@ -209,10 +189,10 @@ begin
  ImageMemoryBarrier.newLayout:=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
  ImageMemoryBarrier.srcQueueFamilyIndex:=VK_QUEUE_FAMILY_IGNORED;
  ImageMemoryBarrier.dstQueueFamilyIndex:=VK_QUEUE_FAMILY_IGNORED;
- ImageMemoryBarrier.image:=fInstance.HUDMipmappedArray2DImages[InFlightFrameIndex].VulkanImage.Handle;
+ ImageMemoryBarrier.image:=fInstance.HUDMipmappedArray2DImage.VulkanImage.Handle;
  ImageMemoryBarrier.subresourceRange.aspectMask:=TVkImageAspectFlags(VK_IMAGE_ASPECT_COLOR_BIT);
  ImageMemoryBarrier.subresourceRange.baseMipLevel:=0;
- ImageMemoryBarrier.subresourceRange.levelCount:=fInstance.HUDMipmappedArray2DImages[InFlightFrameIndex].MipMapLevels;
+ ImageMemoryBarrier.subresourceRange.levelCount:=fInstance.HUDMipmappedArray2DImage.MipMapLevels;
  ImageMemoryBarrier.subresourceRange.baseArrayLayer:=0;
  ImageMemoryBarrier.subresourceRange.layerCount:=1;
  aCommandBuffer.CmdPipelineBarrier(FrameGraph.VulkanDevice.PhysicalDevice.PipelineStageAllShaderBits or TVkPipelineStageFlags(VK_PIPELINE_STAGE_TRANSFER_BIT),
@@ -253,8 +233,8 @@ begin
                                  [TVkOffset3D.Create(0,
                                                      0,
                                                      0),
-                                  TVkOffset3D.Create(fInstance.HUDMipmappedArray2DImages[InFlightFrameIndex].Width,
-                                                     fInstance.HUDMipmappedArray2DImages[InFlightFrameIndex].Height,
+                                  TVkOffset3D.Create(fInstance.HUDMipmappedArray2DImage.Width,
+                                                     fInstance.HUDMipmappedArray2DImage.Height,
                                                      1)],
                                  TVkImageSubresourceLayers.Create(TVkImageAspectFlags(VK_IMAGE_ASPECT_COLOR_BIT),
                                                                   0,
@@ -263,13 +243,13 @@ begin
                                  [TVkOffset3D.Create(0,
                                                      0,
                                                      0),
-                                  TVkOffset3D.Create(fInstance.HUDMipmappedArray2DImages[InFlightFrameIndex].Width,
-                                                     fInstance.HUDMipmappedArray2DImages[InFlightFrameIndex].Height,
+                                  TVkOffset3D.Create(fInstance.HUDMipmappedArray2DImage.Width,
+                                                     fInstance.HUDMipmappedArray2DImage.Height,
                                                      1)]
                                 );
 
   aCommandBuffer.CmdBlitImage(fResourceInput.VulkanImages[InFlightFrameIndex].Handle,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                              fInstance.HUDMipmappedArray2DImages[InFlightFrameIndex].VulkanImage.Handle,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                              fInstance.HUDMipmappedArray2DImage.VulkanImage.Handle,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                               1,
                               @ImageBlit,
                               TVkFilter(VK_FILTER_LINEAR));
@@ -307,14 +287,14 @@ begin
  ImageMemoryBarrier.newLayout:=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
  ImageMemoryBarrier.srcQueueFamilyIndex:=VK_QUEUE_FAMILY_IGNORED;
  ImageMemoryBarrier.dstQueueFamilyIndex:=VK_QUEUE_FAMILY_IGNORED;
- ImageMemoryBarrier.image:=fInstance.HUDMipmappedArray2DImages[InFlightFrameIndex].VulkanImage.Handle;
+ ImageMemoryBarrier.image:=fInstance.HUDMipmappedArray2DImage.VulkanImage.Handle;
  ImageMemoryBarrier.subresourceRange.aspectMask:=TVkImageAspectFlags(VK_IMAGE_ASPECT_COLOR_BIT);
  ImageMemoryBarrier.subresourceRange.baseMipLevel:=0;
- ImageMemoryBarrier.subresourceRange.levelCount:=fInstance.HUDMipmappedArray2DImages[InFlightFrameIndex].MipMapLevels;
+ ImageMemoryBarrier.subresourceRange.levelCount:=fInstance.HUDMipmappedArray2DImage.MipMapLevels;
  ImageMemoryBarrier.subresourceRange.baseArrayLayer:=0;
  ImageMemoryBarrier.subresourceRange.layerCount:=1;
 
- for MipMapLevelIndex:=1 to fInstance.HUDMipmappedArray2DImages[InFlightFrameIndex].MipMapLevels-1 do begin
+ for MipMapLevelIndex:=1 to fInstance.HUDMipmappedArray2DImage.MipMapLevels-1 do begin
 
   ImageMemoryBarrier.subresourceRange.levelCount:=1;
   ImageMemoryBarrier.subresourceRange.baseMipLevel:=MipMapLevelIndex-1;
@@ -339,8 +319,8 @@ begin
                                  [TVkOffset3D.Create(0,
                                                      0,
                                                      0),
-                                  TVkOffset3D.Create(fInstance.HUDMipmappedArray2DImages[InFlightFrameIndex].Width shr (MipMapLevelIndex-1),
-                                                     fInstance.HUDMipmappedArray2DImages[InFlightFrameIndex].Height shr (MipMapLevelIndex-1),
+                                  TVkOffset3D.Create(fInstance.HUDMipmappedArray2DImage.Width shr (MipMapLevelIndex-1),
+                                                     fInstance.HUDMipmappedArray2DImage.Height shr (MipMapLevelIndex-1),
                                                      1)],
                                  TVkImageSubresourceLayers.Create(TVkImageAspectFlags(VK_IMAGE_ASPECT_COLOR_BIT),
                                                                   MipMapLevelIndex,
@@ -349,13 +329,13 @@ begin
                                  [TVkOffset3D.Create(0,
                                                      0,
                                                      0),
-                                  TVkOffset3D.Create(fInstance.HUDMipmappedArray2DImages[InFlightFrameIndex].Width shr MipMapLevelIndex,
-                                                     fInstance.HUDMipmappedArray2DImages[InFlightFrameIndex].Height shr MipMapLevelIndex,
+                                  TVkOffset3D.Create(fInstance.HUDMipmappedArray2DImage.Width shr MipMapLevelIndex,
+                                                     fInstance.HUDMipmappedArray2DImage.Height shr MipMapLevelIndex,
                                                      1)]
                                 );
 
-  aCommandBuffer.CmdBlitImage(fInstance.HUDMipmappedArray2DImages[InFlightFrameIndex].VulkanImage.Handle,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                              fInstance.HUDMipmappedArray2DImages[InFlightFrameIndex].VulkanImage.Handle,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+  aCommandBuffer.CmdBlitImage(fInstance.HUDMipmappedArray2DImage.VulkanImage.Handle,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                              fInstance.HUDMipmappedArray2DImage.VulkanImage.Handle,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                               1,
                               @ImageBlit,
                               TVkFilter(VK_FILTER_LINEAR));
@@ -376,7 +356,7 @@ begin
 
  end;
  ImageMemoryBarrier.subresourceRange.levelCount:=1;
- ImageMemoryBarrier.subresourceRange.baseMipLevel:=fInstance.HUDMipmappedArray2DImages[InFlightFrameIndex].MipMapLevels-1;
+ ImageMemoryBarrier.subresourceRange.baseMipLevel:=fInstance.HUDMipmappedArray2DImage.MipMapLevels-1;
  ImageMemoryBarrier.oldLayout:=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
  ImageMemoryBarrier.newLayout:=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
  ImageMemoryBarrier.srcAccessMask:=TVkAccessFlags(VK_ACCESS_TRANSFER_WRITE_BIT);

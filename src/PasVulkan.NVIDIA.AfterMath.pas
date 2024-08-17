@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -67,12 +67,13 @@ uses {$if defined(Windows)}
      {$elseif defined(Unix)}
       BaseUnix,UnixType,dl,
      {$ifend}
+     Math,
      SysUtils,
      Classes,
      PasMP,
      PasVulkan.Types;
 
-const GFSDK_Aftermath_Version_API=$000020f;  // Version 2.15
+const GFSDK_Aftermath_Version_API=$0000217;  // Version 2.23
 
       // Default setting
       GFSDK_Aftermath_GpuCrashDumpWatchedApiFlags_None=$0;
@@ -94,15 +95,15 @@ const GFSDK_Aftermath_Version_API=$000020f;  // Version 2.15
       GFSDK_Aftermath_GpuCrashDumpFeatureFlags_DeferDebugInfoCallbacks=$1;
 
       // Predefined key for application name
-      GFSDK_Aftermath_GpuCrashDumpDescriptionKey_ApplicationName=$00000001;
+      GFSDK_Aftermath_GpuCrashDumpDescriptionKey_ApplicationName=$1;
 
       // Predefined key for application version
-      GFSDK_Aftermath_GpuCrashDumpDescriptionKey_ApplicationVersion=$00000002;
+      GFSDK_Aftermath_GpuCrashDumpDescriptionKey_ApplicationVersion=$2;
 
       // Base key for creating user-defined key-value pairs.
       // Any value >= GFSDK_Aftermath_GpuCrashDumpDescriptionKey_UserDefined
       // will create a user-defined key-value pair.
-      GFSDK_Aftermath_GpuCrashDumpDescriptionKey_UserDefined=$00010000;
+      GFSDK_Aftermath_GpuCrashDumpDescriptionKey_UserDefined=$10000;
 
       // No GPU crash has been detected by Aftermath, so far.
       GFSDK_Aftermath_CrashDump_Status_NotStarted=0;
@@ -218,6 +219,9 @@ const GFSDK_Aftermath_Version_API=$000020f;  // Version 2.15
       //
       GFSDK_Aftermath_Result_FAIL_Disabled=GFSDK_Aftermath_Result_Fail or 22;
 
+      // Markers cannot be set on queue or device contexts.
+      GFSDK_Aftermath_Result_FAIL_NotSupportedOnContext=GFSDK_Aftermath_Result_Fail or 23;
+
       GFSDK_Aftermath_Context_Status_NotStarted=0;
 
       // This command list has begun execution on the GPU.
@@ -226,11 +230,7 @@ const GFSDK_Aftermath_Version_API=$000020f;  // Version 2.15
       // This command list has finished execution on the GPU.
       GFSDK_Aftermath_Context_Status_Finished=2;
 
-      // This context has an invalid state, which could be
-      //  caused by an error.
-      //
-      //  NOTE: See, 'GFSDK_Aftermath_ContextData::getErrorCode()'
-      //  for more information.
+      // This context has an invalid state, which could be caused by an error.
       GFSDK_Aftermath_Context_Status_Invalid=3;
 
       // The GPU is still active, and hasn't gone down.
@@ -253,12 +253,14 @@ const GFSDK_Aftermath_Version_API=$000020f;  // Version 2.15
       // The device has been reset
       GFSDK_Aftermath_Device_Status_Reset=5;
 
-      // Unknown problem - likely using an older driver
-      //  incompatible with this Aftermath feature.
+      // Unknown problem - likely using an older driver incompatible with this Aftermath feature.
       GFSDK_Aftermath_Device_Status_Unknown=6;
 
       // An invalid rendering call has percolated through the driver
       GFSDK_Aftermath_Device_Status_DmaFault=7;
+
+      // The device was removed but no GPU fault was detected
+      GFSDK_Aftermath_Device_Status_DeviceRemovedNoGpuFault=8;
 
       GFSDK_Aftermath_MAX_STRING_LENGTH=127;
 
@@ -338,8 +340,14 @@ const GFSDK_Aftermath_Version_API=$000020f;  // Version 2.15
       // Include user provided GPU crash dump description values (if available)
       GFSDK_Aftermath_GpuCrashDumpDecoderFlags_DESCRIPTION_INFO=$800;
 
-      // Include all available information
-      GFSDK_Aftermath_GpuCrashDumpDecoderFlags_ALL_INFO=$FFF;
+      // Include information about faulted warps (if available).
+      GFSDK_Aftermath_GpuCrashDumpDecoderFlags_FAULTED_WARP_INFO=$1000;
+
+      // Include information about the fingerprint of the GPU crash dump (if available).
+      GFSDK_Aftermath_GpuCrashDumpDecoderFlags_FINGERPRINT_INFO=$2000;
+
+      // Include all available information.
+      GFSDK_Aftermath_GpuCrashDumpDecoderFlags_ALL_INFO=$3fff;
 
       // No special formatting
       GFSDK_Aftermath_GpuCrashDumpFormatterFlags_NONE=$0;
@@ -349,6 +357,39 @@ const GFSDK_Aftermath_Version_API=$000020f;  // Version 2.15
 
       // Use UTF8 encoding
       GFSDK_Aftermath_GpuCrashDumpFormatterFlags_UTF8_OUTPUT=$2;
+
+      GFSDK_Aftermath_FaultType_Unknown=0;
+      GFSDK_Aftermath_FaultType_AddressTranslationError=1;
+      GFSDK_Aftermath_FaultType_IllegalAccessError=2;
+
+      GFSDK_Aftermath_AccessType_Unknown=0;
+      GFSDK_Aftermath_AccessType_Read=1;
+      GFSDK_Aftermath_AccessType_Write=2;
+      GFSDK_Aftermath_AccessType_Atomic=3;
+
+      GFSDK_Aftermath_Engine_Unknown=0;
+      GFSDK_Aftermath_Engine_Graphics=1;
+      GFSDK_Aftermath_Engine_GraphicsCompute=2;
+      GFSDK_Aftermath_Engine_Display=3;
+      GFSDK_Aftermath_Engine_CopyEngine=4;
+      GFSDK_Aftermath_Engine_VideoDecoder=5;
+      GFSDK_Aftermath_Engine_VideoEncoder=6;
+      GFSDK_Aftermath_Engine_Other=7;
+
+      GFSDK_Aftermath_Client_Unknown=0;
+      GFSDK_Aftermath_Client_HostInterface=1;
+      GFSDK_Aftermath_Client_FrontEnd=2;
+      GFSDK_Aftermath_Client_PrimitiveDistributor=3;
+      GFSDK_Aftermath_Client_GraphicsProcessingCluster=4;
+      GFSDK_Aftermath_Client_PolymorphEngine=5;
+      GFSDK_Aftermath_Client_RasterEngine=6;
+      GFSDK_Aftermath_Client_Rasterizer2D=7;
+      GFSDK_Aftermath_Client_RenderOutputUnit=8;
+      GFSDK_Aftermath_Client_TextureProcessingCluster=9;
+      GFSDK_Aftermath_Client_CopyEngine=10;
+      GFSDK_Aftermath_Client_VideoDecoder=11;
+      GFSDK_Aftermath_Client_VideoEncoder=12;
+      GFSDK_Aftermath_Client_Other=13;
 
 type EGFSDK_Aftermath=class(Exception);
 
@@ -420,6 +461,7 @@ type EGFSDK_Aftermath=class(Exception);
      TGFSDK_Aftermath_GpuCrashDump_BaseInfo=record
       ApplicationName:array[0..GFSDK_Aftermath_MAX_STRING_LENGTH] of AnsiChar;
       CreationDate:array[0..GFSDK_Aftermath_MAX_STRING_LENGTH] of AnsiChar;
+      creationTickCount:TpvUInt32;
       PID:TpvUInt32;
       GraphicsApi:TGFSDK_Aftermath_GraphicsApi;
      end;
@@ -452,27 +494,37 @@ type EGFSDK_Aftermath=class(Exception);
 
      PGFSDK_Aftermath_GpuCrashDump_GpuInfo=^TGFSDK_Aftermath_GpuCrashDump_GpuInfo;
 
+     TGFSDK_Aftermath_Engine=TpvUInt32;
+
+     TGFSDK_Aftermath_Client=TpvUInt32;
+
      TGFSDK_Aftermath_GpuCrashDump_PageFaultInfo=record
-      faultingGpuVA:TpvUInt64;
-      bHasResourceInfo:TpvUInt32;
-      resourceInfo:record
-       gpuVa:TpvUInt64;
-       size:TpvUInt64;
-       width:TpvUInt32;
-       height:TpvUInt32;
-       depth:TpvUInt32;
-       mipLevels:TpvUInt32;
-       format:TpvUInt32; // DXGI_Format for DX, VkFormat for Vulkan
-       bIsBufferHeap:TpvUInt32;
-       bIsStaticTextureHeap:TpvUInt32;
-       bIsRenderTargetOrDepthStencilViewHeap:TpvUInt32;
-       bPlacedResource:TpvUInt32;
-       bWasDestroyed:TpvUInt32;
-       createDestroyTickCount:TpvUInt32;
-      end;
+      engine:TGFSDK_Aftermath_Engine;
+      client:TGFSDK_Aftermath_Client;
+      resourceInfoCount:TpvUInt32;
      end;
 
      PGFSDK_Aftermath_GpuCrashDump_PageFaultInfo=^TGFSDK_Aftermath_GpuCrashDump_PageFaultInfo;
+
+     TGFSDK_Aftermath_GpuCrashDump_ResourceInfo=record
+      gpuVa:TpvUInt64;
+      size:TpvUInt64;
+      width:TpvUInt32;
+      height:TpvUInt32;
+      depth:TpvUInt32;
+      mipLevels:TpvUInt32;
+      format:TpvUInt32; // DXGI_Format for DX, VkFormat for Vulkan
+      apiResource:TpvUInt64;
+      debugName:array[0..GFSDK_Aftermath_MAX_STRING_LENGTH] of AnsiChar;
+      bIsBufferHeap:TpvUInt32;
+      bIsStaticTextureHeap:TpvUInt32;
+      bIsRenderTargetOrDepthStencilViewHeap:TpvUInt32;
+      bPlacedResource:TpvUInt32;
+      bWasDestroyed:TpvUInt32;
+      createDestroyTickCount:TpvUInt32;
+     end;
+
+     PGFSDK_Aftermath_GpuCrashDump_ResourceInfo=^TGFSDK_Aftermath_GpuCrashDump_ResourceInfo;
 
      TGFSDK_Aftermath_ShaderType=TpvUInt32;
 
@@ -520,7 +572,7 @@ type EGFSDK_Aftermath=class(Exception);
 
      TPFN_GFSDK_Aftermath_GpuCrashDumpDescriptionCb=procedure(addValue:TPFN_GFSDK_Aftermath_AddGpuCrashDumpDescription;pUserData:Pointer); cdecl;
 
-     TPFN_GFSDK_Aftermath_ResolveMarkerCb=procedure(pMarker,pUserData:Pointer;resolvedMarkerData:PPpvPointer;markerSize:PpvUInt32); cdecl;
+     TPFN_GFSDK_Aftermath_ResolveMarkerCb=procedure(pMarkerData:Pointer;markerDataSize:PpvUInt32;pUserData:Pointer;resolvedMarkerData:PPpvPointer;pResolvedMarkerDataSize:PpvPointer); cdecl;
 
      TGFSDK_Aftermath_EnableGpuCrashDumps=function(apiVersion:TGFSDK_Aftermath_Version;
                                                    watchedApis:TpvUInt32;
@@ -565,6 +617,8 @@ type EGFSDK_Aftermath=class(Exception);
      TGFSDK_Aftermath_GpuCrashDump_GetGpuInfo=function(Decoder:TGFSDK_Aftermath_GpuCrashDump_Decoder;gpuInfoBufferCount:TpvUInt32;pGpuInfo:PGFSDK_Aftermath_GpuCrashDump_GpuInfo):TGFSDK_Aftermath_Result; cdecl;
 
      TGFSDK_Aftermath_GpuCrashDump_GetPageFaultInfo=function(Decoder:TGFSDK_Aftermath_GpuCrashDump_Decoder;pPageFaultInfo:PGFSDK_Aftermath_GpuCrashDump_PageFaultInfo):TGFSDK_Aftermath_Result; cdecl;
+
+     TGFSDK_Aftermath_GpuCrashDump_GetPageFaultResourceInfo=function(Decoder:TGFSDK_Aftermath_GpuCrashDump_Decoder;resourceInfoCount:TpvUInt32;pResourceInfo:PGFSDK_Aftermath_GpuCrashDump_ResourceInfo):TGFSDK_Aftermath_Result; cdecl;
 
      TGFSDK_Aftermath_GpuCrashDump_GetActiveShadersInfoCount=function(Decoder:TGFSDK_Aftermath_GpuCrashDump_Decoder;pShaderCount:PpvUInt32):TGFSDK_Aftermath_Result; cdecl;
 
@@ -612,6 +666,8 @@ var GFSDK_Aftermath_EnableGpuCrashDumps:TGFSDK_Aftermath_EnableGpuCrashDumps=nil
 
     GFSDK_Aftermath_GpuCrashDump_GetPageFaultInfo:TGFSDK_Aftermath_GpuCrashDump_GetPageFaultInfo=nil;
 
+    GFSDK_Aftermath_GpuCrashDump_GetPageFaultResourceInfo:TGFSDK_Aftermath_GpuCrashDump_GetPageFaultResourceInfo=nil;
+
     GFSDK_Aftermath_GpuCrashDump_GetActiveShadersInfoCount:TGFSDK_Aftermath_GpuCrashDump_GetActiveShadersInfoCount=nil;
 
     GFSDK_Aftermath_GpuCrashDump_GetActiveShadersInfo:TGFSDK_Aftermath_GpuCrashDump_GetActiveShadersInfo=nil;
@@ -657,11 +713,221 @@ type TShaderDebugInfoHashMap=TpvHashMap<TGFSDK_Aftermath_ShaderDebugInfoIdentifi
 
      TShaderSourceDatabase=TpvHashMap<TGFSDK_Aftermath_ShaderDebugName,TBytes>;
 
+     TSafeString=array[0..255] of AnsiChar;
+     PSafeString=^TSafeString;
+
 var ShaderDebugInfoHashMap:TShaderDebugInfoHashMap=nil;
 
     ShaderDatabase:TShaderDatabase=nil;
 
     ShaderSourceDatabase:TShaderSourceDatabase=nil;
+
+procedure SafeStringClear(out aSafeString:TSafeString);
+begin
+ FillChar(aSafeString,SizeOf(TSafeString),#0);
+end;
+
+procedure SafeStringClean(var aSafeString:TSafeString); // Clean non-ascii characters to spaces
+var Index:TpvSizeInt;
+begin
+
+ // Trim the string
+ for Index:=Min(TpvUInt8(aSafeString[0]),SizeOf(TSafeString)-2) downto 1 do begin
+  case aSafeString[Index] of
+   #0..#31,#127..#255:begin
+    aSafeString[Index]:=#0;
+    TpvUInt8(aSafeString[0]):=Index-1;
+   end else begin
+    break;
+   end;
+  end;
+ end;
+
+ // Replace remaining non-ascii characters with spaces
+ for Index:=1 to Min(TpvUInt8(aSafeString[0]),SizeOf(TSafeString)-2) do begin
+  case aSafeString[Index] of
+   #0..#31,#127..#255:begin
+    aSafeString[Index]:=#32;
+   end;
+  end;
+ end;
+
+end;
+
+procedure SafeStringSet(out aSafeString:TSafeString;const aString:ShortString);
+var Len:TpvSizeInt;
+begin
+ SafeStringClear(aSafeString);
+ Len:=Max(Min(TpvUInt8(aString[0]),SizeOf(TSafeString)-2),0);
+ if Len>0 then begin
+  Move(aString[1],aSafeString[1],Len); 
+  aSafeString[Len+1]:=#0; // Null terminator at the end
+ end;
+ TpvUInt8(aSafeString[0]):=Len;
+end;
+
+procedure SafeStringSetPtr(out aSafeString:TSafeString;const aString:PAnsiChar);
+var Len:TpvSizeInt;
+begin
+ SafeStringClear(aSafeString);
+ if assigned(aString) then begin
+  Len:=Length(aString);
+  if Len>(SizeOf(TSafeString)-2) then begin
+   Len:=SizeOf(TSafeString)-2; // -2 because of the length byte at the beginning and the null terminator at the end
+  end;
+  Move(aString^,aSafeString[1],Len);
+  aSafeString[Len+1]:=#0;
+  TpvUInt8(aSafeString[0]):=Len;
+ end;
+end;
+
+procedure SafeStringAppend(var aSafeString:TSafeString;const aString:ShortString); 
+var Len,NewLen,ToCopy:TpvSizeInt;
+begin
+ Len:=TpvUInt8(aSafeString[0]);
+ NewLen:=Len+TpvUInt8(aString[0]);
+ if Len<>NewLen then begin
+  if NewLen>(SizeOf(TSafeString)-2) then begin
+   NewLen:=SizeOf(TSafeString)-2; // -2 because of the length byte at the beginning and the null terminator at the end
+  end;
+  ToCopy:=NewLen-Len;
+  Move(aString[1],aSafeString[Len+1],ToCopy);
+  aSafeString[NewLen+1]:=#0;
+  TpvUInt8(aSafeString[0]):=NewLen;
+ end; 
+end;
+
+procedure SafeStringAppendChar(var aSafeString:TSafeString;const aChar:AnsiChar);
+var Len,NewLen:TpvSizeInt;
+begin
+ Len:=TpvUInt8(aSafeString[0]);
+ NewLen:=Len+1;
+ if Len<>NewLen then begin
+  if NewLen>(SizeOf(TSafeString)-2) then begin
+   NewLen:=SizeOf(TSafeString)-2; // -2 because of the length byte at the beginning and the null terminator at the end
+  end;
+  aSafeString[Len+1]:=aChar;
+  aSafeString[NewLen+1]:=#0;
+  TpvUInt8(aSafeString[0]):=NewLen;
+ end;
+end;
+
+procedure SafeStringAppendPtr(var aSafeString:TSafeString;const aString:PAnsiChar);
+var Len,NewLen,ToCopy:TpvSizeInt;
+begin
+ Len:=TpvUInt8(aSafeString[0]);
+ NewLen:=Len+Length(aString);
+ if Len<>NewLen then begin
+  if NewLen>(SizeOf(TSafeString)-2) then begin
+   NewLen:=SizeOf(TSafeString)-2; // -2 because of the length byte at the beginning and the null terminator at the end
+  end;
+  ToCopy:=NewLen-Len;
+  Move(aString^,aSafeString[Len+1],ToCopy);
+  aSafeString[NewLen+1]:=#0;
+  TpvUInt8(aSafeString[0]):=NewLen;
+ end;
+end;
+
+procedure SafeStringAppendInt64(var aSafeString:TSafeString;const aValue:TpvInt64);
+var Index,Digits:TpvSizeInt;
+    Value,Digit:TpvInt64;
+    DigitBuffer:array[0..31] of AnsiChar;
+begin
+ 
+ // Calculate the number of digits 
+ Value:=aValue;
+ Digits:=0;
+ if Value<0 then begin
+  inc(Digits);
+  Value:=-Value;
+ end;
+ if Value=0 then begin
+  inc(Digits);
+ end else begin
+  while Value<>0 do begin
+   inc(Digits);
+   Value:=Value div 10;
+  end;
+ end;
+
+ // Fill the digit buffer
+ FillChar(DigitBuffer,SizeOf(DigitBuffer),#0);
+ Index:=Digits;
+ Value:=aValue;
+ if Value<0 then begin
+  DigitBuffer[0]:='-';
+  Value:=-Value;
+ end;
+ if Value=0 then begin
+  dec(Index);
+  DigitBuffer[Index]:='0';
+ end else begin
+  while (Value<>0) and (Index>0) do begin
+   Digit:=Value mod 10;
+   dec(Index);
+   DigitBuffer[Index]:=AnsiChar(Digit+Ord('0'));
+   Value:=Value div 10;
+  end;
+ end;
+
+ // Append the digit buffer to the safe string
+ SafeStringAppendPtr(aSafeString,@DigitBuffer[0]);
+ 
+end;
+
+procedure SafeStringAppendUInt64(var aSafeString:TSafeString;const aValue:TpvUInt64);
+var Index,Digits:TpvSizeInt;
+    Value,Digit:TpvUInt64;
+    DigitBuffer:array[0..31] of AnsiChar;
+begin
+
+ // Calculate the number of digits
+ Value:=aValue; 
+ Digits:=0;
+ if Value=0 then begin
+  inc(Digits);
+ end else begin
+  while Value<>0 do begin
+   inc(Digits);
+   Value:=Value div 10;
+  end;
+ end;
+
+ // Fill the digit buffer
+ FillChar(DigitBuffer,SizeOf(DigitBuffer),#0);
+ Index:=Digits;
+ Value:=aValue;
+ if Value=0 then begin
+  dec(Index);
+  DigitBuffer[Index]:='0';
+ end else begin
+  while (Value<>0) and (Index>0) do begin
+   Digit:=Value mod 10;
+   dec(Index);
+   DigitBuffer[Index]:=AnsiChar(Digit+Ord('0'));
+   Value:=Value div 10;
+  end;
+ end;
+
+ // Append the digit buffer to the safe string
+ SafeStringAppendPtr(aSafeString,@DigitBuffer[0]);
+ 
+end;
+
+function SafeStringToString(const aSafeString:TSafeString):string; {$ifdef CAN_INLINE}inline;{$endif}
+begin
+ result:=PAnsiChar(@aSafeString[1]);
+end;
+
+function SafeStringToAnsiString(const aSafeString:TSafeString):AnsiString; {$ifdef CAN_INLINE}inline;{$endif}
+begin
+ result:=AnsiString(PAnsiChar(@aSafeString[1]));
+end;
+
+function SafeStringToPAnsiChar(const aSafeString:TSafeString):PAnsiChar; {$ifdef CAN_INLINE}inline;{$endif}
+begin
+ result:=PAnsiChar(@aSafeString[1]);
+end;
 
 procedure AFTERMATH_CHECK_ERROR(const aResult:TGFSDK_Aftermath_Result);
 begin
@@ -812,6 +1078,7 @@ begin
    @GFSDK_Aftermath_GpuCrashDump_GetGpuInfoCount:=_GetProcAddress(GFSDK_Aftermath_LibHandle,'GFSDK_Aftermath_GpuCrashDump_GetGpuInfoCount');
    @GFSDK_Aftermath_GpuCrashDump_GetGpuInfo:=_GetProcAddress(GFSDK_Aftermath_LibHandle,'GFSDK_Aftermath_GpuCrashDump_GetGpuInfo');
    @GFSDK_Aftermath_GpuCrashDump_GetPageFaultInfo:=_GetProcAddress(GFSDK_Aftermath_LibHandle,'GFSDK_Aftermath_GpuCrashDump_GetPageFaultInfo');
+   @GFSDK_Aftermath_GpuCrashDump_GetPageFaultResourceInfo:=_GetProcAddress(GFSDK_Aftermath_LibHandle,'GFSDK_Aftermath_GpuCrashDump_GetPageFaultResourceInfo');
    @GFSDK_Aftermath_GpuCrashDump_GetActiveShadersInfoCount:=_GetProcAddress(GFSDK_Aftermath_LibHandle,'GFSDK_Aftermath_GpuCrashDump_GetActiveShadersInfoCount');
    @GFSDK_Aftermath_GpuCrashDump_GetActiveShadersInfo:=_GetProcAddress(GFSDK_Aftermath_LibHandle,'GFSDK_Aftermath_GpuCrashDump_GetActiveShadersInfo');
    @GFSDK_Aftermath_GpuCrashDump_GetEventMarkersInfoCount:=_GetProcAddress(GFSDK_Aftermath_LibHandle,'GFSDK_Aftermath_GpuCrashDump_GetEventMarkersInfoCount');
@@ -870,19 +1137,29 @@ procedure GPUCrashDumpCallback(pGpuCrashDump:Pointer;gpuCrashDumpSize:TpvUInt32;
 var decoder:TGFSDK_Aftermath_GpuCrashDump_Decoder;
     baseInfo:TGFSDK_Aftermath_GpuCrashDump_BaseInfo;
     applicationNameLength:TpvUInt32;
-    applicationName:RawByteString;
-    baseFileName:RawByteString;
-    crashDumpFileName:RawByteString;
+    applicationName:TSafeString;
+    baseFileName:TSafeString;
+    crashDumpFileName:TSafeString;
+{$ifdef Windows}
+    dummy:DWORD;
+    dumpFileHandle:THandle;
+{$else}    
     dumpFile:TFileStream;
+{$endif}
     jsonSize:TpvUInt32;
-    json:RawByteString;
-    jsonDumpFileName:RawByteString;
+    json:Pointer;    
+    jsonDumpFileName:TSafeString;
+{$ifdef Windows}
+    jsonFileHandle:THandle;
+{$else}    
     jsonFile:TFileStream;
+{$endif}
 begin
 
- applicationName:='';
+//applicationName:='';
 
- try
+//try
+ begin
 
   GFSDK_Aftermath_CriticalSection.Acquire;
   try
@@ -916,33 +1193,67 @@ begin
      )
     );
 
-    SetLength(applicationName,applicationNameLength+1);
+    SafeStringClear(applicationName);
+    TpvUInt8(applicationName[0]):=Min(applicationNameLength,SizeOf(TSafeString)-2);
+//  SetLength(applicationName,applicationNameLength+1);
 
     AFTERMATH_CHECK_ERROR(
      GFSDK_Aftermath_GpuCrashDump_GetDescription(
       decoder,
       GFSDK_Aftermath_GpuCrashDumpDescriptionKey_ApplicationName,
-      length(applicationName)-1,
+      TpvUInt8(applicationName[0]),
+      //length(applicationName)-1,
       @applicationName[1]
      )
     );
+
+    //applicationName:=Trim(applicationName);
+    SafeStringClean(applicationName); // Clean non-ascii characters to spaces for to avoid problems with file names
+    
+    // Limit the application name to 32 characters for have space for the thread id, the counter and possible file extensions
+    if TpvUInt8(applicationName[0])>32 then begin
+     TpvUInt8(applicationName[0]):=32;
+    end;
+
+    // Place a null terminator at the end of the application name, just in case.
+    applicationName[TpvUInt8(applicationName[0])+1]:=#0; // Null terminator at the end
 
     // Create a unique file name for writing the crash dump data to a file.
     // Note: due to an Nsight Aftermath bug (will be fixed in an upcoming
     // driver release) we may see redundant crash dumps. As a workaround,
     // attach a unique count to each generated file name.
-    baseFileName:=applicationName+'-'+IntToStr(UInt64(MainThreadID))+'-'+IntToStr(GPUCrashDumpCallbackCounter);
+    baseFileName:=applicationName;
+    SafeStringAppendChar(baseFileName,'-');
+    SafeStringAppendInt64(baseFileName,TpvInt64(UInt64(MainThreadID)));
+    SafeStringAppendChar(baseFileName,'-');
+    SafeStringAppendInt64(baseFileName,TpvInt64(GPUCrashDumpCallbackCounter));
+//  baseFileName:=applicationName+'-'+IntToStr(UInt64(MainThreadID))+'-'+IntToStr(GPUCrashDumpCallbackCounter);
     inc(GPUCrashDumpCallbackCounter);
 
     // Write the the crash dumShaderSourceDebugInfoLookupCallbackp data to a file using the .nv-gpudmp extension
     // registered with Nsight Graphics.
-    crashDumpFileName:=baseFileName+'.nv-gpudmp';
-    dumpFile:=TFileStream.Create(crashDumpFileName,fmCreate or fmShareDenyWrite);
-    try
-     dumpFile.Write(pGpuCrashDump^,gpuCrashDumpSize);
-    finally
-     FreeAndNil(dumpFile);
-    end;
+    if gpuCrashDumpSize>0 then begin
+     crashDumpFileName:=baseFileName;
+     SafeStringAppend(crashDumpFileName,'.nv-gpudmp');
+     //crashDumpFileName:=baseFileName+'.nv-gpudmp';
+{$ifdef Windows}
+     dumpFileHandle:=CreateFileA(SafeStringToPAnsiChar(crashDumpFileName),GENERIC_WRITE,0,nil,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,0);
+     if dumpFileHandle<>INVALID_HANDLE_VALUE then begin
+      try
+       WriteFile(dumpFileHandle,pGpuCrashDump^,gpuCrashDumpSize,dummy,nil);
+      finally
+       CloseHandle(dumpFileHandle);
+      end;
+     end;
+{$else}
+     dumpFile:=TFileStream.Create(SafeStringToString(crashDumpFileName),fmCreate or fmShareDenyWrite);
+     try
+      dumpFile.Write(pGpuCrashDump^,gpuCrashDumpSize);
+     finally
+      FreeAndNil(dumpFile);
+     end;
+{$endif}
+    end; 
 
     // Decode the crash dump to a JSON string.
     // Step 1: Generate the JSON and get the size.
@@ -961,26 +1272,47 @@ begin
     );
 
     // Step 2: Allocate a buffer and fetch the generated JSON.
-    json:='';
-    try
-     SetLength(json,jsonSize+1);
-     AFTERMATH_CHECK_ERROR(
-      GFSDK_Aftermath_GpuCrashDump_GetJSON(
-       decoder,
-       length(json)-1,
-       @json[1]
-      )
-     );
-     // Write the the crash dump data as JSON to a file.
-     jsonDumpFileName:=crashDumpFileName+'.json';
-     jsonFile:=TFileStream.Create(jsonDumpFileName,fmCreate or fmShareDenyWrite);
+    if jsonSize>0 then begin
+     json:=nil;
      try
-      jsonFile.Write(json[1],length(json)-1);
+      GetMem(json,jsonSize+1);
+      AFTERMATH_CHECK_ERROR(
+       GFSDK_Aftermath_GpuCrashDump_GetJSON(
+        decoder,
+        jsonSize,
+        json
+       )
+      );
+      // Write the the crash dump data as JSON to a file.
+      jsonDumpFileName:=crashDumpFileName;
+      SafeStringAppend(jsonDumpFileName,'.json');
+      //jsonDumpFileName:=crashDumpFileName+'.json';
+{$ifdef Windows}
+      jsonFileHandle:=CreateFileA(SafeStringToPAnsiChar(jsonDumpFileName),GENERIC_WRITE,0,nil,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,0);
+      if jsonFileHandle<>INVALID_HANDLE_VALUE then begin
+       try
+        WriteFile(jsonFileHandle,json^,jsonSize,dummy,nil);
+       finally
+        CloseHandle(jsonFileHandle);
+       end;
+      end;
+{$else}      
+      jsonFile:=TFileStream.Create(SafeStringToString(jsonDumpFileName),fmCreate or fmShareDenyWrite);
+      try
+       jsonFile.Write(json^,jsonSize);
+      finally
+       FreeAndNil(jsonFile);
+      end;
+{$endif}
      finally
-      FreeAndNil(jsonFile);
+      if assigned(json) then begin
+       try
+        FreeMem(json);
+       finally 
+        json:=nil;
+       end; 
+      end;
      end;
-    finally
-     json:='';
     end;
 
    finally
@@ -994,16 +1326,27 @@ begin
    GFSDK_Aftermath_CriticalSection.Release;
   end;
 
- finally
-  applicationName:='';
+{finally
+  //applicationName:='';}
  end;
 
 end;
 
 procedure ShaderDebugInfoCallback(pShaderDebugInfo:Pointer;shaderDebugInfoSize:TpvUInt32;pUserData:Pointer); cdecl;
+{$ifdef Windows}
+const HexChars:array[0..15] of AnsiChar=('0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f'); 
+{$endif}
 var identifier:TGFSDK_Aftermath_ShaderDebugInfoIdentifier;
     Bytes:TBytes;
+{$ifdef Windows}
+    FileName:array[0..256] of AnsiChar;
+    FileCharIndex,Index:TpvSizeInt;
+    FileHandle:THandle;
+    Value:TpvUInt64;
+    Written:DWORD;
+{$else}
     FileStream:TFileStream;
+{$endif}
 begin
  GFSDK_Aftermath_CriticalSection.Acquire;
  try
@@ -1022,12 +1365,50 @@ begin
     SetLength(Bytes,shaderDebugInfoSize);
     Move(pShaderDebugInfo^,Bytes[0],shaderDebugInfoSize);
     ShaderDebugInfoHashMap[identifier]:=Bytes;
+{$ifdef Windows}
+    FileName[0]:='s';
+    FileName[1]:='h';
+    FileName[2]:='a';
+    FileName[3]:='d';
+    FileName[4]:='e';
+    FileName[5]:='r';
+    FileName[6]:='-';
+    Value:=identifier.ID[0];
+    FileCharIndex:=7;
+    for Index:=0 to 15 do begin
+     FileName[FileCharIndex]:=HexChars[(Value shr (Index shl 2)) and $f];
+     inc(FileCharIndex);
+    end;
+    FileName[FileCharIndex]:='-';
+    inc(FileCharIndex);
+    Value:=identifier.ID[1];
+    for Index:=0 to 15 do begin
+     FileName[FileCharIndex]:=HexChars[(Value shr (Index shl 2)) and $f];
+     inc(FileCharIndex);
+    end;
+    FileName[FileCharIndex]:='.';
+    FileName[FileCharIndex+1]:='n';
+    FileName[FileCharIndex+2]:='v';
+    FileName[FileCharIndex+3]:='d';
+    FileName[FileCharIndex+4]:='b';
+    FileName[FileCharIndex+5]:='g';
+    FileName[FileCharIndex+6]:=#0;
+    FileHandle:=CreateFileA(Pointer(@FileName[0]),GENERIC_WRITE,0,nil,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,0);
+    if FileHandle<>INVALID_HANDLE_VALUE then begin
+     try
+      WriteFile(FileHandle,Bytes[0],shaderDebugInfoSize,Written,nil);
+     finally
+      CloseHandle(FileHandle);
+     end;
+    end;
+{$else}
     FileStream:=FileStream.Create('shader-'+IntToStr(identifier.ID[0])+IntToStr(identifier.ID[1])+'.nvdbg',fmCreate or fmShareDenyWrite);
     try
      FileStream.Write(Bytes[0],shaderDebugInfoSize);
     finally
      FreeAndNil(FileStream);
     end;
+{$endif}   
    finally
     Bytes:=nil;
    end;
@@ -1084,7 +1465,34 @@ begin
  end;
 end;
 
+procedure SafeStringUnitTests;
+var SafeString,OtherSafeString:TSafeString;
+begin
+
+ SafeStringClear(SafeString);
+ SafeStringSet(SafeString,'Hello, World!');
+ SafeStringAppend(SafeString,' This is a test');
+ SafeStringAppendChar(SafeString,'!');
+ SafeStringAppendPtr(SafeString,' This is a test.');
+ SafeStringAppendInt64(SafeString,1234567890);
+ SafeStringAppendUInt64(SafeString,1234567890);
+ SafeStringAppendInt64(SafeString,-1234567890);
+ WriteLn(SafeStringToString(SafeString));
+
+ SafeStringClear(OtherSafeString);
+ SafeStringSet(OtherSafeString,'Hello, World!');
+ SafeStringAppend(OtherSafeString,' This is a test');
+ SafeStringAppendChar(OtherSafeString,'!');
+ SafeStringAppendPtr(OtherSafeString,' This is a test.');
+ SafeStringAppendInt64(OtherSafeString,1234567890);
+ SafeStringAppendUInt64(OtherSafeString,1234567890);
+ SafeStringAppendInt64(OtherSafeString,-1234567890);
+ WriteLn(SafeStringToString(OtherSafeString));
+
+end; 
+ 
 initialization
+//SafeStringUnitTests;
 finalization
  FinalizeNVIDIAAfterMath;
  FreeNVIDIAAfterMath;

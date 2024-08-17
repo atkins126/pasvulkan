@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -59,11 +59,126 @@ unit PasVulkan.Scene3D.Assets;
  {$endif}
 {$endif}
 {$m+}
+{$if defined(Win32) or defined(Win64)}
+ {$define Windows}
+{$ifend}
+
+{$if defined(Windows) or defined(fpc)}
+ {$define UseResources}
+{$else}
+ {$undef UseResources}
+{$ifend}
 
 interface
 
-{$i PasVulkanScene3DAssets.inc}
+uses PasVulkan.Types,PasVulkan.Archive.SPK;
+
+{$if defined(UseResources)}
+function get_pasvulkan_scene3dshaders_spk_data:pointer;
+function get_pasvulkan_scene3dshaders_spk_size:TpvUInt32;
+{$else}
+function get_pasvulkan_scene3dshaders_spk_data:pointer; cdecl; external name 'get_pasvulkan_scene3dshaders_spk_data';
+function get_pasvulkan_scene3dshaders_spk_size:TpvUInt32; cdecl; external name 'get_pasvulkan_scene3dshaders_spk_size';
+{$ifend}
 
 implementation
 
+{$if defined(UseResources)}
+
+{$if defined(Windows)}
+uses Windows;
+{$else}
+type HRSRC=TFPResourceHMODULE;
+{$ifend}
+
+{$r assets\shaders\scene3d\scene3dshaders.res}
+
+var Scene3DShadersData:Pointer=nil;
+    Scene3DShadersSize:TpvUInt32=0;
+
+function get_pasvulkan_scene3dshaders_spk_data:pointer;
+begin
+ result:=Scene3DShadersData;
+end;
+
+function get_pasvulkan_scene3dshaders_spk_size:TpvUInt32;
+begin
+ result:=Scene3DShadersSize;
+end;
+
+procedure InitializeScene3DShaders;
+var Resource:HRSRC;
+    LoadedResource:HGLOBAL;
+    DataSize:TpvUInt32;
+    DataPointer:pointer;
+begin
+ Resource:=FindResource(HInstance,'SCENE3DSHADERS',RT_RCDATA);
+ if Resource<>0 then begin
+  DataSize:=SizeofResource(HInstance,Resource);
+  if DataSize>0 then begin
+   LoadedResource:=LoadResource(HInstance,Resource);
+   if LoadedResource<>0 then begin
+    DataPointer:=LockResource(LoadedResource);
+    if assigned(DataPointer) then begin
+     try 
+      GetMem(Scene3DShadersData,DataSize);
+      if assigned(Scene3DShadersData) then begin
+       Move(DataPointer^,Scene3DShadersData^,DataSize);
+       Scene3DShadersSize:=DataSize;
+      end;
+     finally 
+      UnlockResource(LoadedResource);
+     end; 
+    end;
+   end;
+  end;
+ end;
+end;
+
+procedure FinalizeScene3DShaders;
+begin
+ if assigned(Scene3DShadersData) then begin
+  try
+   FreeMem(Scene3DShadersData);
+  finally 
+   Scene3DShadersData:=nil;
+  end; 
+ end;
+ Scene3DShadersSize:=0;
+end; 
+
+{$else}
+{$if defined(Linux) and defined(cpu386)}
+ {$l assets/shaders/scene3d/scene3dshaders_spk_x86_32_linux.o}
+{$elseif defined(Linux) and (defined(cpuamd64) or defined(cpux86_64))}
+ {$l assets/shaders/scene3d/scene3dshaders_spk_x86_64_linux.o}
+{$elseif defined(Linux) and defined(cpuarm)}
+ {$l assets/shaders/scene3d/scene3dshaders_spk_arm32_linux.o}
+{$elseif defined(Linux) and defined(cpuaarch64)}
+ {$l assets/shaders/scene3d/scene3dshaders_spk_aarch64_linux.o}
+{$elseif defined(Windows) and defined(cpu386)}
+ {$l assets/shaders/scene3d/scene3dshaders_spk_x86_32_windows.o}
+{$elseif defined(Windows) and (defined(cpuamd64) or defined(cpux86_64))}
+ {$l assets/shaders/scene3d/scene3dshaders_spk_x86_64_windows.o}
+{$elseif defined(Windows) and defined(cpuaarch64)}
+ {$l assets/shaders/scene3d/scene3dshaders_spk_aarch64_windows.o}
+{$elseif defined(Android) and defined(cpuarm)}
+ {$l assets/shaders/scene3d/scene3dshaders_spk_arm32_android.o}
+{$elseif defined(Android) and defined(cpuaarch64)}
+ {$l assets/shaders/scene3d/scene3dshaders_spk_aarch64_android.o}
+{$elseif defined(Android) and defined(cpu386)}
+ {$l assets/shaders/scene3d/scene3dshaders_spk_x86_32_android.o}
+{$elseif defined(Android) and (defined(cpuamd64) or defined(cpux86_64))}
+ {$l assets/shaders/scene3d/scene3dshaders_spk_x86_64_android.o}
+{$ifend}
+{$ifend}
+
+initialization
+{$if defined(UseResources)}
+ InitializeScene3DShaders;
+{$ifend}
+finalization
+{$if defined(UseResources)}
+ FinalizeScene3DShaders;
+{$ifend}
 end.

@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -51,10 +51,17 @@
  ******************************************************************************)
 unit PasVulkan.Application;
 {$i PasVulkan.inc}
-{$ifndef fpc}
+{$ifdef fpc}
+ {$if defined(FPC_VERSION) and (FPC_VERSION>=3)}
+  {$define HAS_NAMETHREADFORDEBUGGING}
+ {$ifend}
+{$else}
  {$ifdef conditionalexpressions}
   {$if CompilerVersion>=24.0}
    {$legacyifend on}
+  {$ifend}
+  {$if CompilerVersion>=31.0}
+   {$define HAS_NAMETHREADFORDEBUGGING}
   {$ifend}
  {$endif}
 {$endif}
@@ -413,6 +420,8 @@ const MaxSwapChainImages=3;
       KEYCODE_BUTTON_SELECT=477;
       KEYCODE_BUTTON_MODE=478;
       KEYCODE_TILDE=479;
+
+      KEYCODE_COUNT=1024;
 
       ORIENTATION_LANDSCAPE=0;
       ORIENTATION_PORTRAIT=1;
@@ -961,10 +970,13 @@ type EpvApplication=class(Exception)
 
      PpvApplicationEvent=^TpvApplicationEvent;
 
+     TpvApplicationInputKeycodeStringHashMap=TpvStringHashMap<TpvInt32>;
+
      TpvApplicationInput=class
       private
        fVulkanApplication:TpvApplication;
-       fKeyCodeNames:array[-1..1023] of TpvApplicationRawByteString;
+       fKeyCodeNames:array[-1..KEYCODE_COUNT-1] of TpvApplicationRawByteString;
+       fKeyCodeLowerCaseNames:array[-1..KEYCODE_COUNT-1] of TpvApplicationRawByteString;
        fCriticalSection:TPasMPCriticalSection;
        fProcessor:TpvApplicationInputProcessor;
        fEvents:array of TpvApplicationEvent;
@@ -995,6 +1007,7 @@ type EpvApplication=class(Exception)
        fMainJoystick:TpvApplicationJoystick;
        fTextInput:longbool;
        fLastTextInput:longbool;
+       fKeyCodeNameHashmap:TpvApplicationInputKeycodeStringHashMap;
 {$if defined(PasVulkanUseSDL2) and not defined(PasVulkanHeadless)}
        function TranslateSDLKeyCode(const aKeyCode,aScanCode:TpvInt32):TpvInt32;
        function TranslateSDLKeyModifier(const aKeyModifier:TpvInt32):TpvApplicationInputKeyModifiers;
@@ -1005,6 +1018,8 @@ type EpvApplication=class(Exception)
       public
        constructor Create(const aVulkanApplication:TpvApplication); reintroduce;
        destructor Destroy; override;
+       function KeyCodeToString(const aKeyCode:TpvInt32):TpvApplicationRawByteString;
+       function StringToKeyCode(const aString:TpvApplicationRawByteString):TpvInt32;
        function GetAccelerometerX:TpvFloat;
        function GetAccelerometerY:TpvFloat;
        function GetAccelerometerZ:TpvFloat;
@@ -1200,6 +1215,36 @@ type EpvApplication=class(Exception)
        CombinedWait=3
       );
 
+     TpvApplicationVulkanDebugExtensionMode=
+      (
+       None=-1,
+       DebugReportMarker=0,
+       DebugUtils=1
+      );
+
+     { TpvApplicationUpdateThread }
+
+     TpvApplicationUpdateThread=class(TPasMPThread)
+      private
+       fApplication:TpvApplication;
+       fEvent:TPasMPSimpleEvent;
+       fDoneEvent:TPasMPSimpleEvent;
+       fFPUExceptionMask:TFPUExceptionMask;
+       fFPUPrecisionMode:TFPUPrecisionMode;
+       fFPURoundingMode:TFPURoundingMode;
+       fInvoked:TPasMPBool32;
+      protected
+       procedure Execute; override;
+      public
+       constructor Create(const aApplication:TpvApplication); reintroduce;
+       destructor Destroy; override;
+       procedure Shutdown;
+       procedure Invoke;
+       procedure WaitForDone;
+      published
+       property Invoked:TPasMPBool32 read fInvoked;
+     end;
+
      { TpvApplication }
 
      TpvApplication=class
@@ -1257,6 +1302,8 @@ type EpvApplication=class(Exception)
 
        fHighResolutionTimer:TpvHighResolutionTimer;
 
+       fFrameLimiterHighResolutionTimerSleepWithDriftCompensation:TpvHighResolutionTimerSleepWithDriftCompensation;
+
        fAssets:TpvApplicationAssets;
 
        fFiles:TpvApplicationFiles;
@@ -1295,6 +1342,8 @@ type EpvApplication=class(Exception)
 
        fSwapChainColorSpace:TpvApplicationSwapChainColorSpace;
 
+       fSwapChainHDR:Boolean;
+
        fWidth:TpvInt32;
        fHeight:TpvInt32;
        fFullscreen:boolean;
@@ -1317,7 +1366,9 @@ type EpvApplication=class(Exception)
        fAndroidTrapBackButton:boolean;
        fUseAudio:boolean;
        fBlocking:boolean;
+       fUpdateUsesGPU:boolean;
        fWaitOnPreviousFrames:boolean;
+       fWaitOnPreviousFrame:boolean;
        fTerminationWithAltF4:boolean;
        fTerminationOnQuitEvent:boolean;
 
@@ -1392,6 +1443,8 @@ type EpvApplication=class(Exception)
        fVulkanNoUniqueObjectsValidation:boolean;
 
        fVulkanDebuggingEnabled:boolean;
+
+       fVulkanDebugExtensionMode:TpvApplicationVulkanDebugExtensionMode;
 
        fVulkanPreferDedicatedGPUs:boolean;
 
@@ -1473,9 +1526,12 @@ type EpvApplication=class(Exception)
        fLastTime:TpvHighResolutionTime;
        fNowTime:TpvHighResolutionTime;
        fDeltaTime:TpvHighResolutionTime;
-       fNextTime:TpvHighResolutionTime;
+       //fNextTime:TpvHighResolutionTime;
        fFloatDeltaTime:TpvDouble;
        fUpdateDeltaTime:TpvDouble;
+
+       fFrameRateLimiterLastTime:TpvHighResolutionTime;
+       fFrameRateLimiterDeviation:TpvHighResolutionTime;
 
        fFrameTimesHistoryDeltaTimes:array[0..FrameTimesHistorySize-1] of TpvDouble;
        fFrameTimesHistoryTimePoints:array[0..FrameTimesHistorySize-1] of TpvHighResolutionTime;
@@ -1496,6 +1552,8 @@ type EpvApplication=class(Exception)
        fDesiredCountInFlightFrames:TpvInt32;
 
        fCountInFlightFrames:TpvInt32;
+
+       fPreviousInFlightFrameIndex:TpvInt32;
 
        fCurrentInFlightFrameIndex:TpvInt32;
 
@@ -1600,6 +1658,10 @@ type EpvApplication=class(Exception)
 
        fUniverse:TObject;
 
+       fUpdateThread:TpvApplicationUpdateThread;
+
+       fInUpdateJobFunction:TPasMPBool32;
+
 {$if not (defined(PasVulkanUseSDL2) and not defined(PasVulkanHeadless))}
        fNativeEventQueue:TpvApplicationNativeEventQueue;
 
@@ -1682,6 +1744,8 @@ type EpvApplication=class(Exception)
 
        function VulkanOnDebugReportCallback(const aFlags:TVkDebugReportFlagsEXT;const aObjectType:TVkDebugReportObjectTypeEXT;const aObject:TpvUInt64;const aLocation:TVkSize;aMessageCode:TpvInt32;const aLayerPrefix,aMessage:TpvUTF8String):TVkBool32;
 
+       function VulkanOnDebugUtilsMessengerCallback(const aMessageSeverity:TVkDebugUtilsMessageSeverityFlagsEXT;const aMessageTypes:TVkDebugUtilsMessageTypeFlagsEXT;const aCallbackData:PVkDebugUtilsMessengerCallbackDataEXT;const aUserData:pointer):TVkBool32;
+
        procedure VulkanWaitIdle;
 
        procedure CreateVulkanDevice(const aSurface:TpvVulkanSurface=nil);
@@ -1751,6 +1815,8 @@ type EpvApplication=class(Exception)
        procedure AddLifecycleListener(const aLifecycleListener:TpvApplicationLifecycleListener);
        procedure RemoveLifecycleListener(const aLifecycleListener:TpvApplicationLifecycleListener);
 
+       function GetPercentileXthFrameTime(const aPercentileXth:TpvDouble):TpvDouble;
+
        procedure Initialize;
 
        procedure Terminate;
@@ -1811,6 +1877,8 @@ type EpvApplication=class(Exception)
 
        function IsReadyForDrawOfInFlightFrameIndex(const aInFlightFrameIndex:TpvInt32):boolean; virtual;
 
+       function WaitForPreviousFrame(const aBlocking:Boolean=true):Boolean; virtual;
+
        procedure Draw(const aSwapChainImageIndex:TpvInt32;var aWaitSemaphore:TpvVulkanSemaphore;const aWaitFence:TpvVulkanFence=nil); virtual;
 
        procedure FinishFrame(const aSwapChainImageIndex:TpvInt32;var aWaitSemaphore:TpvVulkanSemaphore;const aWaitFence:TpvVulkanFence=nil); virtual; // example for VR output handling of the rendered stereo images
@@ -1818,6 +1886,8 @@ type EpvApplication=class(Exception)
        procedure PostPresent(const aSwapChainImageIndex:TpvInt32); virtual;
 
        procedure UpdateAudio; virtual;
+
+       procedure DumpVulkanMemoryManager; virtual;
 
        class procedure Main; virtual;
 
@@ -1849,6 +1919,8 @@ type EpvApplication=class(Exception)
        property PathName:TpvUTF8String read fPathName write fPathName;
 
        property SwapChainColorSpace:TpvApplicationSwapChainColorSpace read fSwapChainColorSpace write fSwapChainColorSpace;
+
+       property SwapChainHDR:Boolean read fSwapChainHDR write fSwapChainHDR;
 
        property Width:TpvInt32 read fWidth write fWidth;
        property Height:TpvInt32 read fHeight write fHeight;
@@ -1905,7 +1977,11 @@ type EpvApplication=class(Exception)
 
        property Blocking:boolean read fBlocking write fBlocking;
 
+       property UpdateUsesGPU:boolean read fUpdateUsesGPU write fUpdateUsesGPU;
+
        property WaitOnPreviousFrames:boolean read fWaitOnPreviousFrames write fWaitOnPreviousFrames;
+
+       property WaitOnPreviousFrame:boolean read fWaitOnPreviousFrame write fWaitOnPreviousFrame;
 
        property TerminationWithAltF4:boolean read fTerminationWithAltF4 write fTerminationWithAltF4;
 
@@ -2011,6 +2087,8 @@ type EpvApplication=class(Exception)
 
        property CountInFlightFrames:TpvInt32 read fCountInFlightFrames;
 
+       property PreviousInFlightFrameIndex:TpvInt32 read fPreviousInFlightFrameIndex;
+
        property CurrentInFlightFrameIndex:TpvInt32 read fCurrentInFlightFrameIndex;
 
        property NextInFlightFrameIndex:TpvInt32 read fNextInFlightFrameIndex;
@@ -2071,7 +2149,17 @@ procedure Android_ANativeActivity_onCreate(aActivity:PANativeActivity;aSavedStat
 
 {$ifend}
 
+{$if defined(Windows)}
+function IsDebuggerPresent:LongBool; stdcall; external 'kernel32.dll' name 'IsDebuggerPresent';
+{$else}
+function IsDebuggerPresent:LongBool;
+{$ifend}
+
+function DumpExceptionCallStack(e:Exception):string;
+
 implementation
+
+uses PasVulkan.Utils,PasDblStrUtils,PasVulkan.Compression;
 
 const BoolToInt:array[boolean] of TpvInt32=(0,1);
 
@@ -2361,18 +2449,46 @@ type TGetPointerType=function(pointerId:TpvUInt32;pointerType:PpvApplicationPOIN
      TGetPointerPenInfo=function(pointerId:TpvUInt32;penInfo:PpvApplicationPOINTER_PEN_INFO):BOOL; stdcall;
      TEnableMouseInPointer=function(fEnable:BOOL):BOOL; stdcall;
 
+     TDPI_AWARENESS_CONTEXT=THandle;
+
+     TPROCESS_DPI_AWARENESS=DWORD;
+
+     TRtlGetNtVersionNumbers=procedure(out aMajor,aMinor,aBuild:DWORD); stdcall;
+     TSetProcessDPIAware=function:bool; stdcall;
+     TSetProcessDpiAwareness=function(const aValue:TPROCESS_DPI_AWARENESS):bool; stdcall;
+     TSetProcessDpiAwarenessContext=function(const aValue:TDPI_AWARENESS_CONTEXT):bool; stdcall;
+     TEnableNonClientDpiScaling=function(const aHWND:HWND):bool; stdcall;
+
 var GetPointerType:TGetPointerType=nil;
     GetPointerTouchInfo:TGetPointerTouchInfo=nil;
     GetPointerPenInfo:TGetPointerPenInfo=nil;
     EnableMouseInPointer:TEnableMouseInPointer=nil;
+    RtlGetNtVersionNumbers:TRtlGetNtVersionNumbers=nil;
+    SetProcessDPIAware:TSetProcessDPIAware=nil;
+    SetProcessDpiAwareness:TSetProcessDpiAwareness=nil;
+    SetProcessDpiAwarenessContext:TSetProcessDpiAwarenessContext=nil;
+    EnableNonClientDpiScaling:TEnableNonClientDpiScaling=nil;
 
     Win32HasGetPointer:boolean=false;
+
+    WindowsVersionMajor:DWORD=0;
+    WindowsVersionMinor:DWORD=0;
+    WindowsVersionBuildNumber:DWORD=0;
+
+const DPI_AWARENESS_CONTEXT_UNAWARE=TDPI_AWARENESS_CONTEXT(-1);
+      DPI_AWARENESS_CONTEXT_SYSTEM_AWARE=TDPI_AWARENESS_CONTEXT(-2);
+      DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE=TDPI_AWARENESS_CONTEXT(-3);
+      DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2=TDPI_AWARENESS_CONTEXT(-4);
+
+      PROCESS_DPI_UNAWARE=0;
+      PROCESS_SYSTEM_DPI_AWARE=1;
+      PROCESS_PER_MONITOR_DPI_AWARE=2;
 
 {$ifend}
 {$ifend}
 
 {$if defined(fpc) and defined(Windows)}
-function IsDebuggerPresent:longbool; stdcall; external 'kernel32.dll' name 'IsDebuggerPresent';
+//function IsDebuggerPresent:longbool; stdcall; external 'kernel32.dll' name 'IsDebuggerPresent';
 {$ifend}
 
 {$if defined(fpc)}
@@ -2392,7 +2508,7 @@ begin
  end;
 end;
 {$else}
-function DumpException(e:Exception):string;
+function DumpExceptionCallStack(e:Exception):string;
 const LineEnding={$ifdef Unix}#10{$else}#13#10{$endif};
 var s:string;
 begin
@@ -2404,6 +2520,31 @@ begin
    result:=result+s;
   end;
  end;
+end;
+{$ifend}
+
+{$if defined(Linux)}
+function IsDebuggerPresent:LongBool;
+var StatFile:TextFile;
+    CurrentLine,Info:String;
+begin
+ AssignFile(StatFile,'/proc/self/status');
+ Reset(StatFile);
+ while not EOF(StatFile) do begin
+  ReadLn(StatFile,CurrentLine);
+  if Pos('TRACERPID:',UpperCase(CurrentLine))>0 then begin
+   Info:=trim(Copy(CurrentLine,Pos(':',CurrentLine)+1,length(CurrentLine)));
+   result:=Info<>'0';
+   exit;
+  end;
+ end;
+ CloseFile(StatFile);
+ result:=false;
+end;
+{$elseif not defined(Windows)}
+function IsDebuggerPresent:LongBool;
+begin
+ result:=false;
 end;
 {$ifend}
 
@@ -4057,10 +4198,13 @@ begin
 end;
 
 constructor TpvApplicationInput.Create(const aVulkanApplication:TpvApplication);
+var Index:TpvInt32;
 begin
  inherited Create;
  fVulkanApplication:=aVulkanApplication;
+ fKeyCodeNameHashmap:=TpvApplicationInputKeycodeStringHashMap.Create(KEYCODE_UNKNOWN);
  FillChar(fKeyCodeNames,SizeOf(fKeyCodeNames),AnsiChar(#0));
+ FillChar(fKeyCodeLowerCaseNames,SizeOf(fKeyCodeLowerCaseNames),AnsiChar(#0));
  fKeyCodeNames[KEYCODE_ANYKEY]:='ANYKEY';
  fKeyCodeNames[KEYCODE_UNKNOWN]:='UNKNOWN';
  fKeyCodeNames[KEYCODE_FIRST]:='FIRST';
@@ -4356,6 +4500,12 @@ begin
  fKeyCodeNames[KEYCODE_BUTTON_START]:='BUTTON_START';
  fKeyCodeNames[KEYCODE_BUTTON_SELECT]:='BUTTON_SELECT';
  fKeyCodeNames[KEYCODE_BUTTON_MODE]:='BUTTON_MODE';
+ for Index:=Low(fKeyCodeNames) to High(fKeyCodeNames) do begin
+  fKeyCodeLowerCaseNames[Index]:=PUCUUTF8LowerCase(fKeyCodeNames[Index]);
+  if length(fKeyCodeLowerCaseNames[Index])>0 then begin
+   fKeyCodeNameHashmap.Add(fKeyCodeLowerCaseNames[Index],Index);
+  end;
+ end;
  fCriticalSection:=TPasMPCriticalSection.Create;
  fProcessor:=nil;
  fEvents:=nil;
@@ -4395,9 +4545,24 @@ destructor TpvApplicationInput.Destroy;
 begin
  FreeAndNil(fJoysticks);
  FreeAndNil(fJoystickIDHashMap);
+ FreeAndNil(fKeyCodeNameHashmap);
  fEvents:=nil;
  fCriticalSection.Free;
  inherited Destroy;
+end;
+
+function TpvApplicationInput.KeyCodeToString(const aKeyCode:TpvInt32):TpvApplicationRawByteString;
+begin
+ if (aKeyCode>=0) and (aKeyCode<KEYCODE_COUNT) then begin
+  result:=fKeyCodeLowerCaseNames[aKeyCode];
+ end else begin
+  result:='';
+ end;
+end;
+
+function TpvApplicationInput.StringToKeyCode(const aString:TpvApplicationRawByteString):TpvInt32;
+begin
+ result:=fKeyCodeNameHashmap[PUCUUTF8LowerCase(aString)];
 end;
 
 {$if defined(PasVulkanUseSDL2) and not defined(PasVulkanHeadless)}
@@ -6525,7 +6690,7 @@ begin
     AAssetDir_close(AssetDir);
    end;
   end else begin
-   if aRaiseExceptionOnNonExistentDierectory then begin
+   if aRaiseExceptionOnNonExistentDirectory then begin
     raise Exception.Create('Asset directory "'+String(aPath)+'" not found');
    end;
   end;
@@ -6790,6 +6955,7 @@ begin
  while (AudioEngine.IsReady and AudioEngine.IsActive) and assigned(AudioEngine.Thread) and not AudioEngine.Thread.Terminated do begin
   if AudioEngine.RingBuffer.AvailableForRead>=Len then begin
    AudioEngine.RingBuffer.Read(Buffer,Len);
+   AudioEngine.Thread.ReadEvent.SetEvent;
    exit;
   end;
   if AudioEngine.Thread.Sleeping<>0 then begin
@@ -6820,6 +6986,85 @@ begin
 end;
 {$ifend}
 
+constructor TpvApplicationUpdateThread.Create(const aApplication:TpvApplication);
+begin
+ fApplication:=aApplication;
+ fEvent:=TPasMPSimpleEvent.Create;
+ fDoneEvent:=TPasMPSimpleEvent.Create;
+ fFPUExceptionMask:=GetExceptionMask;
+ fFPUPrecisionMode:=GetPrecisionMode;
+ fFPURoundingMode:=GetRoundMode;
+ fInvoked:=false;
+ inherited Create(false);
+end;
+
+destructor TpvApplicationUpdateThread.Destroy;
+begin
+ Shutdown;
+ FreeAndNil(fEvent);
+ FreeAndNil(fDoneEvent);
+ inherited Destroy;
+end;
+
+procedure TpvApplicationUpdateThread.Shutdown;
+begin
+ if not Finished then begin
+  Terminate;
+  fEvent.SetEvent;
+  WaitFor;
+ end;
+end;
+
+procedure TpvApplicationUpdateThread.Invoke;
+begin
+ if not fInvoked then begin
+  fInvoked:=true;
+  fEvent.SetEvent;
+ end;
+end;
+
+procedure TpvApplicationUpdateThread.WaitForDone;
+begin
+ if fInvoked then begin
+  fDoneEvent.WaitFor;
+  fInvoked:=false;
+ end;
+end;
+
+procedure TpvApplicationUpdateThread.Execute;
+var ExceptionString:String;
+begin
+{$ifdef HAS_NAMETHREADFORDEBUGGING}
+ NameThreadForDebugging('TpvApplicationUpdateThread');
+{$endif}
+ ReturnValue:=0;
+ Priority:=TThreadPriority.tpHigher;
+ try
+  SetExceptionMask(fFPUExceptionMask);
+  SetPrecisionMode(fFPUPrecisionMode);
+  SetRoundMode(fFPURoundingMode);
+  while not Terminated do begin
+   fEvent.WaitFor;
+   if Terminated then begin
+    fDoneEvent.SetEvent;
+    break;
+   end else begin
+    fApplication.UpdateJobFunction(nil,0);
+    fDoneEvent.SetEvent;
+   end;
+  end;
+ except
+  on e:Exception do begin
+   ExceptionString:=DumpExceptionCallStack(e);
+{$if defined(fpc) and defined(android) and (defined(Release) or not defined(Debug))}
+   __android_log_write(ANDROID_LOG_ERROR,'PasVulkanApplication',PAnsiChar(TpvApplicationRawByteString(ExceptionString)));
+{$ifend}
+   TpvApplication.Log(LOG_ERROR,'TpvApplicationUpdateThread.Execute',ExceptionString);
+   raise;
+  end;
+ end;
+end;
+
 constructor TpvApplication.Create;
 var FrameIndex:TpvInt32;
 begin
@@ -6828,6 +7073,12 @@ begin
  SDL_SetMainReady;
 
  SDL_SetHint(SDL_HINT_WINDOWS_DISABLE_THREAD_NAMING,'1');
+
+{$if defined(Linux)}
+{SDL_SetHint('SDL_VIDEODRIVER','wayland,x11');
+ SDL_SetHint(SDL_HINT_VIDEO_DRIVER,'wayland,x11');//}
+{$ifend}
+
 {$else}
 {$ifend}
 
@@ -6840,7 +7091,7 @@ begin
 {$elseif defined(Windows)}
  fDebugging:={$ifdef fpc}IsDebuggerPresent{$else}DebugHook<>0{$endif};
 {$else}
- fDebugging:=true;
+ fDebugging:=false;
 {$ifend}
 
  fLoadWasCalled:=false;
@@ -6873,10 +7124,13 @@ begin
   GlobalPasMPAllWorkerThreadsHaveOwnSystemThreads:=false;
   GlobalPasMPProfiling:=false;
   fPasMPInstance:=TPasMP.GetGlobalInstance;
+  pvCompressionPasMPInstance:=fPasMPInstance;
   fDoDestroyGlobalPasMPInstance:=true;
  end;
 
  fHighResolutionTimer:=TpvHighResolutionTimer.Create;
+
+ fFrameLimiterHighResolutionTimerSleepWithDriftCompensation:=TpvHighResolutionTimerSleepWithDriftCompensation.Create(fHighResolutionTimer);
 
  fAssets:=TpvApplicationAssets.Create(self);
 
@@ -6931,6 +7185,8 @@ begin
 
  fSwapChainColorSpace:=TpvApplicationSwapChainColorSpace.SRGB;
 
+ fSwapChainHDR:=false;
+
  fWidth:=1280;
  fHeight:=720;
  fFullscreen:=false;
@@ -6955,7 +7211,9 @@ begin
  fAndroidTrapBackButton:=true;
  fUseAudio:=false;
  fBlocking:=true;
+ fUpdateUsesGPU:=false;
  fWaitOnPreviousFrames:=false;
+ fWaitOnPreviousFrame:=false;
  fTerminationWithAltF4:=true;
  fTerminationOnQuitEvent:=true;
 
@@ -7069,7 +7327,11 @@ begin
  fLastTime:=0;
  fNowTime:=0;
  fDeltaTime:=0;
- fNextTime:=0;
+
+//fNextTime:=0;
+
+ fFrameRateLimiterLastTime:=0;
+ fFrameRateLimiterDeviation:=0;
 
  fFrameCounter:=0;
 
@@ -7078,6 +7340,8 @@ begin
  fDrawFrameCounter:=0;
 
  SetDesiredCountInFlightFrames(2);
+
+ fPreviousInFlightFrameIndex:=1;
 
  fCurrentInFlightFrameIndex:=0;
 
@@ -7137,6 +7401,8 @@ begin
 
  FreeAndNil(fAssets);
 
+ FreeAndNil(fFrameLimiterHighResolutionTimerSleepWithDriftCompensation);
+
  FreeAndNil(fHighResolutionTimer);
 
  if fDoDestroyGlobalPasMPInstance then begin
@@ -7163,6 +7429,8 @@ begin
  StdOut:=GetStdHandle(Std_Output_Handle);
 //Win32Check(StdOut<>Invalid_Handle_Value);
  if (StdOut<>0) and (StdOut<>Invalid_Handle_Value) then begin
+//TemporaryString:=TemporaryString+#13#10;
+//WriteConsoleW(StdOut,PWideChar(TemporaryString),length(TemporaryString),nil,nil);
   WriteLn(What);
  end;
 {$ifend}
@@ -7299,6 +7567,144 @@ begin
  end;
 end;
 
+function TpvApplication.VulkanOnDebugUtilsMessengerCallback(const aMessageSeverity:TVkDebugUtilsMessageSeverityFlagsEXT;const aMessageTypes:TVkDebugUtilsMessageTypeFlagsEXT;const aCallbackData:PVkDebugUtilsMessengerCallbackDataEXT;const aUserData:pointer):TVkBool32;
+const NewLine={$if defined(Windows)}#13#10{$else}#10{$ifend};
+      Tab=#9;
+var Index:TpvSizeInt;
+    Message,MessageIDName,MessageTypes,MessageSeverityTypes,Objects,QueueLabels,CmdBufLabels,Whole:TpvUTF8String;
+    pObjects:PVkDebugUtilsObjectNameInfoEXT;
+    pLabels:PVkDebugUtilsLabelEXT;
+    DoBreak:Boolean;
+begin
+
+ DoBreak:=false;
+
+ try
+
+  if assigned(aCallbackData) then begin
+
+   Message:=aCallbackData^.pMessage;
+
+   MessageIDName:=aCallbackData^.pMessageIdName;
+
+   if (pos('Mapping an image with layout',Message)>0) and (pos('can result in undefined behavior if this memory is used by the device',Message)>0) then begin
+    // Ignore because the AMD allocator will mix up memory types on IGP processors.
+   end else if pos('Invalid SPIR-V binary version 1.3',Message)>0 then begin
+    // Ignore because the validator is wrong here.
+   end else if pos('Shader requires flag',Message)>0 then begin
+    // Ignore because the validator is wrong here.
+   end else if (pos('SPIR-V module not valid: Pointer operand',Message)>0) and (pos('must be a memory object',Message)>0) then begin
+    // Ignore because the validator is wrong here.
+   end else if pos('UNASSIGNED-CoreValidation-DrawState-ClearCmdBeforeDraw',MessageIDName)>0 then begin
+    // Ignore
+   end else begin
+
+    MessageSeverityTypes:='';
+    if (aMessageSeverity and TVkDebugUtilsMessageSeverityFlagsEXT(VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT))<>0 then begin
+     if length(MessageSeverityTypes)>0 then begin
+      MessageSeverityTypes:=MessageSeverityTypes+'|';
+     end;
+     MessageSeverityTypes:=MessageSeverityTypes+'VERBOSE';
+    end;
+    if (aMessageSeverity and TVkDebugUtilsMessageSeverityFlagsEXT(VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT))<>0 then begin
+     if length(MessageSeverityTypes)>0 then begin
+      MessageSeverityTypes:=MessageSeverityTypes+'|';
+     end;
+     MessageSeverityTypes:=MessageSeverityTypes+'INFORMATION';
+    end;
+    if (aMessageSeverity and TVkDebugUtilsMessageSeverityFlagsEXT(VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT))<>0 then begin
+     if length(MessageSeverityTypes)>0 then begin
+      MessageSeverityTypes:=MessageSeverityTypes+'|';
+     end;
+     MessageSeverityTypes:=MessageSeverityTypes+'WARNING';
+    end;
+    if (aMessageSeverity and TVkDebugUtilsMessageSeverityFlagsEXT(VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT))<>0 then begin
+     if length(MessageSeverityTypes)>0 then begin
+      MessageSeverityTypes:=MessageSeverityTypes+'|';
+     end;
+     MessageSeverityTypes:=MessageSeverityTypes+'ERROR';
+     DoBreak:=true;
+    end;
+
+    MessageTypes:='';
+    if (aMessageTypes and TVkDebugUtilsMessageTypeFlagsEXT(VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT))<>0 then begin
+     if length(MessageTypes)>0 then begin
+      MessageTypes:=MessageTypes+'|';
+     end;
+     MessageTypes:=MessageTypes+'GENERAL';
+    end;
+    if (aMessageTypes and TVkDebugUtilsMessageTypeFlagsEXT(VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT))<>0 then begin
+     if length(MessageTypes)>0 then begin
+      MessageTypes:=MessageTypes+'|';
+     end;
+     MessageTypes:=MessageTypes+'VALIDATION';
+    end;
+    if (aMessageTypes and TVkDebugUtilsMessageTypeFlagsEXT(VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT))<>0 then begin
+     if length(MessageTypes)>0 then begin
+      MessageTypes:=MessageTypes+'|';
+     end;
+     MessageTypes:=MessageTypes+'PERFORMANCE';
+    end;
+    if (aMessageTypes and TVkDebugUtilsMessageTypeFlagsEXT(VK_DEBUG_UTILS_MESSAGE_TYPE_DEVICE_ADDRESS_BINDING_BIT_EXT))<>0 then begin
+     if length(MessageTypes)>0 then begin
+      MessageTypes:=MessageTypes+'|';
+     end;
+     MessageTypes:=MessageTypes+'DEVICE_ADDRESS_BINDING';
+    end;
+
+    Objects:='';
+    if aCallbackData^.objectCount>0 then begin
+     Objects:=NewLine+Tab+'Objects - '+IntToStr(aCallbackData^.objectCount);
+     pObjects:=aCallbackData^.pObjects;
+     for Index:=0 to TpvSizeInt(aCallbackData^.objectCount)-1 do begin
+      Objects:=Objects+NewLine+Tab+Tab+'Object['+IntToStr(Index)+'] - '+
+               VulkanObjectTypeToString(pObjects^.objectType)+', '+
+               'Handle '+UIntToStr(TpvUInt64(pObjects^.objectHandle));
+      if assigned(pObjects^.pObjectName) and (length(pObjects^.pObjectName)>0) then begin
+       Objects:=Objects+', Name '+TpvUTF8String(pObjects^.pObjectName);
+      end;
+      inc(pObjects);
+     end;
+    end;
+
+    QueueLabels:='';
+    if aCallbackData^.QueueLabelCount>0 then begin
+     QueueLabels:=NewLine+Tab+'Queue labels - '+IntToStr(aCallbackData^.QueueLabelCount);
+     pLabels:=aCallbackData^.pQueueLabels;
+     for Index:=0 to TpvSizeInt(aCallbackData^.QueueLabelCount)-1 do begin
+      QueueLabels:=QueueLabels+NewLine+Tab+Tab+'Label['+IntToStr(Index)+'] - '+TpvUTF8String(pLabels^.pLabelName)+'{ '+ConvertDoubleToString(pLabels^.color[0])+', '+ConvertDoubleToString(pLabels^.color[1])+', '+ConvertDoubleToString(pLabels^.color[2])+', '+ConvertDoubleToString(pLabels^.color[3])+' }';
+      inc(pLabels);
+     end;
+    end;
+
+    CmdBufLabels:='';
+    if aCallbackData^.cmdBufLabelCount>0 then begin
+     CmdBufLabels:=NewLine+Tab+'Command buffer labels - '+IntToStr(aCallbackData^.cmdBufLabelCount);
+     pLabels:=aCallbackData^.pCmdBufLabels;
+     for Index:=0 to TpvSizeInt(aCallbackData^.cmdBufLabelCount)-1 do begin
+      CmdBufLabels:=CmdBufLabels+NewLine+Tab+Tab+'Label['+IntToStr(Index)+'] - '+TpvUTF8String(pLabels^.pLabelName)+'{ '+ConvertDoubleToString(pLabels^.color[0])+', '+ConvertDoubleToString(pLabels^.color[1])+', '+ConvertDoubleToString(pLabels^.color[2])+', '+ConvertDoubleToString(pLabels^.color[3])+' }';
+      inc(pLabels);
+     end;
+    end;
+
+    Whole:='[Debug] '+MessageSeverityTypes+': '+MessageTypes+' - Message ID number: '+IntToStr(aCallbackData^.messageIdNumber)+' - Message ID name: '+MessageIDName+NewLine+Tab+Message+Objects+QueueLabels+CmdBufLabels;
+
+    VulkanDebugLn(Whole);
+
+   end;
+
+  end;
+
+ finally
+  result:=VK_FALSE;
+ end;
+
+ if DoBreak then begin
+  Sleep(0);
+ end;
+
+end;
+
 procedure TpvApplication.VulkanWaitIdle;
 var Index,SubIndex:TpvInt32;
 begin
@@ -7307,6 +7713,17 @@ begin
 {$ifend}
  try
   if assigned(fVulkanDevice) then begin
+   if fUpdateUsesGPU then begin
+    if assigned(fUpdateThread) then begin
+     if fUpdateThread.fInvoked then begin
+      fUpdateThread.WaitForDone;
+     end;
+    end else begin
+     while fInUpdateJobFunction do begin
+      TPasMP.Yield;
+     end;
+    end;
+   end;
    fVulkanDevice.WaitIdle;
    for Index:=0 to Max(length(fVulkanPresentCompleteFencesReady),length(fVulkanWaitFences))-1 do begin
     if (Index<length(fVulkanPresentCompleteFencesReady)) and fVulkanPresentCompleteFencesReady[Index] then begin
@@ -7438,11 +7855,27 @@ begin
    fVulkanDevice.EnabledExtensionNames.Add(VK_KHR_PRESENT_WAIT_EXTENSION_NAME);
   end;
 
+  if fVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_EXT_MULTI_DRAW_EXTENSION_NAME)>=0 then begin
+   fVulkanDevice.EnabledExtensionNames.Add(VK_EXT_MULTI_DRAW_EXTENSION_NAME);
+  end;
+
+  if fVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_EXT_CONSERVATIVE_RASTERIZATION_EXTENSION_NAME)>=0 then begin
+   fVulkanDevice.EnabledExtensionNames.Add(VK_EXT_CONSERVATIVE_RASTERIZATION_EXTENSION_NAME);
+  end;
+
   if fVulkanDebugging and
      fVulkanDebuggingEnabled and
      fVulkanValidation and
-     (fVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_EXT_DEBUG_MARKER_EXTENSION_NAME)>=0) then begin
+     (fVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_EXT_DEBUG_MARKER_EXTENSION_NAME)>=0) and
+     (fVulkanDevice.Instance.EnabledExtensionNames.IndexOf(VK_EXT_DEBUG_UTILS_EXTENSION_NAME)<0) then begin
    fVulkanDevice.EnabledExtensionNames.Add(VK_EXT_DEBUG_MARKER_EXTENSION_NAME);
+  end;
+
+  if fVulkanDebugging and
+     fVulkanDebuggingEnabled and
+     fVulkanValidation and
+     (fVulkanDevice.PhysicalDevice.AvailableExtensionNames.IndexOf(VK_EXT_TOOLING_INFO_EXTENSION_NAME)>=0) then begin
+   fVulkanDevice.EnabledExtensionNames.Add(VK_EXT_TOOLING_INFO_EXTENSION_NAME);
   end;
 
   fVulkanNVIDIADiagnosticConfigExtensionFound:=fVulkanNVIDIAAfterMath and
@@ -7633,20 +8066,24 @@ begin
 end;
 
 procedure TpvApplication.CreateVulkanInstance;
-{$if defined(PasVulkanUseSDL2) and not defined(PasVulkanHeadless)}
+{$if (defined(PasVulkanUseSDL2) or defined(Windows)) and not defined(PasVulkanHeadless)}
 type TExtensions=array of PAnsiChar;
-var i:TpvInt32;
+var Index:TpvInt32;
+{$if defined(PasVulkanUseSDL2)}
     SDL_SysWMinfo:TSDL_SysWMinfo;
-    CountExtensions:TSDLInt32;
+{$ifend}
+    CountExtensions:TpvInt32;
     Extensions:TExtensions;
+    DebugExtensionName:TpvUTF8String;
 begin
 {$if (defined(fpc) and defined(android)) and not defined(Release)}
  __android_log_write(ANDROID_LOG_VERBOSE,'PasVulkanApplication','Entering TpvApplication.CreateVulkanInstance');
 {$ifend}
  if not assigned(fVulkanInstance) then begin
+{$if defined(PasVulkanUseSDL2) and not defined(PasVulkanHeadless)}
   SDL_VERSION(SDL_SysWMinfo.version);
   if {$if defined(PasVulkanUseSDL2WithVulkanSupport)}fSDLVersionWithVulkanSupport or{$ifend}
-     (SDL_GetWindowWMInfo(fSurfaceWindow,@SDL_SysWMinfo)<>0) then begin
+     (SDL_GetWindowWMInfo(fSurfaceWindow,@SDL_SysWMinfo)<>0) then{$ifend}begin
    fVulkanInstance:=TpvVulkanInstance.Create(TpvVulkanCharString(fTitle),
                                              Version,
                                              'PasVulkanApplication',
@@ -7655,12 +8092,13 @@ begin
                                              false,
                                              nil);
    VulkanDebugLn('Instance Vulkan API version: '+TpvUTF8String(fVulkanInstance.GetAPIVersionString));
-   for i:=0 to fVulkanInstance.AvailableLayerNames.Count-1 do begin
-    VulkanDebugLn('Instance layer: '+TpvUTF8String(fVulkanInstance.AvailableLayerNames[i]));
+   for Index:=0 to fVulkanInstance.AvailableLayerNames.Count-1 do begin
+    VulkanDebugLn('Instance layer: '+TpvUTF8String(fVulkanInstance.AvailableLayerNames[Index]));
    end;
-   for i:=0 to fVulkanInstance.AvailableExtensionNames.Count-1 do begin
-    VulkanDebugLn('Instance extension: '+TpvUTF8String(fVulkanInstance.AvailableExtensionNames[i]));
+   for Index:=0 to fVulkanInstance.AvailableExtensionNames.Count-1 do begin
+    VulkanDebugLn('Instance extension: '+TpvUTF8String(fVulkanInstance.AvailableExtensionNames[Index]));
    end;
+{$if defined(PasVulkanUseSDL2) and not defined(PasVulkanHeadless)}
 {$if defined(PasVulkanUseSDL2WithVulkanSupport)}
    if fSDLVersionWithVulkanSupport then begin
     if not SDL_Vulkan_GetInstanceExtensions(fSurfaceWindow,@CountExtensions,nil) then begin
@@ -7672,10 +8110,10 @@ begin
      if not SDL_Vulkan_GetInstanceExtensions(fSurfaceWindow,@CountExtensions,@Extensions[0]) then begin
       raise EpvVulkanException.Create('Vulkan initialization failure at SDL_Vulkan_GetInstanceExtensions: '+String(SDL_GetError));
      end;
-     for i:=0 to CountExtensions-1 do begin
-      fVulkanInstance.EnabledExtensionNames.Add(String(Extensions[i]));
+     for Index:=0 to CountExtensions-1 do begin
+      fVulkanInstance.EnabledExtensionNames.Add(String(Extensions[Index]));
 {$if (defined(fpc) and defined(android)) and not defined(Release)}
-      VulkanDebugLn('Instance SDL2 extension: '+TpvUTF8String(Extensions[i]));
+      VulkanDebugLn('Instance SDL2 extension: '+TpvUTF8String(Extensions[Index]));
 {$ifend}
      end;
     finally
@@ -7713,9 +8151,22 @@ begin
      end;
     end;
    end;
+{$elseif defined(Windows) and not defined(PasVulkanHeadless)}
+   begin
+    fVulkanInstance.EnabledExtensionNames.Add(VK_KHR_SURFACE_EXTENSION_NAME);
+    fVulkanInstance.EnabledExtensionNames.Add(VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
+   end;
+{$ifend}
+   if fVulkanInstance.AvailableExtensionNames.IndexOf(VK_EXT_DEBUG_UTILS_EXTENSION_NAME)>=0 then begin
+    DebugExtensionName:=VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
+    fVulkanDebugExtensionMode:=TpvApplicationVulkanDebugExtensionMode.DebugUtils;
+   end else begin
+    DebugExtensionName:=VK_EXT_DEBUG_REPORT_EXTENSION_NAME;
+    fVulkanDebugExtensionMode:=TpvApplicationVulkanDebugExtensionMode.DebugReportMarker;
+   end;
    if fVulkanDebugging and
-      (fVulkanInstance.AvailableExtensionNames.IndexOf(VK_EXT_DEBUG_REPORT_EXTENSION_NAME)>=0) then begin
-    fVulkanInstance.EnabledExtensionNames.Add(VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
+      (fVulkanInstance.AvailableExtensionNames.IndexOf(DebugExtensionName)>=0) then begin
+    fVulkanInstance.EnabledExtensionNames.Add(DebugExtensionName);
     fVulkanDebuggingEnabled:=true;
     if fVulkanValidation then begin
 {$if defined(Android)}
@@ -7774,10 +8225,10 @@ begin
       end;
      end;
 {$ifend}
-     if {$ifdef Android}(fVulkanInstance.AvailableExtensionNames.IndexOf(VK_EXT_DEBUG_REPORT_EXTENSION_NAME)<0) and{$endif}
+(*   if {$ifdef Android}(fVulkanInstance.AvailableExtensionNames.IndexOf(VK_EXT_DEBUG_REPORT_EXTENSION_NAME)<0) and{$endif}
         (fVulkanInstance.AvailableExtensionNames.IndexOf(VK_EXT_DEBUG_UTILS_EXTENSION_NAME)>=0) then begin
       fVulkanInstance.EnabledExtensionNames.Add(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-     end;
+     end;*)
     end;
    end else begin
     fVulkanDebuggingEnabled:=false;
@@ -7798,96 +8249,19 @@ begin
    VulkanDebugLn('Called TpvVulkanInstance.Initialize() . . .');
 {$ifend}
    if fVulkanDebuggingEnabled then begin
-    fVulkanInstance.OnInstanceDebugReportCallback:=VulkanOnDebugReportCallback;
-    fVulkanInstance.InstallDebugReportCallback;
-   end;
-  end;
- end;
-{$if (defined(fpc) and defined(android)) and not defined(Release)}
- __android_log_write(ANDROID_LOG_VERBOSE,'PasVulkanApplication','Leaving TpvApplication.CreateVulkanInstance');
-{$ifend}
-end;
-{$elseif defined(Windows) and not defined(PasVulkanHeadless)}
-type TExtensions=array of PAnsiChar;
-var i:TpvInt32;
-    CountExtensions:TpvInt32;
-    Extensions:TExtensions;
-begin
-{$if (defined(fpc) and defined(android)) and not defined(Release)}
- __android_log_write(ANDROID_LOG_VERBOSE,'PasVulkanApplication','Entering TpvApplication.CreateVulkanInstance');
-{$ifend}
- if not assigned(fVulkanInstance) then begin
-  begin
-   fVulkanInstance:=TpvVulkanInstance.Create(TpvVulkanCharString(fTitle),
-                                             Version,
-                                             'PasVulkanApplication',
-                                             $0100,
-                                             fVulkanAPIVersion,
-                                             false,
-                                             nil);
-   VulkanDebugLn('Instance Vulkan API version: '+TpvUTF8String(fVulkanInstance.GetAPIVersionString));
-   for i:=0 to fVulkanInstance.AvailableLayerNames.Count-1 do begin
-    VulkanDebugLn('Instance layer: '+TpvUTF8String(fVulkanInstance.AvailableLayerNames[i]));
-   end;
-   for i:=0 to fVulkanInstance.AvailableExtensionNames.Count-1 do begin
-    VulkanDebugLn('Instance extension: '+TpvUTF8String(fVulkanInstance.AvailableExtensionNames[i]));
-   end;
-   begin
-    fVulkanInstance.EnabledExtensionNames.Add(VK_KHR_SURFACE_EXTENSION_NAME);
-    fVulkanInstance.EnabledExtensionNames.Add(VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
-   end;
-   if fVulkanDebugging and
-      (fVulkanInstance.AvailableExtensionNames.IndexOf(VK_EXT_DEBUG_REPORT_EXTENSION_NAME)>=0) then begin
-    fVulkanInstance.EnabledExtensionNames.Add(VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
-    fVulkanDebuggingEnabled:=true;
-    if fVulkanValidation then begin
-     if fVulkanNoUniqueObjectsValidation then begin
-      if fVulkanInstance.AvailableLayerNames.IndexOf('VK_LAYER_GOOGLE_threading')>=0 then begin
-       fVulkanInstance.EnabledLayerNames.Add('VK_LAYER_GOOGLE_threading');
-      end;
-      if fVulkanInstance.AvailableLayerNames.IndexOf('VK_LAYER_LUNARG_parameter_validation')>=0 then begin
-       fVulkanInstance.EnabledLayerNames.Add('VK_LAYER_LUNARG_parameter_validation');
-      end;
-      if fVulkanInstance.AvailableLayerNames.IndexOf('VK_LAYER_LUNARG_device_limits')>=0 then begin
-       fVulkanInstance.EnabledLayerNames.Add('VK_LAYER_LUNARG_device_limits');
-      end;
-      if fVulkanInstance.AvailableLayerNames.IndexOf('VK_LAYER_LUNARG_object_tracker')>=0 then begin
-       fVulkanInstance.EnabledLayerNames.Add('VK_LAYER_LUNARG_object_tracker');
-      end;
-      if fVulkanInstance.AvailableLayerNames.IndexOf('VK_LAYER_LUNARG_image')>=0 then begin
-       fVulkanInstance.EnabledLayerNames.Add('VK_LAYER_LUNARG_image');
-      end;
-      if fVulkanInstance.AvailableLayerNames.IndexOf('VK_LAYER_LUNARG_core_validation')>=0 then begin
-       fVulkanInstance.EnabledLayerNames.Add('VK_LAYER_LUNARG_core_validation');
-      end;
-      if fVulkanInstance.AvailableLayerNames.IndexOf('VK_LAYER_LUNARG_swapchain')>=0 then begin
-       fVulkanInstance.EnabledLayerNames.Add('VK_LAYER_LUNARG_swapchain');
-      end;
-     end else begin
-      if fVulkanInstance.AvailableLayerNames.IndexOf('VK_LAYER_KHRONOS_validation')>=0 then begin
-       fVulkanInstance.EnabledLayerNames.Add('VK_LAYER_KHRONOS_validation');
-      end else if fVulkanInstance.AvailableLayerNames.IndexOf('VK_LAYER_LUNARG_standard_validation')>=0 then begin
-       fVulkanInstance.EnabledLayerNames.Add('VK_LAYER_LUNARG_standard_validation');
-      end;
+    case fVulkanDebugExtensionMode of
+     TpvApplicationVulkanDebugExtensionMode.DebugUtils:begin
+      fVulkanInstance.OnInstanceDebugUtilsMessengerCallback:=VulkanOnDebugUtilsMessengerCallback;
+      fVulkanInstance.InstallDebugUtilsMessengerCallback;
      end;
-     if fVulkanInstance.AvailableExtensionNames.IndexOf(VK_EXT_DEBUG_UTILS_EXTENSION_NAME)>=0 then begin
-      fVulkanInstance.EnabledExtensionNames.Add(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+     TpvApplicationVulkanDebugExtensionMode.DebugReportMarker:begin
+      fVulkanInstance.OnInstanceDebugReportCallback:=VulkanOnDebugReportCallback;
+      fVulkanInstance.InstallDebugReportCallback;
+     end;
+     else begin
+      Assert(false);
      end;
     end;
-   end else begin
-    fVulkanDebuggingEnabled:=false;
-   end;
-   if fVulkanInstance.AvailableExtensionNames.IndexOf(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME)>=0 then begin
-    fVulkanInstance.EnabledExtensionNames.Add(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
-   end;
-   if fVulkanInstance.AvailableExtensionNames.IndexOf(VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME)>=0 then begin
-    fVulkanInstance.EnabledExtensionNames.Add(VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME);
-   end;
-   SetupVulkanInstance(fVulkanInstance);
-   fVulkanInstance.Initialize;
-   if fVulkanDebuggingEnabled then begin
-    fVulkanInstance.OnInstanceDebugReportCallback:=VulkanOnDebugReportCallback;
-    fVulkanInstance.InstallDebugReportCallback;
    end;
   end;
  end;
@@ -8174,6 +8548,7 @@ begin
                                              true,
                                              TVkSurfaceTransformFlagsKHR($ffffffff),
                                              fSwapChainColorSpace=TpvApplicationSwapChainColorSpace.SRGB,
+                                             fSwapChainHDR,
                                              fFullscreen,
                                              fExclusiveFullScreenMode,
                                              {$if defined(Windows)}@WindowHandle{$else}nil{$ifend});
@@ -8826,6 +9201,27 @@ begin
          IsReadyForDrawOfInFlightFrameIndex(fCurrentInFlightFrameIndex));
 end;
 
+function TpvApplication.WaitForPreviousFrame(const aBlocking:Boolean):Boolean;
+var InFlightFenceIndex:TpvSizeInt;
+begin
+ result:=false;
+ InFlightFenceIndex:=fVulkanInFlightFenceIndices[fPreviousInFlightFrameIndex];
+ if (InFlightFenceIndex>=0) and
+    fVulkanWaitFencesReady[InFlightFenceIndex] then begin
+  if fVulkanWaitFences[InFlightFenceIndex].GetStatus<>VK_SUCCESS then begin
+   if fBlocking then begin
+    fVulkanWaitFences[InFlightFenceIndex].WaitFor;
+   end else begin
+    exit;
+   end;
+  end;
+  fVulkanWaitFences[InFlightFenceIndex].Reset;
+  fVulkanWaitFencesReady[InFlightFenceIndex]:=false;
+  fVulkanInFlightFenceIndices[fPreviousInFlightFrameIndex]:=-1;
+  result:=true;
+ end;
+end;
+
 function TpvApplication.WaitForSwapChainLatency:boolean;
 var Target,TimeOut:TpvUInt64;
     WaitResult:TVkResult;
@@ -9076,6 +9472,7 @@ begin
                                                TimeOut) of
          VK_SUCCESS:begin
           fVulkanPresentCompleteFencesReady[fSwapChainImageCounterIndex]:=true;
+          fPreviousInFlightFrameIndex:=fCurrentInFlightFrameIndex;
           fCurrentInFlightFrameIndex:=NextInFlightFrameIndex;
           fNextInFlightFrameIndex:=fCurrentInFlightFrameIndex+1;
           if fNextInFlightFrameIndex>=fCountInFlightFrames then begin
@@ -9092,6 +9489,7 @@ begin
            continue;
           end else begin
            fVulkanPresentCompleteFencesReady[fSwapChainImageCounterIndex]:=true;
+           fPreviousInFlightFrameIndex:=fCurrentInFlightFrameIndex;
            fCurrentInFlightFrameIndex:=NextInFlightFrameIndex;
            fNextInFlightFrameIndex:=fCurrentInFlightFrameIndex+1;
            if fNextInFlightFrameIndex>=fCountInFlightFrames then begin
@@ -9128,6 +9526,22 @@ begin
       end;
 
       TAcquireVulkanBackBufferState.WaitOnFence:begin
+       if fWaitOnPreviousFrame then begin
+        InFlightFenceIndex:=fVulkanInFlightFenceIndices[fPreviousInFlightFrameIndex];
+        if (InFlightFenceIndex>=0) and
+           fVulkanWaitFencesReady[InFlightFenceIndex] then begin
+         if fVulkanWaitFences[InFlightFenceIndex].GetStatus<>VK_SUCCESS then begin
+          if fBlocking then begin
+           fVulkanWaitFences[InFlightFenceIndex].WaitFor;
+          end else begin
+           break;
+          end;
+         end;
+         fVulkanWaitFences[InFlightFenceIndex].Reset;
+         fVulkanWaitFencesReady[InFlightFenceIndex]:=false;
+         fVulkanInFlightFenceIndices[fPreviousInFlightFrameIndex]:=-1;
+        end;
+       end;
        InFlightFenceIndex:=fVulkanInFlightFenceIndices[fCurrentInFlightFrameIndex];
        if (InFlightFenceIndex>=0) and
           fVulkanWaitFencesReady[InFlightFenceIndex] then begin
@@ -9205,6 +9619,18 @@ begin
 
       TAcquireVulkanBackBufferState.RecreateSwapChain,
       TAcquireVulkanBackBufferState.RecreateSurface:begin
+
+       if fUpdateUsesGPU then begin
+        if assigned(fUpdateThread) then begin
+         if fUpdateThread.fInvoked then begin
+          fUpdateThread.WaitForDone;
+         end;
+        end else begin
+         while fInUpdateJobFunction do begin
+          TPasMP.Yield;
+         end;
+        end;
+       end;
 
        for ImageIndex:=0 to fCountSwapChainImages-1 do begin
         if fVulkanPresentCompleteFencesReady[ImageIndex] then begin
@@ -9839,16 +10265,152 @@ begin
 
 end;
 
+function TpvApplicationGetPercentile95thFrameTimeCompare(const a,b:TpvDouble):TpvInt32;
+begin
+ result:=Sign(a-b);
+end;
+
+function TpvApplication.GetPercentileXthFrameTime(const aPercentileXth:TpvDouble):TpvDouble;
+var FrameTimes:TpvDoubleDynamicArray;
+    Index:TpvSizeInt;
+    TotalTimeTaken,DestinationAccumulatedTime,Sample,Factor:TpvDouble;
+begin
+
+ // Don't solely rely on the count of samples. Factor in the total time consumed (which favors
+ // bigger samples). Here's an illustrative case with 95th percentile:
+ // If a game operates at 60 fps for 1 hour and then takes the next hour to render one frame,
+ // Using only the sample count would suggest 60 fps / 16.67mspf.
+ // But in reality, the user experienced 1 hour at 60 fps and another hour at 0.000277778 fps.
+ // The accurate 95-p is 0.000277778 fps (3600000 mspf), not 60 fps.
+
+ result:=-1.0;
+
+ if fFrameTimesHistoryCount>0 then begin
+
+  FrameTimes:=nil;
+  try
+
+   SetLength(FrameTimes,fFrameTimesHistoryCount);
+
+   for Index:=0 to length(FrameTimes)-1 do begin
+    FrameTimes[Index]:=fFrameTimesHistoryDeltaTimes[((fFrameTimesHistoryIndex+FrameTimesHistorySize)-(Index+1)) and FrameTimesHistoryMask];
+   end;
+
+   if fFrameTimesHistoryCount>1 then begin
+    TpvTypedSort<TpvDouble>.IntroSort(@FrameTimes[0],0,length(FrameTimes)-1,TpvApplicationGetPercentile95thFrameTimeCompare);
+   end;
+
+   TotalTimeTaken:=0.0;
+   for Index:=0 to length(FrameTimes)-1 do begin
+    TotalTimeTaken:=TotalTimeTaken+FrameTimes[Index];
+   end;
+
+   Factor:=aPercentileXth*0.01;
+   if Factor<=0.0 then begin
+    Factor:=0.0;
+   end else if Factor>=1.0 then begin
+    Factor:=1.0;
+   end;
+
+   DestinationAccumulatedTime:=TotalTimeTaken*Factor;
+
+   TotalTimeTaken:=0.0;
+   for Index:=0 to length(FrameTimes)-1 do begin
+    Sample:=FrameTimes[Index];
+    if TotalTimeTaken>=DestinationAccumulatedTime then begin
+     result:=Sample;
+     break;
+    end else begin
+     TotalTimeTaken:=TotalTimeTaken+Sample;
+    end;
+   end;
+
+  finally
+   FrameTimes:=nil;
+  end;
+
+ end;
+
+end;
+
 procedure TpvApplication.FrameRateLimiter;
-var NowTime:TpvHighResolutionTime;
+var LastTime,NowTime,FrameTime,TargetInterval,SleepDuration:TpvHighResolutionTime;
+begin
+
+ if fFrameRateLimiterLastTime=0 then begin
+  fFrameRateLimiterLastTime:=fHighResolutionTimer.GetTime; // Initialize first last time
+ end;
+
+ LastTime:=fFrameRateLimiterLastTime;
+ NowTime:=fHighResolutionTimer.GetTime;
+
+ // Calculate frame time
+ FrameTime:=NowTime-LastTime;
+
+ // Check the frame limiter is enabled at all.
+ if (fMaximumFramesPerSecond>0.0) and not IsZero(fMaximumFramesPerSecond) then begin
+
+  // If the frame limiter is enabled, do our magic here. :-)
+
+  // Calculate the target time interval based on the maximum frames per second value.
+  TargetInterval:=fHighResolutionTimer.FromFloatSeconds(1.0/fMaximumFramesPerSecond);
+
+  // Check if the deviation should be reset to zero, for example, if a slow frame was present.
+  if (FrameTime*100)>((TargetInterval*103)-(fFrameRateLimiterDeviation*100)) then begin
+
+   // So for example, if a slow frame was present, the deviation should be reset to zero, as
+   // the low performance should not be compensated for later.
+   fFrameRateLimiterDeviation:=0;
+
+  end else begin
+
+   SleepDuration:=TargetInterval-(FrameTime+fFrameRateLimiterDeviation);
+
+   // The sleep function should not be called if the time required to sleep is shorter than the time
+   // the function calls are likely to take.
+   if SleepDuration>0 then begin
+    NowTime:=fFrameLimiterHighResolutionTimerSleepWithDriftCompensation.Sleep(SleepDuration);
+   end;
+
+   // Calculate new frame time
+   FrameTime:=NowTime-LastTime;
+
+   // Any inaccuracies during sleep should be compensated for in the next frame, however the cumulative
+   // deviation should be limited to avoid stuttering if a series of slow frames is followed by a fast frame.
+   fFrameRateLimiterDeviation:=Min(TargetInterval shr 4,fFrameRateLimiterDeviation+(FrameTime-TargetInterval));
+
+  end;
+
+ end else begin
+
+  // Disabled frame limiter => Do not sleeping at all
+  fFrameRateLimiterDeviation:=0;
+
+ end;
+
+ fFrameRateLimiterLastTime:=NowTime;
+
+end;
+
+{procedure TpvApplication.FrameRateLimiter;
+var NowTime,Interval:TpvHighResolutionTime;
 begin
  NowTime:=fHighResolutionTimer.GetTime;
  if (fMaximumFramesPerSecond>0.0) and not IsZero(fMaximumFramesPerSecond) then begin
   if (NowTime<fNextTime) and
      (fNextTime<=(NowTime+fHighResolutionTimer.SecondInterval)) then begin
-   fHighResolutionTimer.Sleep(fNextTime-NowTime);
+   fFrameLimiterHighResolutionTimerSleepWithDriftCompensation.Sleep(fNextTime-NowTime);
   end;
-  fNextTime:=NowTime+fHighResolutionTimer.FromFloatSeconds(1.0/fMaximumFramesPerSecond);
+  Interval:=fHighResolutionTimer.FromFloatSeconds(1.0/fMaximumFramesPerSecond);
+  if (fNextTime=0) or (fNextTime>=(NowTime+Interval)) then begin
+   fNextTime:=NowTime+Interval;
+   NowTime:=fHighResolutionTimer.GetTime;
+   if fNextTime>=(NowTime+Interval) then begin
+    fNextTime:=NowTime+Interval;
+   end;
+  end else begin
+   fNextTime:=fNextTime+Interval;
+  end;
  end else begin
   if NowTime>0 then begin
    fNextTime:=NowTime-1;
@@ -9856,11 +10418,16 @@ begin
    fNextTime:=0;
   end;
  end;
-end;
+end;}
 
 procedure TpvApplication.UpdateJobFunction(const aJob:PPasMPJob;const aThreadIndex:TPasMPInt32);
 begin
- Update(fUpdateDeltaTime);
+ TPasMPInterlocked.Write(fInUpdateJobFunction,TPasMPBool32(true));
+ try
+  Update(fUpdateDeltaTime);
+ finally
+  TPasMPInterlocked.Write(fInUpdateJobFunction,TPasMPBool32(false));
+ end;
 end;
 
 procedure TpvApplication.DrawJobFunction(const aJob:PPasMPJob;const aThreadIndex:TPasMPInt32);
@@ -10160,8 +10727,6 @@ begin
 end;
 
 procedure TpvApplication.ProcessMessages;
-{-$define TpvApplicationUpdateJobOnMainThread}
-{$define TpvApplicationDrawJobOnMainThread}
 var Index,Counter,Tries:TpvInt32;
 {$if defined(PasVulkanUseSDL2) and not defined(PasVulkanHeadless)}
     SDLJoystick:PSDL_Joystick;
@@ -10176,13 +10741,7 @@ var Index,Counter,Tries:TpvInt32;
  {$ifend}
 {$ifend}
     OK,Found:boolean;
-{$if defined(TpvApplicationUpdateJobOnMainThread)}
-    DrawJob:PPasMPJob;
-{$elseif defined(TpvApplicationDrawJobOnMainThread)}
     UpdateJob:PPasMPJob;
-{$else}
-    Jobs:array[0..1] of PPasMPJob;
-{$ifend}
     DoSkipNextFrameForRendering,ReadyForSwapChainLatency:boolean;
 begin
 
@@ -11012,6 +11571,8 @@ begin
    fUpdateFrameCounter:=fFrameCounter;
    fDrawFrameCounter:=fFrameCounter;
 
+   fPreviousInFlightFrameIndex:=fCurrentInFlightFrameIndex;
+
    fCurrentInFlightFrameIndex:=fNextInFlightFrameIndex;
 
    fNextInFlightFrameIndex:=fCurrentInFlightFrameIndex+1;
@@ -11023,7 +11584,13 @@ begin
    fUpdateInFlightFrameIndex:=fCurrentInFlightFrameIndex;
 
    Check(fUpdateDeltaTime);
-   UpdateJobFunction(nil,0);
+
+   if fUpdateUsesGPU and assigned(fUpdateThread) then begin
+    fUpdateThread.Invoke;
+    fUpdateThread.WaitForDone;
+   end else begin
+    UpdateJobFunction(nil,0);
+   end;
 
    inc(fFrameCounter);
 
@@ -11033,6 +11600,8 @@ begin
    if fSwapChainImageCounterIndex>=fCountSwapChainImages then begin
     dec(fSwapChainImageCounterIndex,fCountSwapChainImages);
    end;
+
+   VulkanWaitIdle;
 
   end else if ReadyForSwapChainLatency then begin
 
@@ -11071,9 +11640,12 @@ begin
 
         Check(fUpdateDeltaTime);
 
-        UpdateJob:=fPasMPInstance.Acquire(UpdateJobFunction);
-
-        fPasMPInstance.Run(UpdateJob);
+        if assigned(fUpdateThread) then begin
+         fUpdateThread.Invoke;
+        end else begin
+         UpdateJob:=fPasMPInstance.Acquire(UpdateJobFunction);
+         fPasMPInstance.Run(UpdateJob);
+        end;
 
        end else begin
 
@@ -11087,7 +11659,12 @@ begin
 
         Check(fUpdateDeltaTime);
 
-        UpdateJobFunction(nil,0);
+        if fUpdateUsesGPU and assigned(fUpdateThread) then begin
+         fUpdateThread.Invoke;
+         fUpdateThread.WaitForDone;
+        end else begin
+         UpdateJobFunction(nil,0);
+        end;
 
        end;
 
@@ -11107,9 +11684,23 @@ begin
        finally
         if assigned(fVulkanDevice) then begin
          try
-          PresentVulkanBackBuffer;
+          if fUpdateUsesGPU then begin
+           if assigned(fUpdateThread) then begin
+            if fUpdateThread.fInvoked then begin
+             fUpdateThread.WaitForDone;
+            end;
+           end else begin
+            while fInUpdateJobFunction do begin
+             TPasMP.Yield;
+            end;
+           end;
+          end;
          finally
-          PostPresent(fSwapChainImageIndex);
+          try
+           PresentVulkanBackBuffer;
+          finally
+           PostPresent(fSwapChainImageIndex);
+          end;
          end;
         end;
        end;
@@ -11118,8 +11709,14 @@ begin
       end;
 
      finally
-      if assigned(UpdateJob) then begin
-       fPasMPInstance.WaitRelease(UpdateJob);
+      if assigned(fUpdateThread) then begin
+       if fUpdateThread.fInvoked then begin
+        fUpdateThread.WaitForDone;
+       end;
+      end else begin
+       if assigned(UpdateJob) then begin
+        fPasMPInstance.WaitRelease(UpdateJob);
+       end;
       end;
      end;
 
@@ -11162,27 +11759,19 @@ begin
 
         BeginFrame(fUpdateDeltaTime);
 
- {$if defined(TpvApplicationUpdateJobOnMainThread)}
-        DrawJob:=fPasMPInstance.Acquire(DrawJobFunction);
-        try
-         fPasMPInstance.Run(DrawJob);
-         UpdateJobFunction(nil,fPasMPInstance.GetJobWorkerThreadIndex);
-        finally
-         fPasMPInstance.WaitRelease(DrawJob);
-        end;
- {$elseif defined(TpvApplicationDrawJobOnMainThread)}
-        UpdateJob:=fPasMPInstance.Acquire(UpdateJobFunction);
-        try
-         fPasMPInstance.Run(UpdateJob);
+        if fUpdateUsesGPU and assigned(fUpdateThread) then begin
+         fUpdateThread.Invoke;
          DrawJobFunction(nil,fPasMPInstance.GetJobWorkerThreadIndex);
-        finally
-         fPasMPInstance.WaitRelease(UpdateJob);
+         fUpdateThread.WaitForDone;
+        end else begin
+         UpdateJob:=fPasMPInstance.Acquire(UpdateJobFunction);
+         try
+          fPasMPInstance.Run(UpdateJob);
+          DrawJobFunction(nil,fPasMPInstance.GetJobWorkerThreadIndex);
+         finally
+          fPasMPInstance.WaitRelease(UpdateJob);
+         end;
         end;
- {$else}
-        Jobs[0]:=fPasMPInstance.Acquire(UpdateJobFunction);
-        Jobs[1]:=fPasMPInstance.Acquire(DrawJobFunction);
-        fPasMPInstance.Invoke(Jobs);
- {$ifend}
 
         FinishFrame(fSwapChainImageIndex,fVulkanWaitSemaphore,fVulkanWaitFence);
 
@@ -11198,7 +11787,12 @@ begin
 
         Check(fUpdateDeltaTime);
 
-        UpdateJobFunction(nil,0);
+        if fUpdateUsesGPU and assigned(fUpdateThread) then begin
+         fUpdateThread.Invoke;
+         fUpdateThread.WaitForDone;
+        end else begin
+         UpdateJobFunction(nil,0);
+        end;
 
         BeginFrame(fUpdateDeltaTime);
 
@@ -11277,6 +11871,11 @@ begin
   result:=0;
  end else begin
   case uMsg of
+   WM_NCCREATE:begin
+    if assigned(EnableNonClientDpiScaling) and not assigned(SetProcessDpiAwarenessContext) then begin
+     EnableNonClientDpiScaling(aHWND);
+    end;
+   end;
    WM_NCMOUSEMOVE:begin
     if Application.fWin32NCMouseButton<>0 then begin
      if Application.fWin32NCMousePos<>lParam then begin
@@ -12513,6 +13112,14 @@ begin
 {$ifend}
 {$elseif defined(Windows) and not defined(PasVulkanHeadless)}
 
+  if (WindowsVersionMajor>=10) and assigned(SetProcessDpiAwarenessContext) then begin // >= Windows 10
+   SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+  end else if (WindowsVersionMajor>=6) and (WindowsVersionMinor>=3) and assigned(SetProcessDpiAwareness) then begin // >= Windows 8.1
+   SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE);
+  end else if (WindowsVersionMajor>=6) and (WindowsVersionMinor>=0) and assigned(SetProcessDPIAware) then begin // >= Windows Vista
+   SetProcessDPIAware;
+  end;
+
   fWin32HInstance:=GetModuleHandleW(nil);
 
   Win32WindowClass.lpfnWndProc:=@TpvApplicationWin32WndProc;
@@ -12750,8 +13357,21 @@ begin
 {$ifend}
            try
 
-            while not fTerminated do begin
-             ProcessMessages;
+            fUpdateThread:=TpvApplicationUpdateThread.Create(self);
+            try
+
+             while not fTerminated do begin
+              ProcessMessages;
+             end;
+
+            finally
+             if assigned(fUpdateThread) then begin
+              try
+               fUpdateThread.Shutdown;
+              finally
+               FreeAndNil(fUpdateThread);
+              end;
+             end;
             end;
 
            finally
@@ -12801,7 +13421,7 @@ begin
 
          except
           on e:Exception do begin
-           ExceptionString:={$ifdef fpc}DumpExceptionCallStack{$else}DumpException{$endif}(e);
+           ExceptionString:=DumpExceptionCallStack(e);
 {$if defined(fpc) and defined(android) and (defined(Release) or not defined(Debug))}
            __android_log_write(ANDROID_LOG_ERROR,'PasVulkanApplication',PAnsiChar(TpvApplicationRawByteString(ExceptionString)));
 {$ifend}
@@ -13184,6 +13804,25 @@ begin
  if assigned(fScreen) then begin
   fScreen.UpdateAudio;
  end;
+end;
+
+procedure TpvApplication.DumpVulkanMemoryManager; 
+var StringList:TStringList;
+    Index:TpvSizeInt;
+    Line:TpvUTF8String;
+begin
+ if assigned(fVulkanDevice) then begin
+  StringList:=TStringList.Create;
+  try
+   fVulkanDevice.MemoryManager.Dump(StringList);
+   for Index:=0 to StringList.Count-1 do begin
+    Line:=StringList[Index];
+    TpvApplication.Log(LOG_INFO,'TpvApplication',Line);
+   end;
+  finally
+   FreeAndNil(StringList);
+  end; 
+ end; 
 end;
 
 class procedure TpvApplication.Main;
@@ -14318,6 +14957,14 @@ initialization
                      assigned(GetPointerTouchInfo) and
                      assigned(GetPointerPenInfo) and
                      assigned(EnableMouseInPointer);
+ @RtlGetNtVersionNumbers:=GetProcAddress(LoadLibrary('ntdll.dll'),'RtlGetNtVersionNumbers');
+ if assigned(RtlGetNtVersionNumbers) then begin
+  RtlGetNtVersionNumbers(WindowsVersionMajor,WindowsVersionMinor,WindowsVersionBuildNumber);
+ end;
+ @SetProcessDPIAware:=GetProcAddress(LoadLibrary('user32.dll'),'SetProcessDPIAware');
+ @SetProcessDpiAwareness:=GetProcAddress(LoadLibrary('shcore.dll'),'SetProcessDpiAwareness');
+ @SetProcessDpiAwarenessContext:=GetProcAddress(LoadLibrary('user32.dll'),'SetProcessDpiAwarenessContext');
+ @EnableNonClientDpiScaling:=GetProcAddress(LoadLibrary('user32.dll'),'EnableNonClientDpiScaling');
 {$endif}
 finalization
  timeEndPeriod(1);

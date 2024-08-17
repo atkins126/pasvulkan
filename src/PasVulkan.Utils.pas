@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -87,6 +87,21 @@ type TpvSwap<T>=class
        class procedure IntroSort(const pItems:TpvPointer;const pLeft,pRight:TpvInt32;const pCompareFunc:TpvTypedSortCompareFunction); overload;
      end;
 
+{$ifdef fpc}
+     TpvNativeComparableTypedSort<T>=class
+      private
+       type PStackItem=^TStackItem;
+            TStackItem=record
+             Left,Right,Depth:TpvInt32;
+            end;
+      public
+       type TpvNativeComparableTypedSortCompareFunction=function(const a,b:T):TpvInt32;
+      public
+       class procedure IntroSort(const pItems:TpvPointer;const pLeft,pRight:TpvInt32); overload;
+       class procedure IntroSort(const pItems:TpvPointer;const pLeft,pRight:TpvInt32;const pCompareFunc:TpvNativeComparableTypedSortCompareFunction); overload;
+     end;
+{$endif}
+
      TpvTopologicalSortNodeDependsOnKeys=array of TpvInt32;
 
      PpvTopologicalSortNode=^TpvTopologicalSortNode;
@@ -137,7 +152,50 @@ type TpvSwap<T>=class
        property Count:TpvInt32 read fCount write SetCount;
      end;
 
+     TpvTaggedTopologicalSort=class
+      public
+       type TKey=class;
+            TKeys=array of TKey;
+            TKey=class
+             private
+              fTag:TpvPtrUInt;
+              fDependOnKeys:TKeys;
+              fCountDependOnKeys:TpvSizeInt;
+              fVisitedState:TpvUInt32;
+              fIndex:TpvSizeInt;
+             public
+              constructor Create(const aTag:TpvPtrUInt); reintroduce;
+              destructor Destroy; override;
+              procedure AddDependOnKey(const aKey:TKey);
+             published 
+              property Tag:TpvPtrUInt read fTag;
+              property Index:TpvSizeInt read fIndex;
+            end;
+      private
+       fKeys:TKeys;
+       fCountKeys:TpvSizeInt;
+       fCyclic:Boolean;
+      public
+       constructor Create;
+       destructor Destroy; override;
+       procedure Clear;
+       function Add(const aTag:TpvPtrUInt):TKey;
+       procedure AddDependOnKey(const aKey,aDependOnKey:TKey);
+       function Solve(const aBackwards:Boolean=false):Boolean;
+      public
+       property Keys:TKeys read fKeys; 
+      published
+       property Cyclic:Boolean read fCyclic;
+       property CountKeys:TpvSizeInt read fCountKeys;
+     end;
+     
 procedure DebugBreakPoint;
+
+{$ifdef fpc}
+function DumpCallStack:string;
+{$endif}
+
+function DumpExceptionCallStack(e:Exception):string;
 
 function CombineTwoUInt32IntoOneUInt64(const a,b:TpvUInt32):TpvUInt64; {$ifdef caninline}inline;{$endif}
 
@@ -152,6 +210,8 @@ function MatchPattern(Input,Pattern:PAnsiChar):boolean;
 function IsPathSeparator(const aChar:AnsiChar):Boolean;
 function ExpandRelativePath(const aRelativePath:TpvRawByteString;const aBasePath:TpvRawByteString=''):TpvRawByteString;
 function ConvertPathToRelative(aAbsolutePath,aBasePath:TpvRawByteString):TpvRawByteString;
+
+function SizeToHumanReadableString(const aSize:TpvUInt64):TpvRawByteString;
 
 implementation
 
@@ -177,6 +237,48 @@ end;
 begin
 end;
 {$ifend}
+
+{$ifdef fpc}
+function DumpCallStack:string;
+const LineEnding={$if defined(Windows) or defined(Win32) or defined(Win64)}#13#10{$else}#10{$ifend};
+var bp,Address,OldBP:Pointer;
+begin
+ result:='';
+ bp:=get_caller_frame(get_frame);
+ while assigned(bp) do begin
+  Address:=get_caller_addr(bp);
+  Result:=Result+BackTraceStrFunc(Address)+LineEnding;
+  OldBP:=bp;
+  bp:=get_caller_frame(bp);
+  if (TpvPtrUInt(bp)<=TpvPtrUInt(OldBP)) or (TpvPtrUInt(bp)>(TpvPtrUInt(StackBottom)+TpvPtrUInt(StackLength))) then begin
+   bp:=nil;
+  end;
+ end;
+end;
+{$endif}
+
+function DumpExceptionCallStack(e:Exception):string;
+const LineEnding={$if defined(Windows) or defined(Win32) or defined(Win64)}#13#10{$else}#10{$ifend};
+{$if defined(fpc)}
+var Index:TpvInt32;
+    Frames:PPointer;
+{$else}
+{$ifend}
+begin
+ result:='Program exception! '+LineEnding+'Stack trace:'+LineEnding+LineEnding;
+ if assigned(e) then begin
+  result:=result+'Exception class: '+e.ClassName+LineEnding+'Message: '+e.Message+LineEnding;
+ end;
+{$if defined(fpc)}
+ result:=result+BackTraceStrFunc(ExceptAddr);
+ Frames:=ExceptFrames;
+ for Index:=0 to ExceptFrameCount-1 do begin
+  result:=result+LineEnding+BackTraceStrFunc(Frames);
+  inc(Frames);
+ end;
+{$else}
+{$ifend}
+end;
 
 class procedure TpvSwap<T>.Swap(var aValue,aOtherValue:T);
 var Temporary:T;
@@ -752,6 +854,288 @@ begin
  end;
 end;
 
+{$ifdef fpc}
+class procedure TpvNativeComparableTypedSort<T>.IntroSort(const pItems:TpvPointer;const pLeft,pRight:TpvInt32);
+type PItem=^TItem;
+     TItem=T;
+     PItemArray=^TItemArray;
+     TItemArray=array of TItem;
+var Left,Right,Depth,i,j,Middle,Size,Parent,Child,Pivot,iA,iB,iC:TpvInt32;
+    StackItem:PStackItem;
+    Stack:array[0..31] of TStackItem;
+    Temp:T;
+begin
+ if pLeft<pRight then begin
+  StackItem:=@Stack[0];
+  StackItem^.Left:=pLeft;
+  StackItem^.Right:=pRight;
+  StackItem^.Depth:=IntLog2((pRight-pLeft)+1) shl 1;
+  inc(StackItem);
+  while TpvPtrUInt(TpvPointer(StackItem))>TpvPtrUInt(TpvPointer(@Stack[0])) do begin
+   dec(StackItem);
+   Left:=StackItem^.Left;
+   Right:=StackItem^.Right;
+   Depth:=StackItem^.Depth;
+   Size:=(Right-Left)+1;
+   if Size<16 then begin
+    // Insertion sort
+    iA:=Left;
+    iB:=iA+1;
+    while iB<=Right do begin
+     iC:=iB;
+     while (iA>=Left) and
+           (iC>=Left) and
+           (PItemArray(pItems)^[iA]>PItemArray(pItems)^[iC]) do begin
+      Temp:=PItemArray(pItems)^[iA];
+      PItemArray(pItems)^[iA]:=PItemArray(pItems)^[iC];
+      PItemArray(pItems)^[iC]:=Temp;
+      dec(iA);
+      dec(iC);
+     end;
+     iA:=iB;
+     inc(iB);
+    end;
+   end else begin
+    if (Depth=0) or (TpvPtrUInt(TpvPointer(StackItem))>=TpvPtrUInt(TpvPointer(@Stack[high(Stack)-1]))) then begin
+     // Heap sort
+     i:=Size div 2;
+     repeat
+      if i>0 then begin
+       dec(i);
+      end else begin
+       dec(Size);
+       if Size>0 then begin
+        Temp:=PItemArray(pItems)^[Left+Size];
+        PItemArray(pItems)^[Left+Size]:=PItemArray(pItems)^[Left];
+        PItemArray(pItems)^[Left]:=Temp;
+       end else begin
+        break;
+       end;
+      end;
+      Parent:=i;
+      repeat
+       Child:=(Parent*2)+1;
+       if Child<Size then begin
+        if (Child<(Size-1)) and (PItemArray(pItems)^[Left+Child]<PItemArray(pItems)^[Left+Child+1]) then begin
+         inc(Child);
+        end;
+        if PItemArray(pItems)^[Left+Parent]<PItemArray(pItems)^[Left+Child] then begin
+         Temp:=PItemArray(pItems)^[Left+Parent];
+         PItemArray(pItems)^[Left+Parent]:=PItemArray(pItems)^[Left+Child];
+         PItemArray(pItems)^[Left+Child]:=Temp;
+         Parent:=Child;
+         continue;
+        end;
+       end;
+       break;
+      until false;
+     until false;
+    end else begin
+     // Quick sort width median-of-three optimization
+     Middle:=Left+((Right-Left) shr 1);
+     if (Right-Left)>3 then begin
+      if PItemArray(pItems)^[Left]>PItemArray(pItems)^[Middle] then begin
+       Temp:=PItemArray(pItems)^[Left];
+       PItemArray(pItems)^[Left]:=PItemArray(pItems)^[Middle];
+       PItemArray(pItems)^[Middle]:=Temp;
+      end;
+      if PItemArray(pItems)^[Left]>PItemArray(pItems)^[Right] then begin
+       Temp:=PItemArray(pItems)^[Left];
+       PItemArray(pItems)^[Left]:=PItemArray(pItems)^[Right];
+       PItemArray(pItems)^[Right]:=Temp;
+      end;
+      if PItemArray(pItems)^[Middle]>PItemArray(pItems)^[Right] then begin
+       Temp:=PItemArray(pItems)^[Middle];
+       PItemArray(pItems)^[Middle]:=PItemArray(pItems)^[Right];
+       PItemArray(pItems)^[Right]:=Temp;
+      end;
+     end;
+     Pivot:=Middle;
+     i:=Left;
+     j:=Right;
+     repeat
+      while (i<Right) and (PItemArray(pItems)^[i]<PItemArray(pItems)^[Pivot]) do begin
+       inc(i);
+      end;
+      while (j>=i) and (PItemArray(pItems)^[j]>PItemArray(pItems)^[Pivot]) do begin
+       dec(j);
+      end;
+      if i>j then begin
+       break;
+      end else begin
+       if i<>j then begin
+        Temp:=PItemArray(pItems)^[i];
+        PItemArray(pItems)^[i]:=PItemArray(pItems)^[j];
+        PItemArray(pItems)^[j]:=Temp;
+        if Pivot=i then begin
+         Pivot:=j;
+        end else if Pivot=j then begin
+         Pivot:=i;
+        end;
+       end;
+       inc(i);
+       dec(j);
+      end;
+     until false;
+     if i<Right then begin
+      StackItem^.Left:=i;
+      StackItem^.Right:=Right;
+      StackItem^.Depth:=Depth-1;
+      inc(StackItem);
+     end;
+     if Left<j then begin
+      StackItem^.Left:=Left;
+      StackItem^.Right:=j;
+      StackItem^.Depth:=Depth-1;
+      inc(StackItem);
+     end;
+    end;
+   end;
+  end;
+ end;
+end;
+
+class procedure TpvNativeComparableTypedSort<T>.IntroSort(const pItems:TpvPointer;const pLeft,pRight:TpvInt32;const pCompareFunc:TpvNativeComparableTypedSortCompareFunction);
+type PItem=^TItem;
+     TItem=T;
+     PItemArray=^TItemArray;
+     TItemArray=array[0..65535] of TItem;
+var Left,Right,Depth,i,j,Middle,Size,Parent,Child,Pivot,iA,iB,iC:TpvInt32;
+    StackItem:PStackItem;
+    Stack:array[0..31] of TStackItem;
+    Temp:T;
+begin
+ if pLeft<pRight then begin
+  StackItem:=@Stack[0];
+  StackItem^.Left:=pLeft;
+  StackItem^.Right:=pRight;
+  StackItem^.Depth:=IntLog2((pRight-pLeft)+1) shl 1;
+  inc(StackItem);
+  while TpvPtrUInt(TpvPointer(StackItem))>TpvPtrUInt(TpvPointer(@Stack[0])) do begin
+   dec(StackItem);
+   Left:=StackItem^.Left;
+   Right:=StackItem^.Right;
+   Depth:=StackItem^.Depth;
+   Size:=(Right-Left)+1;
+   if Size<16 then begin
+    // Insertion sort
+    iA:=Left;
+    iB:=iA+1;
+    while iB<=Right do begin
+     iC:=iB;
+     while (iA>=Left) and
+           (iC>=Left) and
+           (pCompareFunc(PItemArray(pItems)^[iA],PItemArray(pItems)^[iC])>0) do begin
+      Temp:=PItemArray(pItems)^[iA];
+      PItemArray(pItems)^[iA]:=PItemArray(pItems)^[iC];
+      PItemArray(pItems)^[iC]:=Temp;
+      dec(iA);
+      dec(iC);
+     end;
+     iA:=iB;
+     inc(iB);
+    end;
+   end else begin
+    if (Depth=0) or (TpvPtrUInt(TpvPointer(StackItem))>=TpvPtrUInt(TpvPointer(@Stack[high(Stack)-1]))) then begin
+     // Heap sort
+     i:=Size div 2;
+     repeat
+      if i>0 then begin
+       dec(i);
+      end else begin
+       dec(Size);
+       if Size>0 then begin
+        Temp:=PItemArray(pItems)^[Left+Size];
+        PItemArray(pItems)^[Left+Size]:=PItemArray(pItems)^[Left];
+        PItemArray(pItems)^[Left]:=Temp;
+       end else begin
+        break;
+       end;
+      end;
+      Parent:=i;
+      repeat
+       Child:=(Parent*2)+1;
+       if Child<Size then begin
+        if (Child<(Size-1)) and (pCompareFunc(PItemArray(pItems)^[Left+Child],PItemArray(pItems)^[Left+Child+1])<0) then begin
+         inc(Child);
+        end;
+        if pCompareFunc(PItemArray(pItems)^[Left+Parent],PItemArray(pItems)^[Left+Child])<0 then begin
+         Temp:=PItemArray(pItems)^[Left+Parent];
+         PItemArray(pItems)^[Left+Parent]:=PItemArray(pItems)^[Left+Child];
+         PItemArray(pItems)^[Left+Child]:=Temp;
+         Parent:=Child;
+         continue;
+        end;
+       end;
+       break;
+      until false;
+     until false;
+    end else begin
+     // Quick sort width median-of-three optimization
+     Middle:=Left+((Right-Left) shr 1);
+     if (Right-Left)>3 then begin
+      if pCompareFunc(PItemArray(pItems)^[Left],PItemArray(pItems)^[Middle])>0 then begin
+       Temp:=PItemArray(pItems)^[Left];
+       PItemArray(pItems)^[Left]:=PItemArray(pItems)^[Middle];
+       PItemArray(pItems)^[Middle]:=Temp;
+      end;
+      if pCompareFunc(PItemArray(pItems)^[Left],PItemArray(pItems)^[Right])>0 then begin
+       Temp:=PItemArray(pItems)^[Left];
+       PItemArray(pItems)^[Left]:=PItemArray(pItems)^[Right];
+       PItemArray(pItems)^[Right]:=Temp;
+      end;
+      if pCompareFunc(PItemArray(pItems)^[Middle],PItemArray(pItems)^[Right])>0 then begin
+       Temp:=PItemArray(pItems)^[Middle];
+       PItemArray(pItems)^[Middle]:=PItemArray(pItems)^[Right];
+       PItemArray(pItems)^[Right]:=Temp;
+      end;
+     end;
+     Pivot:=Middle;
+     i:=Left;
+     j:=Right;
+     repeat
+      while (i<Right) and (pCompareFunc(PItemArray(pItems)^[i],PItemArray(pItems)^[Pivot])<0) do begin
+       inc(i);
+      end;
+      while (j>=i) and (pCompareFunc(PItemArray(pItems)^[j],PItemArray(pItems)^[Pivot])>0) do begin
+       dec(j);
+      end;
+      if i>j then begin
+       break;
+      end else begin
+       if i<>j then begin
+        Temp:=PItemArray(pItems)^[i];
+        PItemArray(pItems)^[i]:=PItemArray(pItems)^[j];
+        PItemArray(pItems)^[j]:=Temp;
+        if Pivot=i then begin
+         Pivot:=j;
+        end else if Pivot=j then begin
+         Pivot:=i;
+        end;
+       end;
+       inc(i);
+       dec(j);
+      end;
+     until false;
+     if i<Right then begin
+      StackItem^.Left:=i;
+      StackItem^.Right:=Right;
+      StackItem^.Depth:=Depth-1;
+      inc(StackItem);
+     end;
+     if Left<j then begin
+      StackItem^.Left:=Left;
+      StackItem^.Right:=j;
+      StackItem^.Depth:=Depth-1;
+      inc(StackItem);
+     end;
+    end;
+   end;
+  end;
+ end;
+end;
+{$endif}
+
 function MatchPattern(Input,Pattern:PAnsiChar):boolean;
 begin
  result:=true;
@@ -1132,6 +1516,164 @@ begin
  end;
 end;
 
+constructor TpvTaggedTopologicalSort.TKey.Create(const aTag:TpvPtrUInt);
+begin
+ inherited Create;
+ fTag:=aTag;
+ fDependOnKeys:=nil;
+ fCountDependOnKeys:=0;
+ fVisitedState:=0;
+ fIndex:=-1;
+end;
+
+destructor TpvTaggedTopologicalSort.TKey.Destroy;
+begin
+ fDependOnKeys:=nil;
+ fCountDependOnKeys:=0;
+ inherited Destroy;
+end;
+
+procedure TpvTaggedTopologicalSort.TKey.AddDependOnKey(const aKey:TpvTaggedTopologicalSort.TKey);
+begin
+ if length(fDependOnKeys)<=fCountDependOnKeys then begin
+  SetLength(fDependOnKeys,(fCountDependOnKeys+1)*2);
+ end;
+ fDependOnKeys[fCountDependOnKeys]:=aKey;
+ inc(fCountDependOnKeys);
+end;
+
+constructor TpvTaggedTopologicalSort.Create;
+begin
+ inherited Create;
+ fKeys:=nil;
+ fCountKeys:=0;
+ fCyclic:=false;
+end;
+
+destructor TpvTaggedTopologicalSort.Destroy;
+begin
+ Clear;
+ inherited Destroy;
+end;
+
+procedure TpvTaggedTopologicalSort.Clear;
+var Index:TpvSizeInt;
+begin
+ for Index:=0 to fCountKeys-1 do begin
+  FreeAndNil(fKeys[Index]);
+ end;
+ fKeys:=nil;
+ fCountKeys:=0;
+ fCyclic:=false;
+end;
+
+function TpvTaggedTopologicalSort.Add(const aTag:TpvPtrUInt):TpvTaggedTopologicalSort.TKey;
+begin
+ result:=TpvTaggedTopologicalSort.TKey.Create(aTag);
+ if length(fKeys)<=fCountKeys then begin
+  SetLength(fKeys,(fCountKeys+1)*2);
+ end;
+ fKeys[fCountKeys]:=result;
+ inc(fCountKeys);
+end;
+
+procedure TpvTaggedTopologicalSort.AddDependOnKey(const aKey,aDependOnKey:TpvTaggedTopologicalSort.TKey);
+begin
+ aKey.AddDependOnKey(aDependOnKey);
+end;
+
+function TpvTaggedTopologicalSort.Solve(const aBackwards:Boolean):Boolean;
+var Index,SubIndex,StackPointer,CountDependOnKeys,IndexCounter:TpvSizeInt;
+    Key,DependsOnKey:TpvTaggedTopologicalSort.TKey;
+    Stack:TpvTaggedTopologicalSort.TKeys;
+begin
+
+ fCyclic:=false;
+
+ for Index:=0 to fCountKeys-1 do begin
+  Key:=fKeys[Index];
+  Key.fVisitedState:=0;
+  Key.fIndex:=-1;
+ end;
+
+ Stack:=nil;
+ try
+
+  IndexCounter:=0;
+
+  for Index:=0 to fCountKeys-1 do begin
+   Key:=fKeys[Index];
+   if Key.fVisitedState=0 then begin
+    StackPointer:=0;
+    if length(Stack)<(StackPointer+1) then begin
+     SetLength(Stack,(StackPointer+1)*2);
+    end; 
+    Stack[StackPointer]:=Key;
+    inc(StackPointer);
+    while StackPointer>0 do begin
+     dec(StackPointer);
+     Key:=Stack[StackPointer];
+     if assigned(Key) then begin
+      case Key.fVisitedState of
+       0:begin
+        Key.fVisitedState:=1; // Visited and recursive relevant for cycle detection
+        CountDependOnKeys:=Key.fCountDependOnKeys;
+        if length(Stack)<(StackPointer+CountDependOnKeys+1) then begin
+         SetLength(Stack,(StackPointer+CountDependOnKeys+1)*2);
+        end;
+        Stack[StackPointer]:=Key;
+        inc(StackPointer);
+        for SubIndex:=CountDependOnKeys-1 downto 0 do begin
+         DependsOnKey:=Key.fDependOnKeys[SubIndex];
+         if assigned(DependsOnKey) then begin
+          case DependsOnKey.fVisitedState of
+           0:begin
+            Stack[StackPointer]:=DependsOnKey;
+            inc(StackPointer);
+           end;
+           1:begin
+            fCyclic:=true;
+            break;            
+           end;
+           else begin
+            // Nothing to do in this case 
+           end;
+          end;
+         end;
+        end;
+        if fCyclic then begin
+         break;
+        end;
+       end;
+       1:begin
+        Key.fVisitedState:=2; // Visited but no more recursive relevant for cycle detection
+        Key.fIndex:=IndexCounter;
+        inc(IndexCounter);
+       end; 
+       else begin
+        // Nothing to do in this case 
+       end;
+      end;
+     end;
+    end;
+   end;
+  end;
+
+ finally
+  Stack:=nil;
+ end;
+
+ if aBackwards then begin
+  for Index:=0 to fCountKeys-1 do begin
+   Key:=fKeys[Index];
+   Key.fIndex:=IndexCounter-(Key.fIndex+1);
+  end;
+ end;
+
+ result:=not fCyclic;
+
+end; 
+
 function IsPathSeparator(const aChar:AnsiChar):Boolean;
 begin
  case aChar of
@@ -1199,7 +1741,7 @@ begin
     inc(OutputIndex,3);
    end else if OutputIndex>1 then begin
     dec(OutputIndex,2);
-    while (OutputIndex>1) and not IsPathSeparator(result[OutputIndex]) do begin
+    while (OutputIndex>0) and not IsPathSeparator(result[OutputIndex]) do begin
      dec(OutputIndex);
     end;
     inc(OutputIndex);
@@ -1307,6 +1849,21 @@ begin
    result:=result+copy(aAbsolutePath,AbsolutePathIndex,(length(aAbsolutePath)-AbsolutePathIndex)+1);
   end;
  end;
+end;
+
+function SizeToHumanReadableString(const aSize:TpvUInt64):TpvRawByteString;
+const Suffixes:array[0..5] of TpvRawByteString=('B','KiB','MiB','GiB','TiB','PiB');
+var Index:TpvInt32;
+    Size:TpvDouble;
+begin
+ Size:=aSize;
+ Index:=0;
+ while (Size>=1024.0) and (Index<5) do begin
+  Size:=Size/1024.0;
+  inc(Index);
+ end;
+ Str(Size:1:2,Result);
+ result:=result+' '+Suffixes[Index];
 end;
 
 end.

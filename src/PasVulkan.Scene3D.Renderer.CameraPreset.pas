@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -66,17 +66,25 @@ uses SysUtils,
      Classes,
      Math,
      Vulkan,
+     PasJSON,
      PasVulkan.Types,
      PasVulkan.Math,
      PasVulkan.Framework,
      PasVulkan.Application,
      PasVulkan.VirtualReality,
-     PasVulkan.VirtualFileSystem;
+     PasVulkan.VirtualFileSystem,
+     PasVulkan.Scene3D.Renderer.Exposure;
 
 type { TpvScene3DRendererCameraPreset }
      TpvScene3DRendererCameraPreset=class
       public
-       type TShaderData=packed record
+       type TExposureMode=
+             (
+              Auto,
+              Camera,
+              Manual
+             );
+            TShaderData=packed record
              SensorSize:TpvVector2;
              FocalLength:TpvFloat;
              FlangeFocalDistance:TpvFloat;
@@ -91,6 +99,7 @@ type { TpvScene3DRendererCameraPreset }
             end;
             PShaderData=^TShaderData;
       private
+       fFieldOfView:TpvFloat;
        fSensorSize:TpvVector2;
        fSensorSizeProperty:TpvVector2Property;
        fFocalLength:TpvFloat;
@@ -105,14 +114,30 @@ type { TpvScene3DRendererCameraPreset }
        fHighlightThreshold:TpvFloat;
        fHighlightGain:TpvFloat;
        fBokehChromaticAberration:TpvFloat;
+       fDepthOfField:boolean;
        fAutoFocus:boolean;
+       fExposureMode:TExposureMode;
+       fExposure:TpvScene3DRendererExposure;
+       fMinLogLuminance:TpvFloat;
+       fMaxLogLuminance:TpvFloat;
+       fReset:boolean;
        function GetFieldOfViewAngleRadians:TpvFloat;
        function GetAspectRatio:TpvFloat;
       public
        constructor Create; reintroduce;
        destructor Destroy; override;
        procedure Assign(const aFrom:TpvScene3DRendererCameraPreset);
+       procedure UpdateExposure;
+       procedure LoadFromJSON(const aJSONItem:TPasJSONItem);
+       procedure LoadFromJSONStream(const aStream:TStream);
+       procedure LoadFromJSONFile(const aFileName:string);
+       function SaveToJSON:TPasJSONItemObject;
+       procedure SaveToJSONStream(const aStream:TStream);
+       procedure SaveToJSONFile(const aFileName:string);
       published
+
+       // Field of view, > 0.0 = horizontal and < 0.0 = vertical
+       property FieldOfView:TpvFloat read fFieldOfView write fFieldOfView;
 
        // Sensor size at digital cameras in mm (or film size at analog cameras)
        property SensorSize:TpvVector2Property read fSensorSizeProperty;
@@ -159,18 +184,39 @@ type { TpvScene3DRendererCameraPreset }
        // Aspect ratio
        property AspectRatio:TpvFloat read GetAspectRatio;
 
-       // AutoFocus
+       // Depth of field
+       property DepthOfField:boolean read fDepthOfField write fDepthOfField;
+
+       // Auto-Focus
        property AutoFocus:boolean read fAutoFocus write fAutoFocus;
+
+       // Exposure mode
+       property ExposureMode:TExposureMode read fExposureMode write fExposureMode;
+
+       // Exposure
+       property Exposure:TpvScene3DRendererExposure read fExposure;
+
+       // Minimum log luminance
+       property MinLogLuminance:TpvFloat read fMinLogLuminance write fMinLogLuminance;
+
+       // Maximum log luminance
+       property MaxLogLuminance:TpvFloat read fMaxLogLuminance write fMaxLogLuminance;
+
+       // Reset, when completely new view
+       property Reset:boolean read fReset write fReset;
 
     end;
 
 implementation
+
+uses PasVulkan.JSON;
 
 { TpvScene3DRendererCameraPreset }
 
 constructor TpvScene3DRendererCameraPreset.Create;
 begin
  inherited Create;
+ fFieldOfView:=53.13010235415598;
  fSensorSize:=TpvVector2.Create(36.0,24.0); // 36 x 24 mm
  fSensorSizeProperty:=TpvVector2Property.Create(@fSensorSize);
  fFocalLength:=50.0;
@@ -185,17 +231,25 @@ begin
  fHighlightThreshold:=0.25;
  fHighlightGain:=1.0;
  fBokehChromaticAberration:=0.7;
+ fDepthOfField:=true;
  fAutoFocus:=true;
+ fExposureMode:=TExposureMode.Auto;
+ fExposure:=TpvScene3DRendererExposure.Create;
+ fMinLogLuminance:=-8.0;
+ fMaxLogLuminance:=6.0;
+ fReset:=false;
 end;
 
 destructor TpvScene3DRendererCameraPreset.Destroy;
 begin
  FreeAndNil(fSensorSizeProperty);
+ FreeAndNil(fExposure);
  inherited Destroy;
 end;
 
 procedure TpvScene3DRendererCameraPreset.Assign(const aFrom:TpvScene3DRendererCameraPreset);
 begin
+ fFieldOfView:=aFrom.fFieldOfView;
  fSensorSize:=aFrom.fSensorSize;
  fFocalLength:=aFrom.fFocalLength;
  fFlangeFocalDistance:=aFrom.fFlangeFocalDistance;
@@ -209,11 +263,18 @@ begin
  fHighlightThreshold:=aFrom.fHighlightThreshold;
  fHighlightGain:=aFrom.fHighlightGain;
  fBokehChromaticAberration:=aFrom.fBokehChromaticAberration;
+ fDepthOfField:=aFrom.fDepthOfField;
  fAutoFocus:=aFrom.fAutoFocus;
+ fExposureMode:=aFrom.fExposureMode;
+ fExposure.Assign(aFrom.fExposure);
+ fMinLogLuminance:=aFrom.fMinLogLuminance;
+ fMaxLogLuminance:=aFrom.fMaxLogLuminance;
+ fReset:=aFrom.fReset;
 end;
 
 function TpvScene3DRendererCameraPreset.GetFieldOfViewAngleRadians:TpvFloat;
 begin
+ // Original formula source: http://research.tri-ace.com/Data/S2015/05_ImplementationBokeh-S2015.pptx on slide 25
  result:=2.0*ArcTan((fSensorSize.x*(fFocalPlaneDistance-fFocalLength))/(2.0*fFocalPlaneDistance*fFocalLength));
 end;
 
@@ -221,6 +282,138 @@ function TpvScene3DRendererCameraPreset.GetAspectRatio:TpvFloat;
 begin
  result:=fSensorSize.x/fSensorSize.y;
 end;
+
+procedure TpvScene3DRendererCameraPreset.UpdateExposure;
+begin
+ fExposure.SetFromCamera(fFlangeFocalDistance,fFocalLength,fFNumber); 
+end;
+
+procedure TpvScene3DRendererCameraPreset.LoadFromJSON(const aJSONItem:TPasJSONItem);
+var s:TpvUTF8String;
+begin
+ if assigned(aJSONItem) and (aJSONItem is TPasJSONItemObject) then begin
+  fFieldOfView:=TPasJSON.GetNumber(TPasJSONItemObject(aJSONItem).Properties['fieldofview'],fFieldOfView);
+  fSensorSize:=JSONToVector2(TPasJSONItemObject(aJSONItem).Properties['sensorsize'],fSensorSize);
+  fFocalLength:=TPasJSON.GetNumber(TPasJSONItemObject(aJSONItem).Properties['focallength'],fFocalLength);
+  fFlangeFocalDistance:=TPasJSON.GetNumber(TPasJSONItemObject(aJSONItem).Properties['flangefocaldistance'],fFlangeFocalDistance);
+  fFocalPlaneDistance:=TPasJSON.GetNumber(TPasJSONItemObject(aJSONItem).Properties['focalplanedistance'],fFocalPlaneDistance);
+  fFNumber:=TPasJSON.GetNumber(TPasJSONItemObject(aJSONItem).Properties['fnumber'],fFNumber);
+  fFNumberMin:=TPasJSON.GetNumber(TPasJSONItemObject(aJSONItem).Properties['fnumbermin'],fFNumberMin);
+  fFNumberMax:=TPasJSON.GetNumber(TPasJSONItemObject(aJSONItem).Properties['fnumbermax'],fFNumberMax);
+  fBlurKernelSize:=TPasJSON.GetInt64(TPasJSONItemObject(aJSONItem).Properties['blurkernelsize'],fBlurKernelSize);
+  fNgon:=TPasJSON.GetNumber(TPasJSONItemObject(aJSONItem).Properties['ngon'],fNgon);
+  fMaxCoC:=TPasJSON.GetNumber(TPasJSONItemObject(aJSONItem).Properties['maxcoc'],fMaxCoC);
+  fHighlightThreshold:=TPasJSON.GetNumber(TPasJSONItemObject(aJSONItem).Properties['highlightthreshold'],fHighlightThreshold);
+  fHighlightGain:=TPasJSON.GetNumber(TPasJSONItemObject(aJSONItem).Properties['highlightgain'],fHighlightGain);
+  fBokehChromaticAberration:=TPasJSON.GetNumber(TPasJSONItemObject(aJSONItem).Properties['bokehchromaticaberration'],fBokehChromaticAberration);
+  fDepthOfField:=TPasJSON.GetBoolean(TPasJSONItemObject(aJSONItem).Properties['depthoffield'],fDepthOfField);
+  fAutoFocus:=TPasJSON.GetBoolean(TPasJSONItemObject(aJSONItem).Properties['autofocus'],fAutoFocus);
+  s:=LowerCase(TPasJSON.GetString(TPasJSONItemObject(aJSONItem).Properties['exposuremode'],'auto'));
+  if s='auto' then begin
+   fExposureMode:=TExposureMode.Auto;
+  end else if s='camera' then begin
+   fExposureMode:=TExposureMode.Camera;
+  end else if s='manual' then begin
+   fExposureMode:=TExposureMode.Manual;
+  end else begin
+   fExposureMode:=TExposureMode.Auto;
+  end; 
+  fExposure.LoadFromJSON(TPasJSONItemObject(aJSONItem).Properties['exposure']);
+  fMinLogLuminance:=TPasJSON.GetNumber(TPasJSONItemObject(aJSONItem).Properties['minlogluminance'],fMinLogLuminance);
+  fMaxLogLuminance:=TPasJSON.GetNumber(TPasJSONItemObject(aJSONItem).Properties['maxlogluminance'],fMaxLogLuminance);
+  fReset:=TPasJSON.GetBoolean(TPasJSONItemObject(aJSONItem).Properties['reset'],fReset);
+ end;
+end;
+
+procedure TpvScene3DRendererCameraPreset.LoadFromJSONStream(const aStream:TStream);
+var JSON:TPasJSONItem;
+begin
+ JSON:=TPasJSON.Parse(aStream);
+ if assigned(JSON) then begin
+  try
+   LoadFromJSON(JSON);
+  finally
+   FreeAndNil(JSON);
+  end;
+ end;
+end;
+
+procedure TpvScene3DRendererCameraPreset.LoadFromJSONFile(const aFileName:string);
+var Stream:TMemoryStream;
+begin
+ Stream:=TMemoryStream.Create;
+ try
+  Stream.LoadFromFile(aFileName);
+  LoadFromJSONStream(Stream);
+ finally
+  FreeAndNil(Stream);
+ end;
+end;
+
+function TpvScene3DRendererCameraPreset.SaveToJSON:TPasJSONItemObject;
+begin
+ result:=TPasJSONItemObject.Create;
+ result.Add('fieldofview',TPasJSONItemNumber.Create(fFieldOfView));
+ result.Add('sensorsize',Vector2ToJSON(fSensorSize));
+ result.Add('focallength',TPasJSONItemNumber.Create(fFocalLength));
+ result.Add('flangefocaldistance',TPasJSONItemNumber.Create(fFlangeFocalDistance));
+ result.Add('focalplanedistance',TPasJSONItemNumber.Create(fFocalPlaneDistance));
+ result.Add('fnumber',TPasJSONItemNumber.Create(fFNumber));
+ result.Add('fnumbermin',TPasJSONItemNumber.Create(fFNumberMin));
+ result.Add('fnumbermax',TPasJSONItemNumber.Create(fFNumberMax));
+ result.Add('blurkernelsize',TPasJSONItemNumber.Create(fBlurKernelSize));
+ result.Add('ngon',TPasJSONItemNumber.Create(fNgon));
+ result.Add('maxcoc',TPasJSONItemNumber.Create(fMaxCoC));
+ result.Add('highlightthreshold',TPasJSONItemNumber.Create(fHighlightThreshold));
+ result.Add('highlightgain',TPasJSONItemNumber.Create(fHighlightGain));
+ result.Add('bokehchromaticaberration',TPasJSONItemNumber.Create(fBokehChromaticAberration));
+ result.Add('depthoffield',TPasJSONItemBoolean.Create(fDepthOfField));
+ result.Add('autofocus',TPasJSONItemBoolean.Create(fAutoFocus));
+ case fExposureMode of
+  TExposureMode.Auto:begin
+   result.Add('exposuremode',TPasJSONItemString.Create('auto'));
+  end;
+  TExposureMode.Camera:begin
+   result.Add('exposuremode',TPasJSONItemString.Create('camera'));
+  end;
+  TExposureMode.Manual:begin
+   result.Add('exposuremode',TPasJSONItemString.Create('manual'));
+  end;
+  else begin
+   result.Add('exposuremode',TPasJSONItemString.Create('auto'));
+  end;
+ end;
+ result.Add('exposure',fExposure.SaveToJSON);
+ result.Add('minlogluminance',TPasJSONItemNumber.Create(fMinLogLuminance));
+ result.Add('maxlogluminance',TPasJSONItemNumber.Create(fMaxLogLuminance));
+ result.Add('reset',TPasJSONItemBoolean.Create(fReset));
+end;
+
+procedure TpvScene3DRendererCameraPreset.SaveToJSONStream(const aStream:TStream);
+var JSON:TPasJSONItem;
+begin
+ JSON:=SaveToJSON;
+ if assigned(JSON) then begin
+  try
+   TPasJSON.StringifyToStream(aStream,JSON,true);
+  finally
+   FreeAndNil(JSON);
+  end;
+ end;
+end;
+
+procedure TpvScene3DRendererCameraPreset.SaveToJSONFile(const aFileName:string);
+var Stream:TMemoryStream;
+begin
+ Stream:=TMemoryStream.Create;
+ try
+  SaveToJSONStream(Stream);
+  Stream.SaveToFile(aFileName);
+ finally
+  FreeAndNil(Stream);
+ end;
+end;
+
 
 initialization
 finalization

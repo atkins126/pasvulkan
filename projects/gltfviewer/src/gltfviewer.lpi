@@ -23,13 +23,13 @@
     </PublishOptions>
     <RunParams>
       <local>
-        <CommandLineParams Value="\home\bero\Projects\GitHub\pasvulkan\projects\kartgame1\assets\karts\1.glb --force-use-validation-layers"/>
+        <CommandLineParams Value="&quot;\home\bero\Projects\GLTF\DragonAttenuation-MaterialAnimation.glb&quot; --antialiasing-mode msaasmaa --depth-of-field-mode none --force-use-validation-layers"/>
       </local>
       <FormatVersion Value="2"/>
       <Modes Count="1">
         <Mode0 Name="default">
           <local>
-            <CommandLineParams Value="\home\bero\Projects\GitHub\pasvulkan\projects\kartgame1\assets\karts\1.glb --force-use-validation-layers"/>
+            <CommandLineParams Value="&quot;\home\bero\Projects\GLTF\DragonAttenuation-MaterialAnimation.glb&quot; --antialiasing-mode msaasmaa --depth-of-field-mode none --force-use-validation-layers"/>
           </local>
         </Mode0>
       </Modes>
@@ -49,7 +49,7 @@
     </Target>
     <SearchPaths>
       <IncludeFiles Value="$(ProjOutDir);.;..\..\..\src"/>
-      <OtherUnitFiles Value="..\..\..\src;..\..\..\externals\pucu\src;..\..\..\externals\pasdblstrutils\src;..\..\..\externals\pasmp\src;..\..\..\externals\pasjson\src;..\..\..\externals\kraft\src;..\..\..\externals\rnl\src;..\..\..\externals\pasgltf\src"/>
+      <OtherUnitFiles Value="..\..\..\src;..\..\..\externals\pucu\src;..\..\..\externals\pasdblstrutils\src;..\..\..\externals\pasmp\src;..\..\..\externals\pasjson\src;..\..\..\externals\kraft\src;..\..\..\externals\rnl\src;..\..\..\externals\pasgltf\src;..\..\..\externals\flre\src;..\..\..\externals\poca\src"/>
       <UnitOutputDirectory Value="lib\$(TargetCPU)-$(TargetOS)"/>
     </SearchPaths>
     <Conditionals Value="if ((TargetOS=&apos;linux&apos;) or (TargetOS=&apos;freebsd&apos;) or (TargetOS=&apos;unix&apos;)) and not (TargetOS=&apos;android&apos;) then begin
@@ -93,7 +93,7 @@ end;
     </Other>
   </CompilerOptions>
   <Debugging>
-    <Exceptions Count="7">
+    <Exceptions Count="9">
       <Item1>
         <Name Value="EAbort"/>
       </Item1>
@@ -115,6 +115,12 @@ end;
       <Item7>
         <Name Value="EpvVulkanResultException"/>
       </Item7>
+      <Item8>
+        <Name Value="RunError(101)"/>
+      </Item8>
+      <Item9>
+        <Name Value="EInOutError"/>
+      </Item9>
     </Exceptions>
   </Debugging>
 </CONFIG>

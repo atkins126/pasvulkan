@@ -3115,6 +3115,30 @@ begin
  end;
 end;
 
+function CheckForVulkanAPI(const aTag:TXMLTag):boolean;
+var i,j:longint;
+    s,t:string;
+begin
+ result:=false;
+ if assigned(aTag) then begin
+  s:=aTag.GetParameter('api','vulkan');
+  while length(s)>0 do begin
+   i:=pos(',',s);
+   if i>0 then begin
+    t:=trim(copy(s,1,i-1));
+    Delete(s,1,i);
+   end else begin
+    t:=trim(s);
+    s:='';
+   end;
+   if t='vulkan' then begin
+    result:=true;
+    break;
+   end;
+  end;
+ end;
+end;
+
 procedure ParseValidityTag(Tag:TXMLTag;const StringList:TStringList);
 var i:longint;
     ChildItem:TXMLItem;
@@ -3152,6 +3176,9 @@ begin
   if ChildItem is TXMLTag then begin
    ChildTag:=TXMLTag(ChildItem);
    if ChildTag.Name='extension' then begin
+    if not CheckForVulkanAPI(ChildTag) then begin
+     continue;
+    end;
     Extension:=TExtensionOrFeature.Create;
     ExtensionsOrFeatures.Add(Extension);
     Extension.Name:=ChildTag.GetParameter('name','');
@@ -3164,11 +3191,17 @@ begin
      ChildChildItem:=ChildTag.Items[j];
      if ChildChildItem is TXMLTag then begin
       ChildChildTag:=TXMLTag(ChildChildItem);
+      if not CheckForVulkanAPI(ChildChildTag) then begin
+       continue;
+      end;
       if ChildChildTag.Name='require' then begin
        for k:=0 to ChildChildTag.Items.Count-1 do begin
         ChildChildChildItem:=ChildChildTag.Items[k];
         if ChildChildChildItem is TXMLTag then begin
          ChildChildChildTag:=TXMLTag(ChildChildChildItem);
+         if not CheckForVulkanAPI(ChildChildChildTag) then begin
+          continue;
+         end;
          if ChildChildChildTag.Name='enum' then begin
           ExtensionOrFeatureEnum:=TExtensionOrFeatureEnum.Create;
           Extension.Enums.Add(ExtensionOrFeatureEnum);
@@ -3237,6 +3270,9 @@ begin
   ChildItem:=Tag.Items[i];
   if ChildItem is TXMLTag then begin
    ChildTag:=TXMLTag(ChildItem);
+   if not CheckForVulkanAPI(ChildTag) then begin
+    continue;
+   end;
    if ChildTag.Name='feature' then begin
     inc(result);
     Feature:=TExtensionOrFeature.Create;
@@ -3251,11 +3287,17 @@ begin
      ChildChildItem:=ChildTag.Items[j];
      if ChildChildItem is TXMLTag then begin
       ChildChildTag:=TXMLTag(ChildChildItem);
+      if not CheckForVulkanAPI(ChildChildTag) then begin
+       continue;
+      end;
       if ChildChildTag.Name='require' then begin
        for k:=0 to ChildChildTag.Items.Count-1 do begin
         ChildChildChildItem:=ChildChildTag.Items[k];
         if ChildChildChildItem is TXMLTag then begin
          ChildChildChildTag:=TXMLTag(ChildChildChildItem);
+         if not CheckForVulkanAPI(ChildChildChildTag) then begin
+          continue;
+         end;
          if ChildChildChildTag.Name='enum' then begin
           ExtensionOrFeatureEnum:=TExtensionOrFeatureEnum.Create;
           Feature.Enums.Add(ExtensionOrFeatureEnum);
@@ -3351,6 +3393,9 @@ begin
   ChildItem:=Tag.Items[i];
   if ChildItem is TXMLTag then begin
    ChildTag:=TXMLTag(ChildItem);
+   if not CheckForVulkanAPI(ChildTag) then begin
+    continue;
+   end;
    if ChildTag.Name='vendorid' then begin
     VendorID:=TVendorID.Create;
     VendorIDList.Add(VendorID);
@@ -3373,6 +3418,9 @@ begin
   ChildItem:=Tag.Items[i];
   if ChildItem is TXMLTag then begin
    ChildTag:=TXMLTag(ChildItem);
+   if not CheckForVulkanAPI(ChildTag) then begin
+    continue;
+   end;
    if ChildTag.Name='tag' then begin
     ATag:=TTag.Create;
     TagList.Add(ATag);
@@ -3395,6 +3443,7 @@ type PTypeDefinitionKind=^TTypeDefinitionKind;
       Values:ansistring;
       ArraySizeInt:longint;
       ArraySizeStr:ansistring;
+      OtherArraySizeInt:longint;
       Comment:ansistring;
       TypeDefinitionIndex:longint;
       Ptr:longint;
@@ -3416,11 +3465,12 @@ type PTypeDefinitionKind=^TTypeDefinitionKind;
      end;
      TTypeDefinitions=array of TTypeDefinition;
      TPTypeDefinitions=array of PTypeDefinition;
-var i,j,k,ArraySize,CountTypeDefinitions,VersionVariant,VersionMajor,VersionMinor,VersionPatch:longint;
+var i,j,k,ArraySize,OtherArraySize,CountTypeDefinitions,VersionVariant,VersionMajor,VersionMinor,
+    VersionPatch:longint;
     ChildItem,ChildChildItem,NextChildChildItem:TXMLItem;
     ChildTag,ChildChildTag:TXMLTag;
-    Category,Type_,Name,Text,NextText,ArraySizeStr,Comment,ParameterLine,ParameterName,CodeParameterLine,
-    Alias:ansistring;
+    Category,Type_,Name,Text,Text2,NextText,ArraySizeStr,Comment,ParameterLine,ParameterName,CodeParameterLine,
+    Alias,Define:ansistring;
     TypeDefinitions:TTypeDefinitions;
     SortedTypeDefinitions:TPTypeDefinitions;
     TypeDefinition:PTypeDefinition;
@@ -3568,15 +3618,29 @@ begin
    ChildItem:=Tag.Items[i];
    if ChildItem is TXMLTag then begin
     ChildTag:=TXMLTag(ChildItem);
+    if not CheckForVulkanAPI(ChildTag) then begin
+     continue;
+    end;
     if ChildTag.Name='type' then begin
      Alias:=ChildTag.GetParameter('alias');
      if length(Alias)>0 then begin
       Name:=ChildTag.GetParameter('name');
       Category:=ChildTag.GetParameter('category');
       if Category='basetype' then begin
+       if (pos('MTL',Name)>0) or (pos('Metal',Name)>0) then begin
+        Define:='Metal';
+       end else begin
+        Define:='';
+       end;
+       if length(Define)>0 then begin
+        BaseTypes.Add('{$ifdef '+Define+'}');
+       end;
        BaseTypes.Add('     PP'+Name+'=PP'+Alias+';');
        BaseTypes.Add('     P'+Name+'=P'+Alias+';');
        BaseTypes.Add('     T'+Name+'=T'+Alias+';');
+       if length(Define)>0 then begin
+        BaseTypes.Add('{$endif}');
+       end;
        BaseTypes.Add('');
       end else if Category='bitmask' then begin
        BitMaskTypes.Add('     PP'+Name+'=PP'+Alias+';');
@@ -3584,9 +3648,20 @@ begin
        BitMaskTypes.Add('     T'+Name+'=T'+Alias+';');
        BitMaskTypes.Add('');
       end else if Category='handle' then begin
+       if (pos('MTL',Name)>0) or (pos('Metal',Name)>0) then begin
+        Define:='Metal';
+       end else begin
+        Define:='';
+       end;
+       if length(Define)>0 then begin
+        HandleTypes.Add('{$ifdef '+Define+'}');
+       end;
        HandleTypes.Add('     PP'+Name+'=PP'+Alias+';');
        HandleTypes.Add('     P'+Name+'=P'+Alias+';');
        HandleTypes.Add('     T'+Name+'=T'+Alias+';');
+       if length(Define)>0 then begin
+        HandleTypes.Add('{$endif}');
+       end;
        HandleTypes.Add('');
       end else if Category='enum' then begin
        AliasEnumTypes.Add('     PP'+Name+'=PP'+Alias+';');
@@ -3604,6 +3679,18 @@ begin
        TypeDefinition^.Type_:='';
        TypeDefinition^.Alias:=Alias;
        TypeDefinition^.Ptr:=0;
+       if (pos('NvSci',Name)>0) or (Name='VkSemaphoreSciSyncPoolNV') or ((pos('Sci',Name)>0) and (pos('NV',Name)>0)) then begin
+        TypeDefinition^.Define:='NvSci';
+       end else if (Name='VkPerformanceQueryReservationInfoKHR') or
+                   (Name='VkPipelineOfflineCreateInfo') or
+                   (Name='VkPhysicalDeviceVulkanSC10Properties') or
+                   (Name='VkPipelinePoolSize') or
+                   (Name='VkDeviceObjectReservationCreateInfo') or
+                   (Name='VkCommandPoolMemoryReservationCreateInfo') or
+                   (Name='VkCommandPoolMemoryConsumption') or
+                   (Name='VkPhysicalDeviceVulkanSC10Features') then begin
+        TypeDefinition^.Define:='VulkanSC';
+       end;
       end else begin
        Assert(false,Category);
       end;
@@ -3700,9 +3787,20 @@ begin
        end else if Category='basetype' then begin
         Type_:=ParseText(ChildTag.FindTag('type'),['']);
         Name:=ParseText(ChildTag.FindTag('name'),['']);
+        if (pos('MTL',Name)>0) or (pos('Metal',Name)>0) then begin
+         Define:='Metal';
+        end else begin
+         Define:='';
+        end;
+        if length(Define)>0 then begin
+         BaseTypes.Add('{$ifdef '+Define+'}');
+        end;
         BaseTypes.Add('     PP'+Name+'=^P'+Name+';');
         BaseTypes.Add('     P'+Name+'=^T'+Name+';');
         BaseTypes.Add('     T'+Name+'='+TranslateType(Type_,0)+';');
+        if length(Define)>0 then begin
+         BaseTypes.Add('{$endif}');
+        end;
         BaseTypes.Add('');
        end else if Category='bitmask' then begin
         Type_:=ParseText(ChildTag.FindTag('type'),['']);
@@ -3740,6 +3838,9 @@ begin
          ChildChildItem:=ChildTag.Items[j];
          if ChildChildItem is TXMLTag then begin
           ChildChildTag:=TXMLTag(ChildChildItem);
+          if not CheckForVulkanAPI(ChildChildTag) then begin
+           continue;
+          end;
           if ChildChildTag.Name='name' then begin
            TypeDefinition^.Name:=ParseText(ChildChildTag,['']);
            if pos('void*',Text)>0 then begin
@@ -3768,6 +3869,44 @@ begin
              end;
              TypeDefinitionMember:=@TypeDefinition^.Members[TypeDefinition^.CountMembers];
              inc(TypeDefinition^.CountMembers);
+             if (Type_='HWND') or (Type_='HMONITOR') or (Type_='HINSTANCE') or (Type_='SECURITY_ATTRIBUTES') then begin
+              TypeDefinition^.Define:='Windows';
+             end else if Type_='RROutput' then begin
+              TypeDefinition^.Define:='RandR';
+             end else if (Type_='Display') or (Type_='VisualID') or (Type_='Window') then begin
+              TypeDefinition^.Define:='XLIB';
+             end else if (Type_='xcb_connection_t') or (Type_='xcb_visualid_t') or (Type_='xcb_window_t') then begin
+              TypeDefinition^.Define:='XCB';
+             end else if (Type_='wl_display') or (Type_='wl_surface') then begin
+              TypeDefinition^.Define:='Wayland';
+             end else if (Type_='ANativeWindow') or (Type_='AHardwareBuffer') then begin
+              TypeDefinition^.Define:='Android';
+             end else if (Type_='zx_handle_t') or (pos('FUCHSIA',UpperCase(Type_))>0) then begin
+              TypeDefinition^.Define:='Fuchsia';
+             end else if (pos('MTL',Type_)>0) then begin
+              TypeDefinition^.Define:='Metal';
+             end else if (Type_='IDirectFB') or (Type_='IDirectFBSurface') or (pos('DIRECTFB',UpperCase(Type_))>0) then begin
+              TypeDefinition^.Define:='DirectFB';
+             end else if (pos('_screen_context',Type_)>0) or (pos('_screen_window',Type_)>0) or (pos('qnx',LowerCase(Type_))>0) then begin
+              TypeDefinition^.Define:='QNX';
+             end else if pos('StdVideo',Type_)>0 then begin
+              TypeDefinition^.Define:='VkStdVideo';
+             end else if pos('VkVideo',Type_)>0 then begin
+              TypeDefinition^.Define:='VkVideo';
+             end else if (pos('NvSci',Type_)>0) or (Type_='VkSemaphoreSciSyncPoolNV') or ((pos('Sci',Type_)>0) and (pos('NV',Type_)>0)) then begin
+              TypeDefinition^.Define:='NvSci';
+             end else if (Type_='VkFaultLevel') or (Type_='VkFaultType') or (Type_='VkFaultData') or (Type_='VkCommandPoolMemoryConsumption') then begin
+              TypeDefinition^.Define:='VulkanSC';
+             end else if (Type_='VkPerformanceQueryReservationInfoKHR') or
+                         (Type_='VkPipelineOfflineCreateInfo') or
+                         (Type_='VkPhysicalDeviceVulkanSC10Properties') or
+                         (Type_='VkPipelinePoolSize') or
+                         (Type_='VkDeviceObjectReservationCreateInfo') or
+                         (Type_='VkCommandPoolMemoryReservationCreateInfo') or
+                         (Type_='VkCommandPoolMemoryConsumption') or
+                         (Type_='VkPhysicalDeviceVulkanSC10Features') then begin
+              TypeDefinition^.Define:='VulkanSC';
+             end;
              TypeDefinitionMember^.Type_:=Type_;
              k:=pos(',',Text);
              if k>0 then begin
@@ -3797,6 +3936,7 @@ begin
              TypeDefinitionMember^.Name:=Text;
              TypeDefinitionMember^.ArraySizeInt:=0;
              TypeDefinitionMember^.ArraySizeStr:='';
+             TypeDefinitionMember^.OtherArraySizeInt:=0;
              TypeDefinitionMember^.Comment:='';
              Type_:='';
             end;
@@ -3833,6 +3973,19 @@ begin
          TypeDefinition^.Define:='VkStdVideo';
         end else if pos('VkVideo',Name)>0 then begin
          TypeDefinition^.Define:='VkVideo';
+        end else if (pos('NvSci',Name)>0) or (Name='VkSemaphoreSciSyncPoolNV') or ((pos('Sci',Name)>0) and (pos('NV',Name)>0)) then begin
+         TypeDefinition^.Define:='NvSci';
+        end else if (Name='VkFaultLevel') or (Name='VkFaultType') or (Name='VkFaultData') or (Name='VkCommandPoolMemoryConsumption') then begin
+         TypeDefinition^.Define:='VulkanSC';
+        end else if (Name='VkPerformanceQueryReservationInfoKHR') or
+                    (Name='VkPipelineOfflineCreateInfo') or
+                    (Name='VkPhysicalDeviceVulkanSC10Properties') or
+                    (Name='VkPipelinePoolSize') or
+                    (Name='VkDeviceObjectReservationCreateInfo') or
+                    (Name='VkCommandPoolMemoryReservationCreateInfo') or
+                    (Name='VkCommandPoolMemoryConsumption') or
+                    (Name='VkPhysicalDeviceVulkanSC10Features') then begin
+         TypeDefinition^.Define:='VulkanSC';
         end;
         SetLength(TypeDefinition^.Members,ChildTag.Items.Count);
         TypeDefinition^.CountMembers:=0;
@@ -3840,6 +3993,9 @@ begin
          ChildChildItem:=ChildTag.Items[j];
          if ChildChildItem is TXMLTag then begin
           ChildChildTag:=TXMLTag(ChildChildItem);
+          if not CheckForVulkanAPI(ChildChildTag) then begin
+           continue;
+          end;
           if ChildChildTag.Name='member' then begin
            Comment:='';
            if (j+1)<ChildTag.Items.Count then begin
@@ -3860,12 +4016,24 @@ begin
            ArraySizeStr:=ParseText(ChildChildTag.FindTag('enum'),['']);
            k:=pos('[',Name);
            ArraySize:=-1;
+           OtherArraySize:=-1;
            if k>0 then begin
             Text:=copy(Name,k+1,length(Name)-k);
             Name:=copy(Name,1,k-1);
             k:=pos(']',Text);
             if k>0 then begin
              ArraySize:=StrToIntDef(copy(Text,1,k-1),1);
+             if ((k+1)<length(Name)) and (Name[k+1]='[') then begin
+              k:=k+1;
+              if k>0 then begin
+               Text:=copy(Name,k+1,length(Name)-k);
+               Name:=copy(Name,1,k-1);
+               k:=pos(']',Text);
+               if k>0 then begin
+                OtherArraySize:=StrToIntDef(copy(Text,1,k-1),1);
+               end;
+              end;
+             end;
             end;
            end;
            if ArraySize<0 then begin
@@ -3875,10 +4043,20 @@ begin
              Delete(Text,1,k);
              k:=pos(']',Text);
              if k>0 then begin
-              Text:=trim(copy(Text,1,k-1));
-              ArraySize:=StrToIntDef(Text,-1);
+              Text2:=trim(copy(Text,1,k-1));
+              ArraySize:=StrToIntDef(Text2,-1);
               if ArraySize<0 then begin
-               ArraySizeStr:=Text;
+               ArraySizeStr:=Text2;
+              end;
+              if ((k+1)<length(Text)) and (Text[k+1]='[') then begin
+               k:=k+1;
+               if k>0 then begin
+                Text2:=copy(Text,k+1,length(Text)-k);
+                k:=pos(']',Text2);
+                if k>0 then begin
+                 OtherArraySize:=StrToIntDef(copy(Text2,1,k-1),1);
+                end;
+               end;
               end;
              end;
             end;
@@ -3908,6 +4086,7 @@ begin
            TypeDefinitionMember^.Type_:=Type_;
            TypeDefinitionMember^.Values:=ChildChildTag.GetParameter('values');
            TypeDefinitionMember^.ArraySizeStr:=ArraySizeStr;
+           TypeDefinitionMember^.OtherArraySizeInt:=OtherArraySize;
            TypeDefinitionMember^.Comment:=trim(ChildChildTag.GetParameter('comment')+' '+Comment);
  {         k:=0;
            while k<ValidityStringList.Count do begin
@@ -3938,6 +4117,8 @@ begin
             TypeDefinition^.Define:='Android';
            end else if (Type_='zx_handle_t') or (pos('FUCHSIA',UpperCase(Type_))>0) then begin
             TypeDefinition^.Define:='Fuchsia';
+           end else if (pos('MTL',Type_)>0) then begin
+            TypeDefinition^.Define:='Metal';
            end else if (Type_='IDirectFB') or (Type_='IDirectFBSurface') or (pos('DIRECTFB',UpperCase(Type_))>0) then begin
             TypeDefinition^.Define:='DirectFB';
            end else if (pos('_screen_context',Type_)>0) or (pos('_screen_window',Type_)>0) or (pos('qnx',LowerCase(Type_))>0) then begin
@@ -3946,6 +4127,10 @@ begin
             TypeDefinition^.Define:='VkStdVideo';
            end else if pos('VkVideo',Type_)>0 then begin
             TypeDefinition^.Define:='VkVideo';
+           end else if (pos('NvSci',Type_)>0) or (Type_='VkSemaphoreSciSyncPoolNV') or ((pos('Sci',Type_)>0) and (pos('NV',Type_)>0)) then begin
+            TypeDefinition^.Define:='NvSci';
+           end else if (Type_='VkFaultLevel') or (Type_='VkFaultType') or (Type_='VkFaultData') or (Type_='VkCommandPoolMemoryConsumption') then begin
+            TypeDefinition^.Define:='VulkanSC';
            end;
           end;
          end;
@@ -3985,194 +4170,487 @@ begin
    end;
    TypeDefinitionTypes.Add('     PP'+TypeDefinition^.Name+'=^P'+TypeDefinition^.Name+';');
    TypeDefinitionTypes.Add('     P'+TypeDefinition^.Name+'=^T'+TypeDefinition^.Name+';');
-   case TypeDefinition^.Kind of
-    tdkSTRUCT:begin
-     TypeDefinitionTypes.Add('     T'+TypeDefinition^.Name+'=record');
-     TypeDefinitionTypes.Add('{$ifdef HAS_ADVANCED_RECORDS}');
-     TypeDefinitionTypes.Add('      public');
-     TypeDefinitionTypes.Add('{$endif}');
-     RecordConstructorStringList:=TStringList.Create;
-     RecordConstructorCodeStringList:=TStringList.Create;
-     RecordConstructorCodeBlockStringList:=TStringList.Create;
-     HasArray:=false;
-     try
-      for j:=0 to TypeDefinition^.CountMembers-1 do begin
-       Assert(length(TypeDefinition^.Members[j].Name)>0);
-       if (TypeDefinition^.Members[j].Type_='VkStructureType') and
-          (length(TypeDefinition^.Members[j].Comment)=0) and
-          (length(TypeDefinition^.Members[j].Values)>0) and
-          (copy(TypeDefinition^.Members[j].Values,1,length('VK_STRUCTURE_TYPE_'))='VK_STRUCTURE_TYPE_') then begin
-        TypeDefinition^.Members[j].Comment:='Must be '+TypeDefinition^.Members[j].Values; // Restore/Recreate old <= 1.0.22 sType member comments
-       end;
-       ParameterName:='a'+UpCase(TypeDefinition^.Members[j].Name[1])+copy(TypeDefinition^.Members[j].Name,2,length(TypeDefinition^.Members[j].Name)-1);
-       ParameterLine:=ParameterName+':';
-       if length(TypeDefinition^.Members[j].ArraySizeStr)>0 then begin
-        TypeDefinitionTypes.Add('       '+TypeDefinition^.Members[j].Name+':array[0..'+TypeDefinition^.Members[j].ArraySizeStr+'-1] of '+TranslateType(TypeDefinition^.Members[j].Type_,TypeDefinition^.Members[j].Ptr)+';'+MemberComment(TypeDefinition^.Members[j].Comment));
-        if TranslateType(TypeDefinition^.Members[j].Type_,TypeDefinition^.Members[j].Ptr)='TVkChar' then begin
-         ParameterLine:=ParameterLine+'TVkCharString';
-        end else begin
-         ParameterLine:=ParameterLine+'array of '+TranslateType(TypeDefinition^.Members[j].Type_,TypeDefinition^.Members[j].Ptr);
-        end;
-       end else if TypeDefinition^.Members[j].ArraySizeInt>=0 then begin
-        TypeDefinitionTypes.Add('       '+TypeDefinition^.Members[j].Name+':array[0..'+IntToStr(TypeDefinition^.Members[j].ArraySizeInt-1)+'] of '+TranslateType(TypeDefinition^.Members[j].Type_,TypeDefinition^.Members[j].Ptr)+';'+MemberComment(TypeDefinition^.Members[j].Comment));
-        if TranslateType(TypeDefinition^.Members[j].Type_,TypeDefinition^.Members[j].Ptr)='TVkChar' then begin
-         ParameterLine:=ParameterLine+'TVkCharString';
-        end else begin
-         ParameterLine:=ParameterLine+'array of '+TranslateType(TypeDefinition^.Members[j].Type_,TypeDefinition^.Members[j].Ptr);
-        end;
-       end else begin
-        TypeDefinitionTypes.Add('       '+TypeDefinition^.Members[j].Name+':'+TranslateType(TypeDefinition^.Members[j].Type_,TypeDefinition^.Members[j].Ptr)+';'+MemberComment(TypeDefinition^.Members[j].Comment));
-        if (TypeDefinition^.Members[j].Type_<>'VkStructureType') and (TypeDefinition^.Members[j].Name<>'pNext') then begin
-         ParameterLine:=ParameterLine+TranslateType(TypeDefinition^.Members[j].Type_,TypeDefinition^.Members[j].Ptr);
-        end;
-       end;
-       if (length(TypeDefinition^.Members[j].ArraySizeStr)>0) or (TypeDefinition^.Members[j].ArraySizeInt>=0) then begin
-        HasArray:=true;
-        if TranslateType(TypeDefinition^.Members[j].Type_,TypeDefinition^.Members[j].Ptr)='TVkChar' then begin
-         RecordConstructorCodeBlockStringList.Add(' ArrayItemCount:=length('+ParameterName+');');
-         RecordConstructorCodeBlockStringList.Add(' if ArrayItemCount>length('+TypeDefinition^.Members[j].Name+') then begin');
-         RecordConstructorCodeBlockStringList.Add('  ArrayItemCount:=length('+TypeDefinition^.Members[j].Name+');');
-         RecordConstructorCodeBlockStringList.Add(' end;');
-         RecordConstructorCodeBlockStringList.Add(' if ArrayItemCount>0 then begin');
-         RecordConstructorCodeBlockStringList.Add('  Move('+ParameterName+'[1],'+TypeDefinition^.Members[j].Name+'[0],ArrayItemCount*SizeOf('+TranslateType(TypeDefinition^.Members[j].Type_,TypeDefinition^.Members[j].Ptr)+'));');
-         RecordConstructorCodeBlockStringList.Add(' end;');
-        end else begin
-         RecordConstructorCodeBlockStringList.Add(' ArrayItemCount:=length('+ParameterName+');');
-         RecordConstructorCodeBlockStringList.Add(' if ArrayItemCount>length('+TypeDefinition^.Members[j].Name+') then begin');
-         RecordConstructorCodeBlockStringList.Add('  ArrayItemCount:=length('+TypeDefinition^.Members[j].Name+');');
-         RecordConstructorCodeBlockStringList.Add(' end;');
-         RecordConstructorCodeBlockStringList.Add(' if ArrayItemCount>0 then begin');
-         RecordConstructorCodeBlockStringList.Add('  Move('+ParameterName+'[0],'+TypeDefinition^.Members[j].Name+'[0],ArrayItemCount*SizeOf('+TranslateType(TypeDefinition^.Members[j].Type_,TypeDefinition^.Members[j].Ptr)+'));');
-         RecordConstructorCodeBlockStringList.Add(' end;');
-        end;
-       end else begin
-        if (TypeDefinition^.Members[j].Type_<>'VkStructureType') and (TypeDefinition^.Members[j].Name<>'pNext') then begin
-         RecordConstructorCodeBlockStringList.Add(' '+TypeDefinition^.Members[j].Name+':='+ParameterName+';');
-        end else if TypeDefinition^.Members[j].Type_='VkStructureType' then begin
-         ParameterName:=TypeDefinition^.Members[j].Comment;
-         k:=pos('VK_STRUCTURE_TYPE_',ParameterName);
-         if k>0 then begin
-          Delete(ParameterName,1,k-1);
-          for k:=1 to length(ParameterName) do begin
-           if not (ParameterName[k] in ['A'..'Z','a'..'z','_','0'..'9']) then begin
-            ParameterName:=copy(ParameterName,1,k-1);
-            break;
-           end;
-          end;
-          RecordConstructorCodeBlockStringList.Add(' '+TypeDefinition^.Members[j].Name+':='+ParameterName+';');
-         end else if (length(TypeDefinition^.Members[j].Values)>0) and
-                     (copy(TypeDefinition^.Members[j].Values,1,length('VK_STRUCTURE_TYPE_'))='VK_STRUCTURE_TYPE_') then begin
-          RecordConstructorCodeBlockStringList.Add(' '+TypeDefinition^.Members[j].Name+':='+TypeDefinition^.Members[j].Values+';');
-         end else if TypeDefinition^.Members[j].Name='sType' then begin
-          RecordConstructorCodeBlockStringList.Add(' '+TypeDefinition^.Members[j].Name+':=TVkStructureType(TVkInt32(0));');
-         end else begin
-          Assert(false);
-         end;
-        end else if TypeDefinition^.Members[j].Name='pNext' then begin
-         RecordConstructorCodeBlockStringList.Add(' '+TypeDefinition^.Members[j].Name+':=nil;');
-        end;
-       end;
-       if (TypeDefinition^.Members[j].Type_<>'VkStructureType') and (TypeDefinition^.Members[j].Name<>'pNext') then begin
-        if RecordConstructorStringList.Count=0 then begin
-         CodeParameterLine:='constructor T'+TypeDefinition^.Name+'.Create(const '+ParameterLine;
-         ParameterLine:='       constructor Create(const '+ParameterLine;
-        end else begin
-         CodeParameterLine:=AlignPaddingString('',21+length(TypeDefinition^.Name))+'const '+ParameterLine;
-         ParameterLine:='                          const '+ParameterLine;
-        end;
-        if (j+1)<TypeDefinition^.CountMembers then begin
-         CodeParameterLine:=CodeParameterLine+';';
-         ParameterLine:=ParameterLine+';'+MemberComment(TypeDefinition^.Members[j].Comment);
-        end else begin
-         CodeParameterLine:=CodeParameterLine+');';
-         ParameterLine:=ParameterLine+');'+MemberComment(TypeDefinition^.Members[j].Comment);
-        end;
-        if (TypeDefinition^.Name<>'VkBaseInStructure') and
-           (TypeDefinition^.Name<>'VkBaseOutStructure') and
-           (TypeDefinition^.Name<>'VkSubpassEndInfoKHR') then begin
-         RecordConstructorCodeStringList.Add(CodeParameterLine);
-         RecordConstructorStringList.Add(ParameterLine);
-        end;
-       end;
-      end;  
-      if (TypeDefinition^.Name<>'VkBaseInStructure') and
-         (TypeDefinition^.Name<>'VkBaseOutStructure') and
-         (TypeDefinition^.Name<>'VkSubpassEndInfoKHR') and
-         (TypeDefinition^.Name<>'VkSubpassEndInfo') then begin
-       if HasArray then begin
-        RecordConstructorCodeStringList.Add('var ArrayItemCount:TVkInt32;');
-       end;
-       RecordConstructorCodeStringList.Add('begin');
-       if HasArray then begin
-        RecordConstructorCodeStringList.Add(' FillChar(self,SizeOf(T'+TypeDefinition^.Name+'),#0);');
-       end;
-       RecordConstructorCodeStringList.AddStrings(RecordConstructorCodeBlockStringList);
-       RecordConstructorCodeStringList.Add('end;');
-       if TypeDefinitionConstructors.Count>0 then begin
-        TypeDefinitionConstructors.Add('');
-       end;
-       if length(TypeDefinition^.Define)>0 then begin
-        TypeDefinitionConstructors.Add('{$ifdef '+TypeDefinition^.Define+'}');
-       end;
-       TypeDefinitionConstructors.AddStrings(RecordConstructorCodeStringList);
-       if length(TypeDefinition^.Define)>0 then begin
-        TypeDefinitionConstructors.Add('{$endif}');
-       end;
-      end;
+   if (TypeDefinition^.Kind=tdkSTRUCT) and (TypeDefinition^.Name='VkAccelerationStructureInstanceKHR') then begin
+    TypeDefinitionTypes.Add('     TVkAccelerationStructureInstanceKHR=record');
+    TypeDefinitionTypes.Add('{$ifdef HAS_ADVANCED_RECORDS}');
+    TypeDefinitionTypes.Add('      public');
+    TypeDefinitionTypes.Add('{$endif}');
+    TypeDefinitionTypes.Add('       transform:TVkTransformMatrixKHR;');
+    TypeDefinitionTypes.Add('       instanceCustomIndexMask:TVkUInt32; // 24 bits of instance custom index, 8 bits of mask');
+    TypeDefinitionTypes.Add('       instanceShaderBindingTableRecordOffsetFlags:TVkUInt32; // 24 bits of instance shader binding table record offset, 8 bits of flags');
+    TypeDefinitionTypes.Add('       accelerationStructureReference:TVkUInt64;');
+    TypeDefinitionTypes.Add('{$ifdef HAS_ADVANCED_RECORDS}');
+    TypeDefinitionTypes.Add('       constructor Create(const aTransform:TVkTransformMatrixKHR;');
+    TypeDefinitionTypes.Add('                          const aInstanceCustomIndex:TVkUInt32;');
+    TypeDefinitionTypes.Add('                          const aMask:TVkUInt32;');
+    TypeDefinitionTypes.Add('                          const aInstanceShaderBindingTableRecordOffset:TVkUInt32;');
+    TypeDefinitionTypes.Add('                          const aFlags:TVkGeometryInstanceFlagsKHR;');
+    TypeDefinitionTypes.Add('                          const aAccelerationStructureReference:TVkUInt64);');
+    TypeDefinitionTypes.Add('      private');
+    TypeDefinitionTypes.Add('       function GetInstanceCustomIndex:TVkUInt32;');
+    TypeDefinitionTypes.Add('       procedure SetInstanceCustomIndex(const aValue:TVkUInt32);');
+    TypeDefinitionTypes.Add('       function GetMask:TVkUInt32;');
+    TypeDefinitionTypes.Add('       procedure SetMask(const aValue:TVkUInt32);');
+    TypeDefinitionTypes.Add('       function GetInstanceShaderBindingTableRecordOffset:TVkUInt32;');
+    TypeDefinitionTypes.Add('       procedure SetInstanceShaderBindingTableRecordOffset(const aValue:TVkUInt32);');
+    TypeDefinitionTypes.Add('       function GetFlags:TVkGeometryInstanceFlagsKHR;');
+    TypeDefinitionTypes.Add('       procedure SetFlags(const aValue:TVkGeometryInstanceFlagsKHR);');
+    TypeDefinitionTypes.Add('      public');
+    TypeDefinitionTypes.Add('       property instanceCustomIndex:TVkUInt32 read GetInstanceCustomIndex write SetInstanceCustomIndex;');
+    TypeDefinitionTypes.Add('       property mask:TVkUInt32 read GetMask write SetMask;');
+    TypeDefinitionTypes.Add('       property instanceShaderBindingTableRecordOffset:TVkUInt32 read GetInstanceShaderBindingTableRecordOffset write SetInstanceShaderBindingTableRecordOffset;');
+    TypeDefinitionTypes.Add('       property flags:TVkGeometryInstanceFlagsKHR read GetFlags write SetFlags;');
+    TypeDefinitionTypes.Add('{$endif}');
+    TypeDefinitionTypes.Add('     end;');
+    TypeDefinitionConstructors.Add('');
+    if length(TypeDefinition^.Define)>0 then begin
+     TypeDefinitionConstructors.Add('{$ifdef '+TypeDefinition^.Define+'}');
+    end;
+    TypeDefinitionConstructors.Add('constructor TVkAccelerationStructureInstanceKHR.Create(const aTransform:TVkTransformMatrixKHR;');
+    TypeDefinitionConstructors.Add('                                                       const aInstanceCustomIndex:TVkUInt32;');
+    TypeDefinitionConstructors.Add('                                                       const aMask:TVkUInt32;');
+    TypeDefinitionConstructors.Add('                                                       const aInstanceShaderBindingTableRecordOffset:TVkUInt32;');
+    TypeDefinitionConstructors.Add('                                                       const aFlags:TVkGeometryInstanceFlagsKHR;');
+    TypeDefinitionConstructors.Add('                                                       const aAccelerationStructureReference:TVkUInt64);');
+    TypeDefinitionConstructors.Add('begin');
+    TypeDefinitionConstructors.Add(' transform:=aTransform;');
+    TypeDefinitionConstructors.Add(' instanceCustomIndexMask:=(aInstanceCustomIndex and TVkUInt32($00ffffff)) or ((aMask and TVkUInt32($000000ff)) shl 24);');
+    TypeDefinitionConstructors.Add(' instanceShaderBindingTableRecordOffsetFlags:=(aInstanceShaderBindingTableRecordOffset and TVkUInt32($00ffffff)) or ((TVkUInt32(aFlags) and TVkUInt32($000000ff)) shl 24);');
+    TypeDefinitionConstructors.Add(' accelerationStructureReference:=aAccelerationStructureReference;');
+    TypeDefinitionConstructors.Add('end;');
+    TypeDefinitionConstructors.Add('');
+    TypeDefinitionConstructors.Add('function TVkAccelerationStructureInstanceKHR.GetInstanceCustomIndex:TVkUInt32;');
+    TypeDefinitionConstructors.Add('begin');
+    TypeDefinitionConstructors.Add(' result:=instanceCustomIndexMask and TVkUInt32($00ffffff);');
+    TypeDefinitionConstructors.Add('end;');
+    TypeDefinitionConstructors.Add('');
+    TypeDefinitionConstructors.Add('procedure TVkAccelerationStructureInstanceKHR.SetInstanceCustomIndex(const aValue:TVkUInt32);');
+    TypeDefinitionConstructors.Add('begin');
+    TypeDefinitionConstructors.Add(' instanceCustomIndexMask:=(instanceCustomIndexMask and TVkUInt32($ff000000)) or (aValue and TVkUInt32($00ffffff));');
+    TypeDefinitionConstructors.Add('end;');
+    TypeDefinitionConstructors.Add('');
+    TypeDefinitionConstructors.Add('function TVkAccelerationStructureInstanceKHR.GetMask:TVkUInt32;');
+    TypeDefinitionConstructors.Add('begin');
+    TypeDefinitionConstructors.Add(' result:=instanceCustomIndexMask shr 24;');
+    TypeDefinitionConstructors.Add('end;');
+    TypeDefinitionConstructors.Add('');
+    TypeDefinitionConstructors.Add('procedure TVkAccelerationStructureInstanceKHR.SetMask(const aValue:TVkUInt32);');
+    TypeDefinitionConstructors.Add('begin');
+    TypeDefinitionConstructors.Add(' instanceCustomIndexMask:=(instanceCustomIndexMask and TVkUInt32($00ffffff)) or ((aValue and TVkUInt32($000000ff)) shl 24);');
+    TypeDefinitionConstructors.Add('end;');
+    TypeDefinitionConstructors.Add('');
+    TypeDefinitionConstructors.Add('function TVkAccelerationStructureInstanceKHR.GetInstanceShaderBindingTableRecordOffset:TVkUInt32;');
+    TypeDefinitionConstructors.Add('begin');
+    TypeDefinitionConstructors.Add(' result:=instanceShaderBindingTableRecordOffsetFlags and TVkUInt32($00ffffff);');
+    TypeDefinitionConstructors.Add('end;');
+    TypeDefinitionConstructors.Add('');
+    TypeDefinitionConstructors.Add('procedure TVkAccelerationStructureInstanceKHR.SetInstanceShaderBindingTableRecordOffset(const aValue:TVkUInt32);');
+    TypeDefinitionConstructors.Add('begin');
+    TypeDefinitionConstructors.Add(' instanceShaderBindingTableRecordOffsetFlags:=(instanceShaderBindingTableRecordOffsetFlags and TVkUInt32($ff000000)) or (aValue and TVkUInt32($00ffffff));');
+    TypeDefinitionConstructors.Add('end;');
+    TypeDefinitionConstructors.Add('');
+    TypeDefinitionConstructors.Add('function TVkAccelerationStructureInstanceKHR.GetFlags:TVkGeometryInstanceFlagsKHR;');
+    TypeDefinitionConstructors.Add('begin');
+    TypeDefinitionConstructors.Add(' result:=TVkGeometryInstanceFlagsKHR(TVkUInt32(instanceShaderBindingTableRecordOffsetFlags shr 24));');
+    TypeDefinitionConstructors.Add('end;');
+    TypeDefinitionConstructors.Add('');
+    TypeDefinitionConstructors.Add('procedure TVkAccelerationStructureInstanceKHR.SetFlags(const aValue:TVkGeometryInstanceFlagsKHR);');
+    TypeDefinitionConstructors.Add('begin');
+    TypeDefinitionConstructors.Add(' instanceShaderBindingTableRecordOffsetFlags:=(instanceShaderBindingTableRecordOffsetFlags and TVkUInt32($00ffffff)) or ((TVkUInt32(aValue) and TVkUInt32($000000ff)) shl 24);');
+    TypeDefinitionConstructors.Add('end;');
+    if length(TypeDefinition^.Define)>0 then begin
+     TypeDefinitionConstructors.Add('{$endif}');
+    end;
+   end else if (TypeDefinition^.Kind=tdkSTRUCT) and (TypeDefinition^.Name='VkAccelerationStructureSRTMotionInstanceNV') then begin
+    TypeDefinitionTypes.Add('     TVkAccelerationStructureSRTMotionInstanceNV=record');
+    TypeDefinitionTypes.Add('{$ifdef HAS_ADVANCED_RECORDS}');
+    TypeDefinitionTypes.Add('      public');
+    TypeDefinitionTypes.Add('{$endif}');
+    TypeDefinitionTypes.Add('       transformT0:TVkSRTDataNV;');
+    TypeDefinitionTypes.Add('       transformT1:TVkSRTDataNV;');
+    TypeDefinitionTypes.Add('       instanceCustomIndexMask:TVkUInt32; // 24 bits of instance custom index, 8 bits of mask');
+    TypeDefinitionTypes.Add('       instanceShaderBindingTableRecordOffsetFlags:TVkUInt32; // 24 bits of instance shader binding table record offset, 8 bits of flags');
+    TypeDefinitionTypes.Add('       accelerationStructureReference:TVkUInt64;');
+    TypeDefinitionTypes.Add('{$ifdef HAS_ADVANCED_RECORDS}');
+    TypeDefinitionTypes.Add('       constructor Create(const aTransformT0:TVkSRTDataNV;');
+    TypeDefinitionTypes.Add('                          const aTransformT1:TVkSRTDataNV;');
+    TypeDefinitionTypes.Add('                          const aInstanceCustomIndex:TVkUInt32;');
+    TypeDefinitionTypes.Add('                          const aMask:TVkUInt32;');
+    TypeDefinitionTypes.Add('                          const aInstanceShaderBindingTableRecordOffset:TVkUInt32;');
+    TypeDefinitionTypes.Add('                          const aFlags:TVkGeometryInstanceFlagsKHR;');
+    TypeDefinitionTypes.Add('                          const aAccelerationStructureReference:TVkUInt64);');
+    TypeDefinitionTypes.Add('      private');
+    TypeDefinitionTypes.Add('       function GetInstanceCustomIndex:TVkUInt32;');
+    TypeDefinitionTypes.Add('       procedure SetInstanceCustomIndex(const aValue:TVkUInt32);');
+    TypeDefinitionTypes.Add('       function GetMask:TVkUInt32;');
+    TypeDefinitionTypes.Add('       procedure SetMask(const aValue:TVkUInt32);');
+    TypeDefinitionTypes.Add('       function GetInstanceShaderBindingTableRecordOffset:TVkUInt32;');
+    TypeDefinitionTypes.Add('       procedure SetInstanceShaderBindingTableRecordOffset(const aValue:TVkUInt32);');
+    TypeDefinitionTypes.Add('       function GetFlags:TVkGeometryInstanceFlagsKHR;');
+    TypeDefinitionTypes.Add('       procedure SetFlags(const aValue:TVkGeometryInstanceFlagsKHR);');
+    TypeDefinitionTypes.Add('      public');
+    TypeDefinitionTypes.Add('       property instanceCustomIndex:TVkUInt32 read GetInstanceCustomIndex write SetInstanceCustomIndex;');
+    TypeDefinitionTypes.Add('       property mask:TVkUInt32 read GetMask write SetMask;');
+    TypeDefinitionTypes.Add('       property instanceShaderBindingTableRecordOffset:TVkUInt32 read GetInstanceShaderBindingTableRecordOffset write SetInstanceShaderBindingTableRecordOffset;');
+    TypeDefinitionTypes.Add('       property flags:TVkGeometryInstanceFlagsKHR read GetFlags write SetFlags;');
+    TypeDefinitionTypes.Add('{$endif}');
+    TypeDefinitionTypes.Add('     end;');
+    TypeDefinitionConstructors.Add('');
+    if length(TypeDefinition^.Define)>0 then begin
+     TypeDefinitionConstructors.Add('{$ifdef '+TypeDefinition^.Define+'}');
+    end;
+    TypeDefinitionConstructors.Add('constructor TVkAccelerationStructureSRTMotionInstanceNV.Create(const aTransformT0:TVkSRTDataNV;');
+    TypeDefinitionConstructors.Add('                                                               const aTransformT1:TVkSRTDataNV;');
+    TypeDefinitionConstructors.Add('                                                               const aInstanceCustomIndex:TVkUInt32;');
+    TypeDefinitionConstructors.Add('                                                               const aMask:TVkUInt32;');
+    TypeDefinitionConstructors.Add('                                                               const aInstanceShaderBindingTableRecordOffset:TVkUInt32;');
+    TypeDefinitionConstructors.Add('                                                               const aFlags:TVkGeometryInstanceFlagsKHR;');
+    TypeDefinitionConstructors.Add('                                                               const aAccelerationStructureReference:TVkUInt64);');
+    TypeDefinitionConstructors.Add('begin');
+    TypeDefinitionConstructors.Add(' transformT0:=aTransformT0;');
+    TypeDefinitionConstructors.Add(' transformT1:=aTransformT1;');
+    TypeDefinitionConstructors.Add(' instanceCustomIndexMask:=(aInstanceCustomIndex and TVkUInt32($00ffffff)) or ((aMask and TVkUInt32($000000ff)) shl 24);');
+    TypeDefinitionConstructors.Add(' instanceShaderBindingTableRecordOffsetFlags:=(aInstanceShaderBindingTableRecordOffset and TVkUInt32($00ffffff)) or ((TVkUInt32(aFlags) and TVkUInt32($000000ff)) shl 24);');
+    TypeDefinitionConstructors.Add(' accelerationStructureReference:=aAccelerationStructureReference;');
+    TypeDefinitionConstructors.Add('end;');
+    TypeDefinitionConstructors.Add('');
+    TypeDefinitionConstructors.Add('function TVkAccelerationStructureSRTMotionInstanceNV.GetInstanceCustomIndex:TVkUInt32;');
+    TypeDefinitionConstructors.Add('begin');
+    TypeDefinitionConstructors.Add(' result:=instanceCustomIndexMask and TVkUInt32($00ffffff);');
+    TypeDefinitionConstructors.Add('end;');
+    TypeDefinitionConstructors.Add('');
+    TypeDefinitionConstructors.Add('procedure TVkAccelerationStructureSRTMotionInstanceNV.SetInstanceCustomIndex(const aValue:TVkUInt32);');
+    TypeDefinitionConstructors.Add('begin');
+    TypeDefinitionConstructors.Add(' instanceCustomIndexMask:=(instanceCustomIndexMask and TVkUInt32($ff000000)) or (aValue and TVkUInt32($00ffffff));');
+    TypeDefinitionConstructors.Add('end;');
+    TypeDefinitionConstructors.Add('');
+    TypeDefinitionConstructors.Add('function TVkAccelerationStructureSRTMotionInstanceNV.GetMask:TVkUInt32;');
+    TypeDefinitionConstructors.Add('begin');
+    TypeDefinitionConstructors.Add(' result:=instanceCustomIndexMask shr 24;');
+    TypeDefinitionConstructors.Add('end;');
+    TypeDefinitionConstructors.Add('');
+    TypeDefinitionConstructors.Add('procedure TVkAccelerationStructureSRTMotionInstanceNV.SetMask(const aValue:TVkUInt32);');
+    TypeDefinitionConstructors.Add('begin');
+    TypeDefinitionConstructors.Add(' instanceCustomIndexMask:=(instanceCustomIndexMask and TVkUInt32($00ffffff)) or ((aValue and TVkUInt32($000000ff)) shl 24);');
+    TypeDefinitionConstructors.Add('end;');
+    TypeDefinitionConstructors.Add('');
+    TypeDefinitionConstructors.Add('function TVkAccelerationStructureSRTMotionInstanceNV.GetInstanceShaderBindingTableRecordOffset:TVkUInt32;');
+    TypeDefinitionConstructors.Add('begin');
+    TypeDefinitionConstructors.Add(' result:=instanceShaderBindingTableRecordOffsetFlags and TVkUInt32($00ffffff);');
+    TypeDefinitionConstructors.Add('end;');
+    TypeDefinitionConstructors.Add('');
+    TypeDefinitionConstructors.Add('procedure TVkAccelerationStructureSRTMotionInstanceNV.SetInstanceShaderBindingTableRecordOffset(const aValue:TVkUInt32);');
+    TypeDefinitionConstructors.Add('begin');
+    TypeDefinitionConstructors.Add(' instanceShaderBindingTableRecordOffsetFlags:=(instanceShaderBindingTableRecordOffsetFlags and TVkUInt32($ff000000)) or (aValue and TVkUInt32($00ffffff));');
+    TypeDefinitionConstructors.Add('end;');
+    TypeDefinitionConstructors.Add('');
+    TypeDefinitionConstructors.Add('function TVkAccelerationStructureSRTMotionInstanceNV.GetFlags:TVkGeometryInstanceFlagsKHR;');
+    TypeDefinitionConstructors.Add('begin');
+    TypeDefinitionConstructors.Add(' result:=TVkGeometryInstanceFlagsKHR(TVkUInt32(instanceShaderBindingTableRecordOffsetFlags shr 24));');
+    TypeDefinitionConstructors.Add('end;');
+    TypeDefinitionConstructors.Add('');
+    TypeDefinitionConstructors.Add('procedure TVkAccelerationStructureSRTMotionInstanceNV.SetFlags(const aValue:TVkGeometryInstanceFlagsKHR);');
+    TypeDefinitionConstructors.Add('begin');
+    TypeDefinitionConstructors.Add(' instanceShaderBindingTableRecordOffsetFlags:=(instanceShaderBindingTableRecordOffsetFlags and TVkUInt32($00ffffff)) or ((TVkUInt32(aValue) and TVkUInt32($000000ff)) shl 24);');
+    TypeDefinitionConstructors.Add('end;');
+    if length(TypeDefinition^.Define)>0 then begin
+     TypeDefinitionConstructors.Add('{$endif}');
+    end;
+   end else if (TypeDefinition^.Kind=tdkSTRUCT) and (TypeDefinition^.Name='VkAccelerationStructureMatrixMotionInstanceNV') then begin
+    TypeDefinitionTypes.Add('     TVkAccelerationStructureMatrixMotionInstanceNV=record');
+    TypeDefinitionTypes.Add('{$ifdef HAS_ADVANCED_RECORDS}');
+    TypeDefinitionTypes.Add('      public');
+    TypeDefinitionTypes.Add('{$endif}');
+    TypeDefinitionTypes.Add('       transformT0:TVkTransformMatrixKHR;');
+    TypeDefinitionTypes.Add('       transformT1:TVkTransformMatrixKHR;');
+    TypeDefinitionTypes.Add('       instanceCustomIndexMask:TVkUInt32; // 24 bits of instance custom index, 8 bits of mask');
+    TypeDefinitionTypes.Add('       instanceShaderBindingTableRecordOffsetFlags:TVkUInt32; // 24 bits of instance shader binding table record offset, 8 bits of flags');
+    TypeDefinitionTypes.Add('       accelerationStructureReference:TVkUInt64;');
+    TypeDefinitionTypes.Add('{$ifdef HAS_ADVANCED_RECORDS}');
+    TypeDefinitionTypes.Add('       constructor Create(const aTransformT0:TVkTransformMatrixKHR;');
+    TypeDefinitionTypes.Add('                          const aTransformT1:TVkTransformMatrixKHR;');
+    TypeDefinitionTypes.Add('                          const aInstanceCustomIndex:TVkUInt32;');
+    TypeDefinitionTypes.Add('                          const aMask:TVkUInt32;');
+    TypeDefinitionTypes.Add('                          const aInstanceShaderBindingTableRecordOffset:TVkUInt32;');
+    TypeDefinitionTypes.Add('                          const aFlags:TVkGeometryInstanceFlagsKHR;');
+    TypeDefinitionTypes.Add('                          const aAccelerationStructureReference:TVkUInt64);');
+    TypeDefinitionTypes.Add('      private');
+    TypeDefinitionTypes.Add('       function GetInstanceCustomIndex:TVkUInt32;');
+    TypeDefinitionTypes.Add('       procedure SetInstanceCustomIndex(const aValue:TVkUInt32);');
+    TypeDefinitionTypes.Add('       function GetMask:TVkUInt32;');
+    TypeDefinitionTypes.Add('       procedure SetMask(const aValue:TVkUInt32);');
+    TypeDefinitionTypes.Add('       function GetInstanceShaderBindingTableRecordOffset:TVkUInt32;');
+    TypeDefinitionTypes.Add('       procedure SetInstanceShaderBindingTableRecordOffset(const aValue:TVkUInt32);');
+    TypeDefinitionTypes.Add('       function GetFlags:TVkGeometryInstanceFlagsKHR;');
+    TypeDefinitionTypes.Add('       procedure SetFlags(const aValue:TVkGeometryInstanceFlagsKHR);');
+    TypeDefinitionTypes.Add('      public');
+    TypeDefinitionTypes.Add('       property instanceCustomIndex:TVkUInt32 read GetInstanceCustomIndex write SetInstanceCustomIndex;');
+    TypeDefinitionTypes.Add('       property mask:TVkUInt32 read GetMask write SetMask;');
+    TypeDefinitionTypes.Add('       property instanceShaderBindingTableRecordOffset:TVkUInt32 read GetInstanceShaderBindingTableRecordOffset write SetInstanceShaderBindingTableRecordOffset;');
+    TypeDefinitionTypes.Add('       property flags:TVkGeometryInstanceFlagsKHR read GetFlags write SetFlags;');
+    TypeDefinitionTypes.Add('{$endif}');
+    TypeDefinitionTypes.Add('     end;');
+    TypeDefinitionConstructors.Add('');
+    if length(TypeDefinition^.Define)>0 then begin
+     TypeDefinitionConstructors.Add('{$ifdef '+TypeDefinition^.Define+'}');
+    end;
+    TypeDefinitionConstructors.Add('constructor TVkAccelerationStructureMatrixMotionInstanceNV.Create(const aTransformT0:TVkTransformMatrixKHR;');
+    TypeDefinitionConstructors.Add('                                                                  const aTransformT1:TVkTransformMatrixKHR;');
+    TypeDefinitionConstructors.Add('                                                                  const aInstanceCustomIndex:TVkUInt32;');
+    TypeDefinitionConstructors.Add('                                                                  const aMask:TVkUInt32;');
+    TypeDefinitionConstructors.Add('                                                                  const aInstanceShaderBindingTableRecordOffset:TVkUInt32;');
+    TypeDefinitionConstructors.Add('                                                                  const aFlags:TVkGeometryInstanceFlagsKHR;');
+    TypeDefinitionConstructors.Add('                                                                  const aAccelerationStructureReference:TVkUInt64);');
+    TypeDefinitionConstructors.Add('begin');
+    TypeDefinitionConstructors.Add(' transformT0:=aTransformT0;');
+    TypeDefinitionConstructors.Add(' transformT1:=aTransformT1;');
+    TypeDefinitionConstructors.Add(' instanceCustomIndexMask:=(aInstanceCustomIndex and TVkUInt32($00ffffff)) or ((aMask and TVkUInt32($000000ff)) shl 24);');
+    TypeDefinitionConstructors.Add(' instanceShaderBindingTableRecordOffsetFlags:=(aInstanceShaderBindingTableRecordOffset and TVkUInt32($00ffffff)) or ((TVkUInt32(aFlags) and TVkUInt32($000000ff)) shl 24);');
+    TypeDefinitionConstructors.Add(' accelerationStructureReference:=aAccelerationStructureReference;');
+    TypeDefinitionConstructors.Add('end;');
+    TypeDefinitionConstructors.Add('');
+    TypeDefinitionConstructors.Add('function TVkAccelerationStructureMatrixMotionInstanceNV.GetInstanceCustomIndex:TVkUInt32;');
+    TypeDefinitionConstructors.Add('begin');
+    TypeDefinitionConstructors.Add(' result:=instanceCustomIndexMask and TVkUInt32($00ffffff);');
+    TypeDefinitionConstructors.Add('end;');
+    TypeDefinitionConstructors.Add('');
+    TypeDefinitionConstructors.Add('procedure TVkAccelerationStructureMatrixMotionInstanceNV.SetInstanceCustomIndex(const aValue:TVkUInt32);');
+    TypeDefinitionConstructors.Add('begin');
+    TypeDefinitionConstructors.Add(' instanceCustomIndexMask:=(instanceCustomIndexMask and TVkUInt32($ff000000)) or (aValue and TVkUInt32($00ffffff));');
+    TypeDefinitionConstructors.Add('end;');
+    TypeDefinitionConstructors.Add('');
+    TypeDefinitionConstructors.Add('function TVkAccelerationStructureMatrixMotionInstanceNV.GetMask:TVkUInt32;');
+    TypeDefinitionConstructors.Add('begin');
+    TypeDefinitionConstructors.Add(' result:=instanceCustomIndexMask shr 24;');
+    TypeDefinitionConstructors.Add('end;');
+    TypeDefinitionConstructors.Add('');
+    TypeDefinitionConstructors.Add('procedure TVkAccelerationStructureMatrixMotionInstanceNV.SetMask(const aValue:TVkUInt32);');
+    TypeDefinitionConstructors.Add('begin');
+    TypeDefinitionConstructors.Add(' instanceCustomIndexMask:=(instanceCustomIndexMask and TVkUInt32($00ffffff)) or ((aValue and TVkUInt32($000000ff)) shl 24);');
+    TypeDefinitionConstructors.Add('end;');
+    TypeDefinitionConstructors.Add('');
+    TypeDefinitionConstructors.Add('function TVkAccelerationStructureMatrixMotionInstanceNV.GetInstanceShaderBindingTableRecordOffset:TVkUInt32;');
+    TypeDefinitionConstructors.Add('begin');
+    TypeDefinitionConstructors.Add(' result:=instanceShaderBindingTableRecordOffsetFlags and TVkUInt32($00ffffff);');
+    TypeDefinitionConstructors.Add('end;');
+    TypeDefinitionConstructors.Add('');
+    TypeDefinitionConstructors.Add('procedure TVkAccelerationStructureMatrixMotionInstanceNV.SetInstanceShaderBindingTableRecordOffset(const aValue:TVkUInt32);');
+    TypeDefinitionConstructors.Add('begin');
+    TypeDefinitionConstructors.Add(' instanceShaderBindingTableRecordOffsetFlags:=(instanceShaderBindingTableRecordOffsetFlags and TVkUInt32($ff000000)) or (aValue and TVkUInt32($00ffffff));');
+    TypeDefinitionConstructors.Add('end;');
+    TypeDefinitionConstructors.Add('');
+    TypeDefinitionConstructors.Add('function TVkAccelerationStructureMatrixMotionInstanceNV.GetFlags:TVkGeometryInstanceFlagsKHR;');
+    TypeDefinitionConstructors.Add('begin');
+    TypeDefinitionConstructors.Add(' result:=TVkGeometryInstanceFlagsKHR(TVkUInt32(instanceShaderBindingTableRecordOffsetFlags shr 24));');
+    TypeDefinitionConstructors.Add('end;');
+    TypeDefinitionConstructors.Add('');
+    TypeDefinitionConstructors.Add('procedure TVkAccelerationStructureMatrixMotionInstanceNV.SetFlags(const aValue:TVkGeometryInstanceFlagsKHR);');
+    TypeDefinitionConstructors.Add('begin');
+    TypeDefinitionConstructors.Add(' instanceShaderBindingTableRecordOffsetFlags:=(instanceShaderBindingTableRecordOffsetFlags and TVkUInt32($00ffffff)) or ((TVkUInt32(aValue) and TVkUInt32($000000ff)) shl 24);');
+    TypeDefinitionConstructors.Add('end;');
+    if length(TypeDefinition^.Define)>0 then begin
+     TypeDefinitionConstructors.Add('{$endif}');
+    end;
+   end else begin
+    case TypeDefinition^.Kind of
+     tdkSTRUCT:begin
+      TypeDefinitionTypes.Add('     T'+TypeDefinition^.Name+'=record');
       TypeDefinitionTypes.Add('{$ifdef HAS_ADVANCED_RECORDS}');
-      if RecordConstructorStringList.Count>0 then begin
-       TypeDefinitionTypes.AddStrings(RecordConstructorStringList);
-      end else begin
-//     TypeDefinitionTypes.Add('       function Create:T'+TypeDefinition^.Name+';');
-      end;
+      TypeDefinitionTypes.Add('      public');
       TypeDefinitionTypes.Add('{$endif}');
+      RecordConstructorStringList:=TStringList.Create;
+      RecordConstructorCodeStringList:=TStringList.Create;
+      RecordConstructorCodeBlockStringList:=TStringList.Create;
+      HasArray:=false;
+      try
+       for j:=0 to TypeDefinition^.CountMembers-1 do begin
+        Assert(length(TypeDefinition^.Members[j].Name)>0);
+        if (TypeDefinition^.Members[j].Type_='VkStructureType') and
+           (length(TypeDefinition^.Members[j].Comment)=0) and
+           (length(TypeDefinition^.Members[j].Values)>0) and
+           (copy(TypeDefinition^.Members[j].Values,1,length('VK_STRUCTURE_TYPE_'))='VK_STRUCTURE_TYPE_') then begin
+         TypeDefinition^.Members[j].Comment:='Must be '+TypeDefinition^.Members[j].Values; // Restore/Recreate old <= 1.0.22 sType member comments
+        end;
+        ParameterName:='a'+UpCase(TypeDefinition^.Members[j].Name[1])+copy(TypeDefinition^.Members[j].Name,2,length(TypeDefinition^.Members[j].Name)-1);
+        ParameterLine:=ParameterName+':';
+        if length(TypeDefinition^.Members[j].ArraySizeStr)>0 then begin
+         TypeDefinitionTypes.Add('       '+TypeDefinition^.Members[j].Name+':array[0..'+TypeDefinition^.Members[j].ArraySizeStr+'-1] of '+TranslateType(TypeDefinition^.Members[j].Type_,TypeDefinition^.Members[j].Ptr)+';'+MemberComment(TypeDefinition^.Members[j].Comment));
+         if TranslateType(TypeDefinition^.Members[j].Type_,TypeDefinition^.Members[j].Ptr)='TVkChar' then begin
+          ParameterLine:=ParameterLine+'TVkCharString';
+         end else begin
+          ParameterLine:=ParameterLine+'array of '+TranslateType(TypeDefinition^.Members[j].Type_,TypeDefinition^.Members[j].Ptr);
+         end;
+        end else if TypeDefinition^.Members[j].ArraySizeInt>=0 then begin
+         if TypeDefinition^.Members[j].OtherArraySizeInt>0 then begin
+          TypeDefinitionTypes.Add('       '+TypeDefinition^.Members[j].Name+':array[0..'+IntToStr(TypeDefinition^.Members[j].ArraySizeInt-1)+',0..'+IntToStr(TypeDefinition^.Members[j].OtherArraySizeInt-1)+'] of '+TranslateType(TypeDefinition^.Members[j].Type_,TypeDefinition^.Members[j].Ptr)+';'+MemberComment(TypeDefinition^.Members[j].Comment));
+         end else begin
+          TypeDefinitionTypes.Add('       '+TypeDefinition^.Members[j].Name+':array[0..'+IntToStr(TypeDefinition^.Members[j].ArraySizeInt-1)+'] of '+TranslateType(TypeDefinition^.Members[j].Type_,TypeDefinition^.Members[j].Ptr)+';'+MemberComment(TypeDefinition^.Members[j].Comment));
+         end;
+         if TranslateType(TypeDefinition^.Members[j].Type_,TypeDefinition^.Members[j].Ptr)='TVkChar' then begin
+          ParameterLine:=ParameterLine+'TVkCharString';
+         end else begin
+          ParameterLine:=ParameterLine+'array of '+TranslateType(TypeDefinition^.Members[j].Type_,TypeDefinition^.Members[j].Ptr);
+         end;
+        end else begin
+         TypeDefinitionTypes.Add('       '+TypeDefinition^.Members[j].Name+':'+TranslateType(TypeDefinition^.Members[j].Type_,TypeDefinition^.Members[j].Ptr)+';'+MemberComment(TypeDefinition^.Members[j].Comment));
+         if (TypeDefinition^.Members[j].Type_<>'VkStructureType') and (TypeDefinition^.Members[j].Name<>'pNext') then begin
+          ParameterLine:=ParameterLine+TranslateType(TypeDefinition^.Members[j].Type_,TypeDefinition^.Members[j].Ptr);
+         end;
+        end;
+        if (length(TypeDefinition^.Members[j].ArraySizeStr)>0) or (TypeDefinition^.Members[j].ArraySizeInt>=0) then begin
+         HasArray:=true;
+         if TranslateType(TypeDefinition^.Members[j].Type_,TypeDefinition^.Members[j].Ptr)='TVkChar' then begin
+          RecordConstructorCodeBlockStringList.Add(' ArrayItemCount:=length('+ParameterName+');');
+          RecordConstructorCodeBlockStringList.Add(' if ArrayItemCount>length('+TypeDefinition^.Members[j].Name+') then begin');
+          RecordConstructorCodeBlockStringList.Add('  ArrayItemCount:=length('+TypeDefinition^.Members[j].Name+');');
+          RecordConstructorCodeBlockStringList.Add(' end;');
+          RecordConstructorCodeBlockStringList.Add(' if ArrayItemCount>0 then begin');
+          RecordConstructorCodeBlockStringList.Add('  Move('+ParameterName+'[1],'+TypeDefinition^.Members[j].Name+'[0],ArrayItemCount*SizeOf('+TranslateType(TypeDefinition^.Members[j].Type_,TypeDefinition^.Members[j].Ptr)+'));');
+          RecordConstructorCodeBlockStringList.Add(' end;');
+         end else begin
+          RecordConstructorCodeBlockStringList.Add(' ArrayItemCount:=length('+ParameterName+');');
+          RecordConstructorCodeBlockStringList.Add(' if ArrayItemCount>length('+TypeDefinition^.Members[j].Name+') then begin');
+          RecordConstructorCodeBlockStringList.Add('  ArrayItemCount:=length('+TypeDefinition^.Members[j].Name+');');
+          RecordConstructorCodeBlockStringList.Add(' end;');
+          RecordConstructorCodeBlockStringList.Add(' if ArrayItemCount>0 then begin');
+          RecordConstructorCodeBlockStringList.Add('  Move('+ParameterName+'[0],'+TypeDefinition^.Members[j].Name+'[0],ArrayItemCount*SizeOf('+TranslateType(TypeDefinition^.Members[j].Type_,TypeDefinition^.Members[j].Ptr)+'));');
+          RecordConstructorCodeBlockStringList.Add(' end;');
+         end;
+        end else begin
+         if (TypeDefinition^.Members[j].Type_<>'VkStructureType') and (TypeDefinition^.Members[j].Name<>'pNext') then begin
+          RecordConstructorCodeBlockStringList.Add(' '+TypeDefinition^.Members[j].Name+':='+ParameterName+';');
+         end else if TypeDefinition^.Members[j].Type_='VkStructureType' then begin
+          ParameterName:=TypeDefinition^.Members[j].Comment;
+          k:=pos('VK_STRUCTURE_TYPE_',ParameterName);
+          if k>0 then begin
+           Delete(ParameterName,1,k-1);
+           for k:=1 to length(ParameterName) do begin
+            if not (ParameterName[k] in ['A'..'Z','a'..'z','_','0'..'9']) then begin
+             ParameterName:=copy(ParameterName,1,k-1);
+             break;
+            end;
+           end;
+           RecordConstructorCodeBlockStringList.Add(' '+TypeDefinition^.Members[j].Name+':='+ParameterName+';');
+          end else if (length(TypeDefinition^.Members[j].Values)>0) and
+                      (copy(TypeDefinition^.Members[j].Values,1,length('VK_STRUCTURE_TYPE_'))='VK_STRUCTURE_TYPE_') then begin
+           RecordConstructorCodeBlockStringList.Add(' '+TypeDefinition^.Members[j].Name+':='+TypeDefinition^.Members[j].Values+';');
+          end else if TypeDefinition^.Members[j].Name='sType' then begin
+           RecordConstructorCodeBlockStringList.Add(' '+TypeDefinition^.Members[j].Name+':=TVkStructureType(TVkInt32(0));');
+          end else begin
+           Assert(false);
+          end;
+         end else if TypeDefinition^.Members[j].Name='pNext' then begin
+          RecordConstructorCodeBlockStringList.Add(' '+TypeDefinition^.Members[j].Name+':=nil;');
+         end;
+        end;
+        if (TypeDefinition^.Members[j].Type_<>'VkStructureType') and (TypeDefinition^.Members[j].Name<>'pNext') then begin
+         if RecordConstructorStringList.Count=0 then begin
+          CodeParameterLine:='constructor T'+TypeDefinition^.Name+'.Create(const '+ParameterLine;
+          ParameterLine:='       constructor Create(const '+ParameterLine;
+         end else begin
+          CodeParameterLine:=AlignPaddingString('',21+length(TypeDefinition^.Name))+'const '+ParameterLine;
+          ParameterLine:='                          const '+ParameterLine;
+         end;
+         if (j+1)<TypeDefinition^.CountMembers then begin
+          CodeParameterLine:=CodeParameterLine+';';
+          ParameterLine:=ParameterLine+';'+MemberComment(TypeDefinition^.Members[j].Comment);
+         end else begin
+          CodeParameterLine:=CodeParameterLine+');';
+          ParameterLine:=ParameterLine+');'+MemberComment(TypeDefinition^.Members[j].Comment);
+         end;
+         if (TypeDefinition^.Name<>'VkBaseInStructure') and
+            (TypeDefinition^.Name<>'VkBaseOutStructure') and
+            (TypeDefinition^.Name<>'VkSubpassEndInfoKHR') and
+            (TypeDefinition^.Name<>'VkExportMetalObjectsInfoEXT') then begin
+          RecordConstructorCodeStringList.Add(CodeParameterLine);
+          RecordConstructorStringList.Add(ParameterLine);
+         end;
+        end;
+       end;
+       if (TypeDefinition^.Name<>'VkBaseInStructure') and
+          (TypeDefinition^.Name<>'VkBaseOutStructure') and
+          (TypeDefinition^.Name<>'VkSubpassEndInfoKHR') and
+          (TypeDefinition^.Name<>'VkSubpassEndInfo') and
+          (TypeDefinition^.Name<>'VkExportMetalObjectsInfoEXT') then begin
+        if HasArray then begin
+         RecordConstructorCodeStringList.Add('var ArrayItemCount:TVkInt32;');
+        end;
+        RecordConstructorCodeStringList.Add('begin');
+        if HasArray then begin
+         RecordConstructorCodeStringList.Add(' FillChar(self,SizeOf(T'+TypeDefinition^.Name+'),#0);');
+        end;
+        RecordConstructorCodeStringList.AddStrings(RecordConstructorCodeBlockStringList);
+        RecordConstructorCodeStringList.Add('end;');
+        if TypeDefinitionConstructors.Count>0 then begin
+         TypeDefinitionConstructors.Add('');
+        end;
+        if length(TypeDefinition^.Define)>0 then begin
+         TypeDefinitionConstructors.Add('{$ifdef '+TypeDefinition^.Define+'}');
+        end;
+        TypeDefinitionConstructors.AddStrings(RecordConstructorCodeStringList);
+        if length(TypeDefinition^.Define)>0 then begin
+         TypeDefinitionConstructors.Add('{$endif}');
+        end;
+       end;
+       TypeDefinitionTypes.Add('{$ifdef HAS_ADVANCED_RECORDS}');
+       if RecordConstructorStringList.Count>0 then begin
+        TypeDefinitionTypes.AddStrings(RecordConstructorStringList);
+       end else begin
+ //     TypeDefinitionTypes.Add('       function Create:T'+TypeDefinition^.Name+';');
+       end;
+       TypeDefinitionTypes.Add('{$endif}');
+       TypeDefinitionTypes.Add('     end;');
+      finally
+       RecordConstructorStringList.Free;
+       RecordConstructorCodeStringList.Free;
+       RecordConstructorCodeBlockStringList.Free;
+      end;
+     end;
+     tdkUNION:begin
+      TypeDefinitionTypes.Add('     T'+TypeDefinition^.Name+'=record');
+      TypeDefinitionTypes.Add('      case longint of');
+      for j:=0 to TypeDefinition^.CountMembers-1 do begin
+       TypeDefinitionTypes.Add('       '+IntToStr(j)+':(');
+       if length(TypeDefinition^.Members[j].ArraySizeStr)>0 then begin
+        TypeDefinitionTypes.Add('        '+TypeDefinition^.Members[j].Name+':array[0..'+TypeDefinition^.Members[j].ArraySizeStr+'-1] of '+TranslateType(TypeDefinition^.Members[j].Type_,TypeDefinition^.Members[j].Ptr)+';'+MemberComment(TypeDefinition^.Members[j].Comment));
+       end else if TypeDefinition^.Members[j].ArraySizeInt>=0 then begin
+        if TypeDefinition^.Members[j].OtherArraySizeInt>=0 then begin
+         TypeDefinitionTypes.Add('        '+TypeDefinition^.Members[j].Name+':array[0..'+IntToStr(TypeDefinition^.Members[j].ArraySizeInt-1)+',0..'+IntToStr(TypeDefinition^.Members[j].OtherArraySizeInt-1)+'] of '+TranslateType(TypeDefinition^.Members[j].Type_,TypeDefinition^.Members[j].Ptr)+';'+MemberComment(TypeDefinition^.Members[j].Comment));
+        end else begin
+         TypeDefinitionTypes.Add('        '+TypeDefinition^.Members[j].Name+':array[0..'+IntToStr(TypeDefinition^.Members[j].ArraySizeInt-1)+'] of '+TranslateType(TypeDefinition^.Members[j].Type_,TypeDefinition^.Members[j].Ptr)+';'+MemberComment(TypeDefinition^.Members[j].Comment));
+        end;
+       end else begin
+        TypeDefinitionTypes.Add('        '+TypeDefinition^.Members[j].Name+':'+TranslateType(TypeDefinition^.Members[j].Type_,TypeDefinition^.Members[j].Ptr)+';'+MemberComment(TypeDefinition^.Members[j].Comment));
+       end;
+       TypeDefinitionTypes.Add('       );');
+      end;
       TypeDefinitionTypes.Add('     end;');
-     finally
-      RecordConstructorStringList.Free;
-      RecordConstructorCodeStringList.Free;
-      RecordConstructorCodeBlockStringList.Free;
      end;
-    end;
-    tdkUNION:begin
-     TypeDefinitionTypes.Add('     T'+TypeDefinition^.Name+'=record');
-     TypeDefinitionTypes.Add('      case longint of');
-     for j:=0 to TypeDefinition^.CountMembers-1 do begin
-      TypeDefinitionTypes.Add('       '+IntToStr(j)+':(');
-      if length(TypeDefinition^.Members[j].ArraySizeStr)>0 then begin
-       TypeDefinitionTypes.Add('        '+TypeDefinition^.Members[j].Name+':array[0..'+TypeDefinition^.Members[j].ArraySizeStr+'-1] of '+TranslateType(TypeDefinition^.Members[j].Type_,TypeDefinition^.Members[j].Ptr)+';'+MemberComment(TypeDefinition^.Members[j].Comment));
-      end else if TypeDefinition^.Members[j].ArraySizeInt>=0 then begin
-       TypeDefinitionTypes.Add('        '+TypeDefinition^.Members[j].Name+':array[0..'+IntToStr(TypeDefinition^.Members[j].ArraySizeInt-1)+'] of '+TranslateType(TypeDefinition^.Members[j].Type_,TypeDefinition^.Members[j].Ptr)+';'+MemberComment(TypeDefinition^.Members[j].Comment));
+     tdkFUNCPOINTER:begin
+      Text:='';
+      for j:=0 to TypeDefinition^.CountMembers-1 do begin
+       TypeDefinitionMember:=@TypeDefinition^.Members[j];
+       if TypeDefinitionMember^.Constant then begin
+        Text:=Text+'const ';
+       end;
+       Text:=Text+TypeDefinitionMember^.Name+':'+TranslateType(TypeDefinition^.Members[j].Type_,TypeDefinition^.Members[j].Ptr);
+       if (j+1)<TypeDefinition^.CountMembers then begin
+        Text:=Text+';';
+       end;
+       if length(TypeDefinition^.Members[j].Comment)>0 then begin
+        Text:=Text+ParamMemberComment(TypeDefinition^.Members[j].Comment);
+ //     Text:=Text+#13#10;
+       end;
+      end;
+      if (TypeDefinition^.Type_='void') and (TypeDefinition^.Ptr=0) then begin
+       TypeDefinitionTypes.Add('     T'+TypeDefinition^.Name+'=procedure('+Text+'); '+CallingConventions);
       end else begin
-       TypeDefinitionTypes.Add('        '+TypeDefinition^.Members[j].Name+':'+TranslateType(TypeDefinition^.Members[j].Type_,TypeDefinition^.Members[j].Ptr)+';'+MemberComment(TypeDefinition^.Members[j].Comment));
-      end;
-      TypeDefinitionTypes.Add('       );');
-     end;
-     TypeDefinitionTypes.Add('     end;');
-    end;
-    tdkFUNCPOINTER:begin
-     Text:='';
-     for j:=0 to TypeDefinition^.CountMembers-1 do begin
-      TypeDefinitionMember:=@TypeDefinition^.Members[j];
-      if TypeDefinitionMember^.Constant then begin
-       Text:=Text+'const ';
-      end;
-      Text:=Text+TypeDefinitionMember^.Name+':'+TranslateType(TypeDefinition^.Members[j].Type_,TypeDefinition^.Members[j].Ptr);
-      if (j+1)<TypeDefinition^.CountMembers then begin
-       Text:=Text+';';
-      end;
-      if length(TypeDefinition^.Members[j].Comment)>0 then begin
-       Text:=Text+ParamMemberComment(TypeDefinition^.Members[j].Comment);
-//     Text:=Text+#13#10;
+       TypeDefinitionTypes.Add('     T'+TypeDefinition^.Name+'=function('+Text+'):'+TranslateType(TypeDefinition^.Type_,TypeDefinition^.Ptr)+'; '+CallingConventions);
       end;
      end;
-     if (TypeDefinition^.Type_='void') and (TypeDefinition^.Ptr=0) then begin
-      TypeDefinitionTypes.Add('     T'+TypeDefinition^.Name+'=procedure('+Text+'); '+CallingConventions);
-     end else begin
-      TypeDefinitionTypes.Add('     T'+TypeDefinition^.Name+'=function('+Text+'):'+TranslateType(TypeDefinition^.Type_,TypeDefinition^.Ptr)+'; '+CallingConventions);
+     tdkALIAS:begin
+      TypeDefinitionTypes.Add('     T'+TypeDefinition^.Name+'=T'+TypeDefinition^.Alias+';');
      end;
-    end;
-    tdkALIAS:begin
-     TypeDefinitionTypes.Add('     T'+TypeDefinition^.Name+'=T'+TypeDefinition^.Alias+';');
     end;
    end;
    if length(TypeDefinition^.Define)>0 then begin
@@ -4233,6 +4711,9 @@ begin
     ChildItem:=Tag.Items[i];
     if ChildItem is TXMLTag then begin
      ChildTag:=TXMLTag(ChildItem);
+     if not CheckForVulkanAPI(ChildTag) then begin
+      continue;
+     end;
      if (ChildTag.Name='enum') or (ChildTag.Name='unused') then begin
       ValueItem:=@ValueItems[CountValueItems];
       ValueItem^.IsExtended:=false;
@@ -4492,7 +4973,7 @@ begin
 end;
 
 procedure ParseCommandsTag(Tag:TXMLTag);
-var i,j,k,ArraySize,CountTypeDefinitions:longint;
+var i,j,k,CountTypeDefinitions:longint;
     ChildItem,ChildChildItem:TXMLItem;
     ChildTag,ChildChildTag:TXMLTag;
     ProtoName,ProtoType,ParamName,ParamType,Text,Line,Parameters,Define,Alias,AliasName:ansistring;
@@ -4507,6 +4988,9 @@ begin
   ChildItem:=Tag.Items[i];
   if ChildItem is TXMLTag then begin
    ChildTag:=TXMLTag(ChildItem);
+   if not CheckForVulkanAPI(ChildTag) then begin
+    continue;
+   end;
    if ChildTag.Name='command' then begin
     Alias:=ChildTag.GetParameter('alias','');
     AliasName:='';
@@ -4523,6 +5007,9 @@ begin
          ChildChildItem:=ChildTag.Items[j];
          if ChildChildItem is TXMLTag then begin
           ChildChildTag:=TXMLTag(ChildChildItem);
+          if not CheckForVulkanAPI(ChildChildTag) then begin
+           continue;
+          end;
           if ChildChildTag.Name='proto' then begin
            ProtoName:=ParseText(ChildChildTag.FindTag('name'),['']);
            break;
@@ -4556,6 +5043,9 @@ begin
        ChildChildItem:=ChildTag.Items[j];
        if ChildChildItem is TXMLTag then begin
         ChildChildTag:=TXMLTag(ChildChildItem);
+        if not CheckForVulkanAPI(ChildChildTag) then begin
+         continue;
+        end;
         if ChildChildTag.Name='proto' then begin
          if length(AliasName)>0 then begin
           ProtoName:=AliasName;
@@ -4626,6 +5116,8 @@ begin
           Define:='Android';
          end else if (ParamType='zx_handle_t') or (pos('FUCHSIA',UpperCase(ParamType))>0) then begin
           Define:='Fuchsia';
+         end else if (pos('MTL',ParamType)>0) then begin
+          Define:='Metal';
          end else if (ParamType='IDirectFB') or (ParamType='IDirectFBSurface') or (pos('DIRECTFB',UpperCase(ParamType))>0) then begin
           Define:='DirectFB';
          end else if (pos('_screen_context',ParamType)>0) or (pos('_screen_window',ParamType)>0) or (pos('qnx',LowerCase(ParamType))>0) then begin
@@ -4634,6 +5126,10 @@ begin
           Define:='VkStdVideo';
          end else if pos('VkVideo',ParamType)>0 then begin
           Define:='VkVideo';
+         end else if (pos('NvSci',ParamType)>0) or (ParamType='VkSemaphoreSciSyncPoolNV') or ((pos('Sci',ParamType)>0) and (pos('NV',ParamType)>0)) then begin
+          Define:='NvSci';
+         end else if (ParamType='VkFaultLevel') or (ParamType='VkFaultType') or (ParamType='VkFaultData') or (ParamType='VkCommandPoolMemoryConsumption') then begin
+          Define:='VulkanSC';
          end;
         end;
        end;
@@ -4765,6 +5261,9 @@ begin
   ChildItem:=Tag.Items[i];
   if ChildItem is TXMLTag then begin
    ChildTag:=TXMLTag(ChildItem);
+   if not CheckForVulkanAPI(ChildTag) then begin
+    continue;
+   end;
    if ChildTag.Name='enums' then begin
     ParseEnumsTag(ChildTag);
    end;
@@ -4962,6 +5461,7 @@ begin
    OutputPAS.Add('     {$if defined(Fuchsia) and defined(VulkanUseFuchsiaUnits)}Fuchsia,{$ifend}');
    OutputPAS.Add('     {$if defined(DirectFB) and defined(VulkanUseDirectFBUnits)}DirectFB,{$ifend}');
    OutputPAS.Add('     {$if defined(QNX) and defined(VulkanUseQNXUnits)}QNX,{$ifend}');
+   OutputPAS.Add('     {$if defined(Metal) and defined(VulkanUseMetalUnits)}Metal,{$ifend}');
    OutputPAS.Add('     SysUtils;');
    OutputPAS.Add('');
    OutputPAS.Add('const VK_DEFAULT_LIB_NAME={$ifdef Windows}''vulkan-1.dll''{$else}{$ifdef Android}''libvulkan.so''{$else}{$ifdef Unix}''libvulkan.so.1''{$else}''libvulkan''{$endif}{$endif}{$endif};');
@@ -5202,6 +5702,24 @@ begin
    OutputPAS.Add('');
    OutputPAS.AddStrings(AllCommandType);
    OutputPAS.Add('');
+{  OutputPAS.Add('     PPVkNegotiateLayerStructType=^PVkNegotiateLayerStructType;');
+   OutputPAS.Add('     PVkNegotiateLayerStructType=^TVkNegotiateLayerStructType;');
+   OutputPAS.Add('     TVkNegotiateLayerStructType=');
+   OutputPAS.Add('      (');
+   OutputPAS.Add('       LAYER_NEGOTIATE_INTERFACE_STRUCT=1');
+   OutputPAS.Add('      );');
+   OutputPAS.Add('');
+   OutputPAS.Add('     PPVkNegotiateLayerInterface=^PVkNegotiateLayerInterface;');
+   OutputPAS.Add('     PVkNegotiateLayerInterface=^TVkNegotiateLayerInterface;');
+   OutputPAS.Add('     TVkNegotiateLayerInterface=record');
+   OutputPAS.Add('      sType:TVkNegotiateLayerStructType;');
+   OutputPAS.Add('      pNext:pointer;');
+   OutputPAS.Add('      loaderLayerInterfaceVersion:TVkUInt32;');
+   OutputPAS.Add('      pfnGetInstanceProcAddr:TvkGetInstanceProcAddr;');
+   OutputPAS.Add('      pfnGetDeviceProcAddr:TvkGetDeviceProcAddr;');
+   OutputPAS.Add('      pfnGetPhysicalDeviceProcAddr:TGetPhysicalDeviceProcAddr;');
+   OutputPAS.Add('     end;');
+   OutputPAS.Add(''); //}
    OutputPAS.Add('     TVulkan=class');
    OutputPAS.Add('      private');
    OutputPAS.Add('       fCommands:TVulkanCommands;');
@@ -5508,7 +6026,7 @@ begin
   AllDeviceCommands.Free;
  end;
 
- readln;
+ //readln;
 end.
 
 

@@ -3,6 +3,7 @@
 #extension GL_EXT_multiview : enable
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_ARB_shading_language_420pack : enable
+#extension GL_GOOGLE_include_directive : enable
 
 // layout(location = 0) in vec3 inPosition;
 
@@ -10,21 +11,7 @@ layout(location = 0) out vec3 outPosition;
 
 /* clang-format off */
 
-layout(push_constant) uniform PushConstants {
-  uint viewBaseIndex;  //
-  uint countViews;     //
-} pushConstants;
-
-struct View {
-  mat4 viewMatrix;
-  mat4 projectionMatrix;
-  mat4 inverseViewMatrix;
-  mat4 inverseProjectionMatrix;
-};
-
-layout(std140, set = 0, binding = 0) uniform uboViews {
-   View views[256];
-} uView;
+#include "skybox.glsl"
 
 /* clang-format on */
 

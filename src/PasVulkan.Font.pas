@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -721,6 +721,7 @@ begin
 
         if CountGlyphs>0 then begin
          PasMPInstance.Invoke(PasMPInstance.ParallelFor(@fSignedDistanceFieldJobs[0],0,CountGlyphs-1,GenerateSignedDistanceFieldParallelForJobFunction,1,10,nil,0));
+//       GenerateSignedDistanceFieldParallelForJobFunction(nil,0,nil,0,CountGlyphs-1);
         end;
 
        finally

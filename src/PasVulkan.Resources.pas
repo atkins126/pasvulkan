@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -74,6 +74,7 @@ uses {$ifdef Windows}
      {$endif}
      SysUtils,
      Classes,
+     Math,
      PasMP,
      PasJSON,
      PasVulkan.PooledObject,
@@ -93,6 +94,8 @@ type EpvResource=class(Exception);
      TpvResourceManager=class;
 
      TpvResource=class;
+
+     TpvResourceArray=array of TpvResource;
 
      TpvResourceHandle=TpvInt32;
 
@@ -129,7 +132,9 @@ type EpvResource=class(Exception);
        fAssetName:TpvUTF8String;
        fName:TpvUTF8String;
        fTemporary:boolean;
+      public
        constructor CreateTemporary; reintroduce; virtual;
+      protected
        procedure SetUUID(const pUUID:TpvUUID);
        procedure SetFileName(const pFileName:TpvUTF8String);
        procedure SetAssetName(const pAssetName:TpvUTF8String);
@@ -166,12 +171,21 @@ type EpvResource=class(Exception);
               Fail
              );
             PAsyncLoadState=^TAsyncLoadState;
+            TParallelLoadable=
+             (
+              None,
+              SameType,
+              Always
+             );
+            PParallelLoadable=^TParallelLoadable;
        const VirtualFileNamePrefix:TpvUTF8String='virtual://';
       private
        fResourceManager:TpvResourceManager;
        fParent:TpvResource;
+       fParents:TpvResourceArray;
        fResourceClassType:TpvResourceClassType;
        fHandle:TpvResourceHandle;
+       fCreationIndex:TpvUInt64;
        fFileName:TpvUTF8String;
        fAsyncLoadState:TAsyncLoadState;
        fLoaded:boolean;
@@ -182,12 +196,15 @@ type EpvResource=class(Exception);
        fInstanceInterface:IpvResource;
        fOnFinish:TpvResourceOnFinish;
        fReleaseFrameDelay:TPasMPInt32; // for resources with frame-wise in-flight data stuff
+       fIsAsset:boolean;
+       fAssetBasePath:TpvUTF8String;
+       fParallelLoadable:TParallelLoadable;
        procedure SetFileName(const aFileName:TpvUTF8String);
       protected
        function _AddRef:TpvInt32; override; {$ifdef Windows}stdcall{$else}cdecl{$endif};
        function _Release:TpvInt32; override; {$ifdef Windows}stdcall{$else}cdecl{$endif};
       public
-       constructor Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil;const aMetaResource:TpvMetaResource=nil); reintroduce; virtual;
+       constructor Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil;const aMetaResource:TpvMetaResource=nil;const aParallelLoadable:TpvResource.TParallelLoadable=TpvResource.TParallelLoadable.None); reintroduce; virtual;
        destructor Destroy; override;
        procedure PrepareDeferredFree; virtual;
        procedure DeferredFree; virtual;
@@ -224,7 +241,11 @@ type EpvResource=class(Exception);
        property MetaResource:TpvMetaResource read fMetaResource write fMetaResource;
        property OnFinish:TpvResourceOnFinish read fOnFinish write fOnFinish;
        property ReleaseFrameDelay:TPasMPInt32 read fReleaseFrameDelay write fReleaseFrameDelay;
+       property IsAsset:boolean read fIsAsset;
+       property AssetBasePath:TpvUTF8String read fAssetBasePath;
      end;
+
+     { TpvResourceBackgroundLoader }
 
      TpvResourceBackgroundLoader=class(TPasMPThread)
       public
@@ -234,6 +255,8 @@ type EpvResource=class(Exception);
              private
               fResourceBackgroundLoader:TpvResourceBackgroundLoader;
               fResource:TpvResource;
+              fSuccess:Boolean;
+              fStream:TStream;
               fDependencies:TResourcArray;
               fDependents:TResourcArray;
              public
@@ -243,12 +266,35 @@ type EpvResource=class(Exception);
            TQueueItems=TpvDynamicArray<TQueueItem>;
            TQueueItemResourceMap=class(TpvHashMap<TpvResource,TQueueItem>);
            TQueueItemStringMap=class(TpvStringHashMap<TQueueItem>);
+           { TLoadThread }
+           TLoadThread=class(TPasMPThread)
+            private
+             fResourceBackgroundLoader:TpvResourceBackgroundLoader;
+             fResourceManager:TpvResourceManager;
+             fEvent:TPasMPEvent;
+            protected
+             procedure Execute; override;
+            public
+             constructor Create(const aResourceBackgroundLoader:TpvResourceBackgroundLoader); reintroduce;
+             destructor Destroy; override;
+             procedure Signal;
+             procedure Shutdown;
+           end;
+           TLoadThreads=array of TLoadThread;
       private
        fResourceManager:TpvResourceManager;
        fEvent:TPasMPEvent;
-       fLock:TPasMPSlimReaderWriterLock;
+       fLock:TPasMPSpinLock;
        fQueueItems:TQueueItems;
+       fQueueItemLock:TPasMPSpinLock;
        fQueueItemResourceMap:TQueueItemResourceMap;
+       fQueueItemResourceMapLock:TPasMPSpinLock;
+       fToProcessQueueItems:TQueueItems;
+       fCountToProcessQueueItems:TPasMPInt32;
+       fCountProcessedQueueItems:TPasMPInt32;
+       fToProcessQueueItemsEvent:TPasMPEvent;
+       fLoadThreads:TLoadThreads;
+       procedure HandleToProcessQueueItems;
        function QueueResource(const aResource:TpvResource;const aParent:TpvResource):boolean;
        procedure FinalizeQueueItem(const aQueueItem:TQueueItem);
        procedure WaitForResource(const aResource:TpvResource;const aWaitForMode:TpvResourceWaitForMode=TpvResourceWaitForMode.Auto);
@@ -299,21 +345,25 @@ type EpvResource=class(Exception);
        function AllocateHandle(const aResource:TpvResource):TpvResourceHandle;
        procedure FreeHandle(const aHandle:TpvResourceHandle);
        function GetResourceByHandle(const aHandle:TpvResourceHandle):IpvResource;
+       procedure SortDelayedToFreeResourcesByCreationIndices(const aLock:Boolean);
       private
-       fLock:TPasMPMultipleReaderSingleWriterLock;
+       fLock:TPasMPMultipleReaderSingleWriterSpinLock;
        fLocked:TPasMPBool32;
        fActive:TPasMPBool32;
+       fLoadLock:TPasMPCriticalSection;
+       fCreationIndexCounter:TpvUInt64;
        fResourceClassTypeList:TResourceClassTypeList;
-       fResourceClassTypeListLock:TPasMPMultipleReaderSingleWriterLock;
+       fResourceClassTypeListLock:TPasMPMultipleReaderSingleWriterSpinLock;
        fResourceClassTypeMap:TResourceClassTypeMap;
-       fResourceHandleLock:TPasMPMultipleReaderSingleWriterLock;
+       fResourceHandleLock:TPasMPMultipleReaderSingleWriterSpinLock;
        fResourceHandleManager:TResourceHandleManager;
        fResourceHandleMap:TResourceHandleMap;
-       fMetaResourceLock:TPasMPMultipleReaderSingleWriterLock;
+       fMetaResourceLock:TPasMPMultipleReaderSingleWriterSpinLock;
        fMetaResourceList:TMetaResourceList;
        fMetaResourceUUIDMap:TMetaResourceUUIDMap;
        fMetaResourceFileNameMap:TMetaResourceFileNameMap;
        fMetaResourceAssetNameMap:TMetaResourceAssetNameMap;
+       fDelayedToFreeResourcesLock:TPasMPCriticalSection;
        fDelayedToFreeResources:TResourceList;
        fBackgroundLoader:TpvResourceBackgroundLoader;
        fBaseDataPath:TpvUTF8String;
@@ -328,9 +378,9 @@ type EpvResource=class(Exception);
        procedure DestroyDelayedFreeingObjectsWithParent(const aObject:TObject);
        function GetResourceClassType(const aResourceClass:TpvResourceClass):TpvResourceClassType;
        function FindResource(const aResourceClass:TpvResourceClass;const aFileName:TpvUTF8String):TpvResource;
-       function LoadResource(const aResourceClass:TpvResourceClass;const aFileName:TpvUTF8String;const aOnFinish:TpvResourceOnFinish=nil;const aLoadInBackground:boolean=false;const aParent:TpvResource=nil):TpvResource;
+       function LoadResource(const aResourceClass:TpvResourceClass;const aFileName:TpvUTF8String;const aOnFinish:TpvResourceOnFinish=nil;const aLoadInBackground:boolean=false;const aParent:TpvResource=nil;const aParallelLoadable:TpvResource.TParallelLoadable=TpvResource.TParallelLoadable.None):TpvResource;
        function GetResource(const aResourceClass:TpvResourceClass;const aFileName:TpvUTF8String;const aOnFinish:TpvResourceOnFinish=nil):TpvResource;
-       function BackgroundLoadResource(const aResourceClass:TpvResourceClass;const aFileName:TpvUTF8String;const aOnFinish:TpvResourceOnFinish=nil;const aParent:TpvResource=nil):TpvResource;
+       function BackgroundLoadResource(const aResourceClass:TpvResourceClass;const aFileName:TpvUTF8String;const aOnFinish:TpvResourceOnFinish=nil;const aParent:TpvResource=nil;const aParallelLoadable:TpvResource.TParallelLoadable=TpvResource.TParallelLoadable.None):TpvResource;
        function FinishResources(const aTimeout:TpvInt64=5):boolean;
        function WaitForResources(const aTimeout:TpvInt64=-1):boolean;
        function GetNewUUID:TpvUUID;
@@ -345,9 +395,11 @@ type EpvResource=class(Exception);
 
 var AllowExternalResources:boolean=false;
 
+procedure DeferredFreeAndNil(var aObject);
+
 implementation
 
-uses PasVulkan.Application;
+uses PasVulkan.Application,PasVulkan.Utils;
 
 { TpvMetaResource }
 
@@ -537,14 +589,37 @@ end;
 
 { TpvResource }
 
-constructor TpvResource.Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil;const aMetaResource:TpvMetaResource=nil);
+constructor TpvResource.Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource;const aMetaResource:TpvMetaResource;const aParallelLoadable:TpvResource.TParallelLoadable);
 var OldReferenceCounter:TpvInt32;
+    CountParents:TpvSizeInt;
+    Current:TpvResource;
 begin
  inherited Create;
 
  fResourceManager:=aResourceManager;
 
  fParent:=aParent;
+
+ fParallelLoadable:=aParallelLoadable;
+
+ CountParents:=0;
+ Current:=fParent;
+ while assigned(Current) do begin
+  inc(CountParents);
+  Current:=Current.fParent;
+ end;
+
+ fParents:=nil;
+ if CountParents>0 then begin
+  SetLength(fParents,CountParents);
+  CountParents:=0;
+  Current:=fParent;
+  while assigned(Current) do begin
+   fParents[CountParents]:=Current;
+   inc(CountParents);
+   Current:=Current.fParent;
+  end;
+ end;
 
  fHandle:=fResourceManager.AllocateHandle(self);
 
@@ -579,6 +654,20 @@ begin
 
  fResourceClassType:=fResourceManager.GetResourceClassType(TpvResourceClass(ClassType));
 
+ if assigned(fResourceManager) then begin
+  if not fResourceManager.fLocked then begin
+   fResourceManager.fLock.AcquireWrite;
+  end;
+  try
+   fCreationIndex:=fResourceManager.fCreationIndexCounter;
+   inc(fResourceManager.fCreationIndexCounter);
+  finally
+   if not fResourceManager.fLocked then begin
+    fResourceManager.fLock.ReleaseWrite;
+   end;
+  end;
+ end;
+
  if assigned(fResourceManager) and assigned(fResourceClassType) then begin
   if not fResourceManager.fLocked then begin
    fResourceManager.fLock.AcquireWrite;
@@ -591,6 +680,10 @@ begin
    end;
   end;
  end;
+
+ fIsAsset:=false;
+
+ fAssetBasePath:='';
 
 end;
 
@@ -611,9 +704,14 @@ begin
 
    if fIsOnDelayedToFreeResourcesList and assigned(fResourceManager.fDelayedToFreeResources) then begin
     try
-     Index:=fResourceManager.fDelayedToFreeResources.IndexOf(self);
-     if Index>=0 then begin
-      fResourceManager.fDelayedToFreeResources.Extract(Index);
+     fResourceManager.fDelayedToFreeResourcesLock.Acquire;
+     try
+      Index:=fResourceManager.fDelayedToFreeResources.IndexOf(self);
+      if Index>=0 then begin
+       fResourceManager.fDelayedToFreeResources.Extract(Index);
+      end;
+     finally
+      fResourceManager.fDelayedToFreeResourcesLock.Release;
      end;
     finally
      fIsOnDelayedToFreeResourcesList:=false;
@@ -634,13 +732,17 @@ begin
   TPasMPInterlocked.Write(TObject(fMetaResource.fResource),nil);
  end;
 
- fResourceManager.FreeHandle(fHandle);
+ if assigned(fResourceManager) then begin
+  fResourceManager.FreeHandle(fHandle);
+ end;
 
  fHandle:=0;
 
  if assigned(fMetaResource) and fMetaResource.fTemporary then begin
   FreeAndNil(fMetaResource);
  end;
+
+ fParents:=nil;
 
  FillChar(fInstanceInterface,SizeOf(IpvResource),0);
 
@@ -663,7 +765,12 @@ begin
     PrepareDeferredFree;
    finally
     try
-     fResourceManager.fDelayedToFreeResources.Add(self);
+     fResourceManager.fDelayedToFreeResourcesLock.Acquire;
+     try
+      fResourceManager.fDelayedToFreeResources.Add(self);
+     finally
+      fResourceManager.fDelayedToFreeResourcesLock.Release;
+     end;
     finally
      fIsOnDelayedToFreeResourcesList:=true;
     end;
@@ -738,7 +845,12 @@ begin
      PrepareDeferredFree;
     finally
      try
-      fResourceManager.fDelayedToFreeResources.Add(self);
+      fResourceManager.fDelayedToFreeResourcesLock.Acquire;
+      try
+       fResourceManager.fDelayedToFreeResources.Add(self);
+      finally
+       fResourceManager.fDelayedToFreeResourcesLock.Release;
+      end;
      finally
       fIsOnDelayedToFreeResourcesList:=true;
      end;
@@ -778,6 +890,7 @@ end;
 function TpvResource.CreateNewFileStreamFromFileName(const aFileName:TpvUTF8String):TStream;
 begin
  result:=TFileStream.Create(IncludeTrailingPathDelimiter(String(fResourceManager.fBaseDataPath))+String(TpvResourceManager.SanitizeFileName(aFileName)),fmCreate);
+ fIsAsset:=false;
 end;
 
 function TpvResource.GetStreamFromFileName(const aFileName:TpvUTF8String):TStream;
@@ -786,9 +899,12 @@ begin
  SanitizedFileName:=TpvResourceManager.SanitizeFileName(aFileName);
  if pvApplication.Assets.ExistAsset(String(SanitizedFileName)) then begin
   result:=pvApplication.Assets.GetAssetStream(String(SanitizedFileName));
+  fIsAsset:=true;
+  fAssetBasePath:=ExtractFilePath(SanitizedFileName);
  end else begin
   if FileExists(String(SanitizedFileName)) then begin
    result:=TFileStream.Create(String(SanitizedFileName),fmOpenRead);
+   fIsAsset:=false;
   end else begin
    result:=nil;
   end;
@@ -876,13 +992,18 @@ begin
    fAsyncLoadState:=TAsyncLoadState.Loading;
   end;
   LoadMetaData;
-  result:=BeginLoad(aStream);
-  if result then begin
-   result:=EndLoad;
-   fAsyncLoadState:=TAsyncLoadState.Done;
+  fResourceManager.fLoadLock.Acquire;
+  try
+   result:=BeginLoad(aStream);
    if result then begin
-    fLoaded:=true;
+    result:=EndLoad;
+    fAsyncLoadState:=TAsyncLoadState.Done;
+    if result then begin
+     fLoaded:=true;
+    end;
    end;
+  finally
+   fResourceManager.fLoadLock.Release;
   end;
  end;
 end;
@@ -925,11 +1046,22 @@ begin
  inherited Create;
  fResourceBackgroundLoader:=aResourceBackgroundLoader;
  fResource:=aResource;
+ fStream:=nil;
  fDependencies.Initialize;
  fDependents.Initialize;
- fResourceBackgroundLoader.fQueueItems.Add(self);
+ fResourceBackgroundLoader.fQueueItemLock.Acquire;
+ try
+  fResourceBackgroundLoader.fQueueItems.Add(self);
+ finally
+  fResourceBackgroundLoader.fQueueItemLock.Release;
+ end;
  if assigned(fResourceBackgroundLoader) and assigned(fResource) then begin
-  fResourceBackgroundLoader.fQueueItemResourceMap.Add(fResource.GetResource,self);
+  fResourceBackgroundLoader.fQueueItemResourceMapLock.Acquire;
+  try
+   fResourceBackgroundLoader.fQueueItemResourceMap.Add(fResource.GetResource,self);
+  finally
+   fResourceBackgroundLoader.fQueueItemResourceMapLock.Release;
+  end;
  end;
 end;
 
@@ -939,45 +1071,184 @@ begin
  if assigned(fResourceBackgroundLoader) then begin
   try
    if assigned(fResource) then begin
-    fResourceBackgroundLoader.fQueueItemResourceMap.Delete(fResource.GetResource);
+    fResourceBackgroundLoader.fQueueItemResourceMapLock.Acquire;
+    try
+     fResourceBackgroundLoader.fQueueItemResourceMap.Delete(fResource.GetResource);
+    finally
+     fResourceBackgroundLoader.fQueueItemResourceMapLock.Release;
+    end;
    end;
   finally
-   for Index:=0 to fResourceBackgroundLoader.fQueueItems.Count-1 do begin
-    if fResourceBackgroundLoader.fQueueItems.Items[Index]=self then begin
-     fResourceBackgroundLoader.fQueueItems.Delete(Index);
-     break;
+   fResourceBackgroundLoader.fQueueItemLock.Acquire;
+   try
+    for Index:=0 to fResourceBackgroundLoader.fQueueItems.Count-1 do begin
+     if fResourceBackgroundLoader.fQueueItems.Items[Index]=self then begin
+      fResourceBackgroundLoader.fQueueItems.Delete(Index);
+      break;
+     end;
     end;
+   finally
+    fResourceBackgroundLoader.fQueueItemLock.Release;
    end;
   end;
  end;
  fDependencies.Finalize;
  fDependents.Finalize;
+ FreeAndNil(fStream);
  fResource:=nil;
  inherited Destroy;
+end;
+
+{ TpvResourceBackgroundLoader.TLoadThread }
+
+constructor TpvResourceBackgroundLoader.TLoadThread.Create(const aResourceBackgroundLoader:TpvResourceBackgroundLoader);
+begin
+ fResourceBackgroundLoader:=aResourceBackgroundLoader;
+ fResourceManager:=aResourceBackgroundLoader.fResourceManager;
+ fEvent:=TPasMPEvent.Create(nil,false,false,'');
+ inherited Create(false);
+end;
+
+destructor TpvResourceBackgroundLoader.TLoadThread.Destroy;
+begin
+ Shutdown;
+ FreeAndNil(fEvent);
+ inherited Destroy;
+end;
+
+procedure TpvResourceBackgroundLoader.TLoadThread.Execute;
+begin
+ while not Terminated do begin
+  fEvent.WaitFor;
+  if Terminated then begin
+   break;
+  end else begin
+   fResourceBackgroundLoader.HandleToProcessQueueItems;
+  end;
+ end;
+end;
+
+procedure TpvResourceBackgroundLoader.TLoadThread.Signal;
+begin
+ fEvent.SetEvent;
+end;
+
+procedure TpvResourceBackgroundLoader.TLoadThread.Shutdown;
+begin
+ if not Finished then begin
+  Terminate;
+  fEvent.SetEvent;
+  WaitFor;
+ end;
 end;
 
 { TpvResourceBackgroundLoader }
 
 constructor TpvResourceBackgroundLoader.Create(const aResourceManager:TpvResourceManager);
+var Index:TpvSizeInt;
+    AvailableCPUCores:TPasMPAvailableCPUCores;
 begin
+
  fResourceManager:=aResourceManager;
+
  fEvent:=TPasMPEvent.Create(nil,false,false,'');
- fLock:=TPasMPSlimReaderWriterLock.Create;
+
+ fLock:=TPasMPSpinLock.Create;
+
  fQueueItems.Initialize;
+
+ fQueueItemLock:=TPasMPSpinLock.Create;
+
  fQueueItemResourceMap:=TQueueItemResourceMap.Create(nil);
+
+ fQueueItemResourceMapLock:=TPasMPSpinLock.Create;
+
+ fToProcessQueueItems.Initialize;
+
+ fCountToProcessQueueItems:=0;
+
+ fCountProcessedQueueItems:=0;
+
+ fToProcessQueueItemsEvent:=TPasMPEvent.Create(nil,false,false,'');
+
+ fLoadThreads:=nil;
+ AvailableCPUCores:=nil;
+ try
+  SetLength(fLoadThreads,Max(2,TPasMP.GetCountOfHardwareThreads(AvailableCPUCores)-1));
+ finally
+  AvailableCPUCores:=nil;
+ end;
+ for Index:=0 to length(fLoadThreads)-1 do begin
+  fLoadThreads[Index]:=TLoadThread.Create(self);
+ end;
+
  inherited Create(false);
+
 end;
 
 destructor TpvResourceBackgroundLoader.Destroy;
+var Index:TpvSizeInt;
+    LoadThread:TLoadThread;
 begin
+
+ for Index:=0 to length(fLoadThreads)-1 do begin
+  LoadThread:=fLoadThreads[Index];
+  LoadThread.Shutdown;
+  FreeAndNil(fLoadThreads[Index]);
+ end;
+ fLoadThreads:=nil;
+
+ FreeAndNil(fToProcessQueueItemsEvent);
+
+ fToProcessQueueItems.Finalize;
+
  while fQueueItems.Count>0 do begin
   fQueueItems.Items[0].Free;
  end;
  fQueueItems.Finalize;
+
+ FreeAndNil(fQueueItemLock);
+
  FreeAndNil(fQueueItemResourceMap);
+
+ FreeAndNil(fQueueItemResourceMapLock);
+
  FreeAndNil(fEvent);
+
  FreeAndNil(fLock);
+
  inherited Destroy;
+
+end;
+
+procedure TpvResourceBackgroundLoader.HandleToProcessQueueItems;
+var Index:TPasMPInt32;
+    QueueItem:TQueueItem;
+    Resource:TpvResource;
+begin
+ repeat
+  Index:=TPasMPInterlocked.Decrement(fCountToProcessQueueItems);
+  if Index>=0 then begin
+   try
+    QueueItem:=fToProcessQueueItems.Items[Index];
+    Resource:=QueueItem.fResource.GetResource;
+    if assigned(QueueItem.fStream) then begin
+     QueueItem.fSuccess:=Resource.BeginLoad(QueueItem.fStream);
+{    fResourceManager.fLoadLock.Acquire;
+     try
+      QueueItem.fSuccess:=Resource.BeginLoad(QueueItem.fStream);
+     finally
+      fResourceManager.fLoadLock.Release;
+     end;}
+    end;
+   finally
+    TPasMPInterlocked.Increment(fCountProcessedQueueItems);
+   end;
+  end else begin
+   fToProcessQueueItemsEvent.SetEvent;
+   break;
+  end;
+ until false;
 end;
 
 procedure TpvResourceBackgroundLoader.Execute;
@@ -987,7 +1258,7 @@ var Index,
     OtherOtherOtherIndex:TpvSizeInt;
     QueueItem,
     TemporaryQueueItem:TQueueItem;
-    Resource:TpvResource;
+    Resource,TemporaryResource:TpvResource;
     Stream:TStream;
     Success,
     DoWait:boolean;
@@ -1015,67 +1286,194 @@ begin
    try
 
     QueueItem:=nil;
-    for Index:=0 to fQueueItems.Count-1 do begin
-     TemporaryQueueItem:=fQueueItems.Items[Index];
-     if (TemporaryQueueItem.fResource.GetResource.fAsyncLoadState=TpvResource.TAsyncLoadState.Queued) and
-        (TemporaryQueueItem.fDependencies.Count=0) then begin
-      QueueItem:=TemporaryQueueItem;
-      break;
+    fQueueItemLock.Acquire;
+    try
+     for Index:=0 to fQueueItems.Count-1 do begin
+      TemporaryQueueItem:=fQueueItems.Items[Index];
+      if (TemporaryQueueItem.fResource.GetResource.fAsyncLoadState=TpvResource.TAsyncLoadState.Queued) and
+         (TemporaryQueueItem.fDependencies.Count=0) then begin
+       QueueItem:=TemporaryQueueItem;
+       break;
+      end;
      end;
+    finally
+     fQueueItemLock.Release;
     end;
 
     if assigned(QueueItem) then begin
 
      Success:=false;
 
+     fToProcessQueueItems.ClearNoFree;
+
      Resource:=QueueItem.fResource.GetResource;
      Resource.fAsyncLoadState:=TpvResource.TAsyncLoadState.Loading;
 
-     fLock.Release;
-     try
+     if Resource.fParallelLoadable<>TpvResource.TParallelLoadable.None then begin
 
-      Stream:=Resource.GetStreamFromFileName(Resource.fFileName);
-
-      if assigned(Stream) then begin
-
-       try
-        try
-         Resource.LoadMetaData;
-        finally
-         Success:=Resource.BeginLoad(Stream);
-        end;
-       finally
-        FreeAndNil(Stream);
-       end;
-
-      end;
-
-     finally
-      fLock.Acquire;
-     end;
-
-     if QueueItem.fDependents.Count>0 then begin
+      fQueueItemLock.Acquire;
       try
-       for OtherIndex:=0 to QueueItem.fDependents.Count-1 do begin
-        for OtherOtherIndex:=0 to fQueueItems.Count-1 do begin
-         TemporaryQueueItem:=fQueueItems.Items[OtherOtherIndex];
-         for OtherOtherOtherIndex:=0 to TemporaryQueueItem.fDependencies.Count-1 do begin
-          if TemporaryQueueItem.fDependencies.Items[OtherOtherOtherIndex]=QueueItem.fDependents.Items[OtherIndex] then begin
-           TemporaryQueueItem.fDependencies.Delete(OtherOtherOtherIndex);
-           break;
+       fToProcessQueueItems.Add(QueueItem);
+       for Index:=0 to fQueueItems.Count-1 do begin
+        TemporaryQueueItem:=fQueueItems.Items[Index];
+        if TemporaryQueueItem<>QueueItem then begin
+         TemporaryResource:=TemporaryQueueItem.fResource.GetResource;
+         if (TemporaryResource.fAsyncLoadState=TpvResource.TAsyncLoadState.Queued) and
+            (TemporaryQueueItem.fDependencies.Count=0) and
+            (((Resource.fParallelLoadable=TpvResource.TParallelLoadable.Always) and
+              (TemporaryResource.fParallelLoadable=TpvResource.TParallelLoadable.Always)) or
+             (((Resource.fParallelLoadable=TpvResource.TParallelLoadable.SameType) and
+               (TemporaryResource.fParallelLoadable=TpvResource.TParallelLoadable.SameType)) and
+               (Resource.ClassType=TemporaryResource.ClassType))) then begin
+          try
+           TemporaryResource.fAsyncLoadState:=TpvResource.TAsyncLoadState.Loading;
+          finally
+           fToProcessQueueItems.Add(TemporaryQueueItem);
           end;
          end;
         end;
        end;
       finally
-       QueueItem.fDependents.Clear;
+       fQueueItemLock.Release;
       end;
-     end;
 
-     if Success then begin
-      Resource.fAsyncLoadState:=TpvResource.TAsyncLoadState.Success;
+      fLock.Release;
+      try
+
+       for Index:=0 to fToProcessQueueItems.Count-1 do begin
+        QueueItem:=fToProcessQueueItems.Items[Index];
+        Resource:=QueueItem.fResource.GetResource;
+        QueueItem.fSuccess:=false;
+        QueueItem.fStream:=Resource.GetStreamFromFileName(Resource.fFileName);
+       end;
+
+       fResourceManager.fLoadLock.Acquire;
+       try
+
+        fCountToProcessQueueItems:=fToProcessQueueItems.Count;
+        fCountProcessedQueueItems:=0;
+        for Index:=0 to length(fLoadThreads)-1 do begin
+         fLoadThreads[Index].Signal;
+        end;
+
+        HandleToProcessQueueItems;
+
+        repeat
+         fToProcessQueueItemsEvent.WaitFor(10);
+        until (fCountToProcessQueueItems<=0) and (fCountProcessedQueueItems>=fToProcessQueueItems.Count);
+
+       finally
+        fResourceManager.fLoadLock.Release;
+       end;
+
+       for Index:=0 to fToProcessQueueItems.Count-1 do begin
+        QueueItem:=fToProcessQueueItems.Items[Index];
+        FreeAndNil(QueueItem.fStream);
+       end;
+
+      finally
+       fLock.Acquire;
+      end;
+
+      for Index:=0 to fToProcessQueueItems.Count-1 do begin
+
+       QueueItem:=fToProcessQueueItems.Items[Index];
+
+       Resource:=QueueItem.fResource.GetResource;
+
+       if QueueItem.fDependents.Count>0 then begin
+        try
+         fQueueItemLock.Acquire;
+         try
+          for OtherIndex:=0 to QueueItem.fDependents.Count-1 do begin
+           for OtherOtherIndex:=0 to fQueueItems.Count-1 do begin
+            TemporaryQueueItem:=fQueueItems.Items[OtherOtherIndex];
+            for OtherOtherOtherIndex:=0 to TemporaryQueueItem.fDependencies.Count-1 do begin
+             if TemporaryQueueItem.fDependencies.Items[OtherOtherOtherIndex]=QueueItem.fDependents.Items[OtherIndex] then begin
+              TemporaryQueueItem.fDependencies.Delete(OtherOtherOtherIndex);
+              break;
+             end;
+            end;
+           end;
+          end;
+         finally
+          fQueueItemLock.Release;
+         end;
+        finally
+         QueueItem.fDependents.Clear;
+        end;
+       end;
+
+       if QueueItem.fSuccess then begin
+        Resource.fAsyncLoadState:=TpvResource.TAsyncLoadState.Success;
+       end else begin
+        Resource.fAsyncLoadState:=TpvResource.TAsyncLoadState.Fail;
+       end;
+
+      end;
+
      end else begin
-      Resource.fAsyncLoadState:=TpvResource.TAsyncLoadState.Fail;
+
+      Resource:=QueueItem.fResource.GetResource;
+      Resource.fAsyncLoadState:=TpvResource.TAsyncLoadState.Loading;
+
+      fLock.Release;
+      try
+
+       Stream:=Resource.GetStreamFromFileName(Resource.fFileName);
+
+       if assigned(Stream) then begin
+
+        try
+         try
+          Resource.LoadMetaData;
+         finally
+          fResourceManager.fLoadLock.Acquire;
+          try
+           Success:=Resource.BeginLoad(Stream);
+          finally
+           fResourceManager.fLoadLock.Release;
+          end;
+         end;
+        finally
+         FreeAndNil(Stream);
+        end;
+
+       end;
+
+      finally
+       fLock.Acquire;
+      end;
+
+      if QueueItem.fDependents.Count>0 then begin
+       try
+        fQueueItemLock.Acquire;
+        try
+         for OtherIndex:=0 to QueueItem.fDependents.Count-1 do begin
+          for OtherOtherIndex:=0 to fQueueItems.Count-1 do begin
+           TemporaryQueueItem:=fQueueItems.Items[OtherOtherIndex];
+           for OtherOtherOtherIndex:=0 to TemporaryQueueItem.fDependencies.Count-1 do begin
+            if TemporaryQueueItem.fDependencies.Items[OtherOtherOtherIndex]=QueueItem.fDependents.Items[OtherIndex] then begin
+             TemporaryQueueItem.fDependencies.Delete(OtherOtherOtherIndex);
+             break;
+            end;
+           end;
+          end;
+         end;
+        finally
+         fQueueItemLock.Release;
+        end;
+       finally
+        QueueItem.fDependents.Clear;
+       end;
+      end;
+
+      if Success then begin
+       Resource.fAsyncLoadState:=TpvResource.TAsyncLoadState.Success;
+      end else begin
+       Resource.fAsyncLoadState:=TpvResource.TAsyncLoadState.Fail;
+      end;
+
      end;
 
      DoWait:=false;
@@ -1088,6 +1486,7 @@ begin
 
   end;
  end;
+
 end;
 
 function TpvResourceBackgroundLoader.QueueResource(const aResource:TpvResource;const aParent:TpvResource):boolean;
@@ -1105,7 +1504,12 @@ begin
 
   Resource:=aResource.GetResource;
 
-  QueueItem:=fQueueItemResourceMap.Values[Resource];
+  fQueueItemResourceMapLock.Acquire;
+  try
+   QueueItem:=fQueueItemResourceMap.Values[Resource];
+  finally
+   fQueueItemResourceMapLock.Release;
+  end;
 
   if not assigned(QueueItem) then begin
 
@@ -1115,7 +1519,12 @@ begin
 
    if assigned(aParent) then begin
 
-    TemporaryQueueItem:=fQueueItemResourceMap.Values[aParent.GetResource];
+    fQueueItemResourceMapLock.Acquire;
+    try
+     TemporaryQueueItem:=fQueueItemResourceMap.Values[aParent.GetResource];
+    finally
+     fQueueItemResourceMapLock.Release;
+    end;
 
     if assigned(TemporaryQueueItem) then begin
 
@@ -1174,7 +1583,12 @@ begin
   if Success then begin
    fLock.Release;
    try
-    Success:=Resource.EndLoad;
+    fResourceManager.fLoadLock.Acquire;
+    try
+     Success:=Resource.EndLoad;
+    finally
+     fResourceManager.fLoadLock.Release;
+    end;
    finally
     fLock.Acquire;
    end;
@@ -1203,7 +1617,12 @@ begin
  fLock.Acquire;
  try
 
-  QueueItem:=fQueueItemResourceMap.Values[aResource];
+  fQueueItemResourceMapLock.Acquire;
+  try
+   QueueItem:=fQueueItemResourceMap.Values[aResource];
+  finally
+   fQueueItemResourceMapLock.Release;
+  end;
   if assigned(QueueItem) then begin
 
    while (QueueItem.fDependencies.Count>0) or
@@ -1218,7 +1637,7 @@ begin
     end;
    end;
 
-   if (aWaitForMode=TpvResourceWaitForMode.Process) or ((aWaitForMode=TpvResourceWaitForMode.Auto) and (GetCurrentThreadID=MainThreadID))  then begin
+   if (aWaitForMode=TpvResourceWaitForMode.Process) or ((aWaitForMode=TpvResourceWaitForMode.Auto) and (GetCurrentThreadID=MainThreadID)) then begin
 
     fLock.Release;
     try
@@ -1260,9 +1679,22 @@ begin
  result:=true;
 
  Index:=0;
- while Index<fQueueItems.Count do begin
+ while true do begin
 
-  QueueItem:=fQueueItems.Items[Index];
+  fQueueItemLock.Acquire;
+  try
+   if Index<fQueueItems.Count then begin
+    QueueItem:=fQueueItems.Items[Index];
+   end else begin
+    QueueItem:=nil;
+   end;
+  finally
+   fQueueItemLock.Release;
+  end;
+
+  if not assigned(QueueItem) then begin
+   break;
+  end;
 
   Resource:=QueueItem.fResource;
   try
@@ -1304,7 +1736,12 @@ begin
  fLock.Acquire;
  try
   ProcessIteration(pvApplication.HighResolutionTimer.GetTime,aTimeOut);
-  result:=fQueueItems.Count=0;
+  fQueueItemLock.Acquire;
+  try
+   result:=fQueueItems.Count=0;
+  finally
+   fQueueItemLock.Release;
+  end;
  finally
   fLock.Release;
  end;
@@ -1312,14 +1749,30 @@ end;
 
 function TpvResourceBackgroundLoader.WaitForResources(const aTimeout:TpvInt64=-1):boolean;
 var Start:TpvHighResolutionTime;
+    OK:boolean;
 begin
  Start:=pvApplication.HighResolutionTimer.GetTime;
  fLock.Acquire;
  try
-  while (fQueueItems.Count>0) and ProcessIteration(Start,aTimeout) do begin
-   TPasMP.Relax;
+  repeat
+   fQueueItemLock.Acquire;
+   try
+    OK:=fQueueItems.Count>0;
+   finally
+    fQueueItemLock.Release;
+   end;
+   if OK and ProcessIteration(Start,aTimeout) then begin
+    TPasMP.Relax;
+   end else begin
+    break;
+   end;
+  until false;
+  fQueueItemLock.Acquire;
+  try
+   result:=fQueueItems.Count=0;
+  finally
+   fQueueItemLock.Release;
   end;
-  result:=fQueueItems.Count=0;
  finally
   fLock.Release;
  end;
@@ -1329,7 +1782,12 @@ function TpvResourceBackgroundLoader.GetCountOfQueuedResources:TpvSizeInt;
 begin
  fLock.Acquire;
  try
-  result:=fQueueItems.Count;
+  fQueueItemLock.Acquire;
+  try
+   result:=fQueueItems.Count;
+  finally
+   fQueueItemLock.Release;
+  end;
  finally
   fLock.Release;
  end;
@@ -1386,18 +1844,22 @@ constructor TpvResourceManager.Create;
 begin
  inherited Create;
 
- fLock:=TPasMPMultipleReaderSingleWriterLock.Create;
+ fLock:=TPasMPMultipleReaderSingleWriterSpinLock.Create;
 
  fLocked:=false;
+
+ fLoadLock:=TPasMPCriticalSection.Create;
+
+ fCreationIndexCounter:=0;
 
  fResourceClassTypeList:=TResourceClassTypeList.Create;
  fResourceClassTypeList.OwnsObjects:=true;
 
- fResourceClassTypeListLock:=TPasMPMultipleReaderSingleWriterLock.Create;
+ fResourceClassTypeListLock:=TPasMPMultipleReaderSingleWriterSpinLock.Create;
 
  fResourceClassTypeMap:=TResourceClassTypeMap.Create(nil);
 
- fResourceHandleLock:=TPasMPMultipleReaderSingleWriterLock.Create;
+ fResourceHandleLock:=TPasMPMultipleReaderSingleWriterSpinLock.Create;
 
  fResourceHandleManager:=TResourceHandleManager.Create;
 
@@ -1407,10 +1869,12 @@ begin
   fBaseDataPath:=TpvUTF8String(pvApplication.Assets.BasePath);
  end;
 
+ fDelayedToFreeResourcesLock:=TPasMPCriticalSection.Create;
+
  fDelayedToFreeResources:=TResourceList.Create;
  fDelayedToFreeResources.OwnsObjects:=true;
 
- fMetaResourceLock:=TPasMPMultipleReaderSingleWriterLock.Create;
+ fMetaResourceLock:=TPasMPMultipleReaderSingleWriterSpinLock.Create;
  fMetaResourceList:=TMetaResourceList.Create;
  fMetaResourceList.OwnsObjects:=false;
  fMetaResourceUUIDMap:=TMetaResourceUUIDMap.Create(nil);
@@ -1431,6 +1895,8 @@ begin
  FreeAndNil(fBackgroundLoader);
 
  FreeAndNil(fDelayedToFreeResources);
+
+ FreeAndNil(fDelayedToFreeResourcesLock);
 
  FreeAndNil(fResourceHandleManager);
 
@@ -1456,6 +1922,8 @@ begin
  FreeAndNil(fMetaResourceAssetNameMap);
 
  FreeAndNil(fMetaResourceLock);
+
+ FreeAndNil(fLoadLock);
 
  FreeAndNil(fLock);
 
@@ -1554,8 +2022,14 @@ begin
    fBackgroundLoader.WaitFor;
   end;
 
-  while fDelayedToFreeResources.Count>0 do begin
-   fDelayedToFreeResources.Delete(fDelayedToFreeResources.Count-1);
+  fDelayedToFreeResourcesLock.Acquire;
+  try
+   SortDelayedToFreeResourcesByCreationIndices(false);
+   while fDelayedToFreeResources.Count>0 do begin
+    fDelayedToFreeResources.Delete(fDelayedToFreeResources.Count-1);
+   end;
+  finally
+   fDelayedToFreeResourcesLock.Release;
   end;
   FreeAndNil(fDelayedToFreeResources);
 
@@ -1636,32 +2110,73 @@ begin
 
 end;
 
+function TpvResourceManagerSortDelayedToFreeResourcesByCreationIndicesCompare(const a,b:Pointer):TpvInt32;
+begin
+ if TpvResource(a).fCreationIndex<TpvResource(b).fCreationIndex then begin
+  result:=-1;
+ end else if TpvResource(a).fCreationIndex>TpvResource(b).fCreationIndex then begin
+  result:=1;
+ end else begin
+  result:=0;
+ end;
+end;
+
+procedure TpvResourceManager.SortDelayedToFreeResourcesByCreationIndices(const aLock:Boolean);
+begin
+ if aLock then begin
+  fDelayedToFreeResourcesLock.Acquire;
+ end;
+ try
+  if fDelayedToFreeResources.Count>1 then begin
+   IndirectIntroSort(@fDelayedToFreeResources.RawItems[0],0,fDelayedToFreeResources.Count-1,TpvResourceManagerSortDelayedToFreeResourcesByCreationIndicesCompare);
+  end;
+ finally
+  if aLock then begin
+   fDelayedToFreeResourcesLock.Release;
+  end;
+ end;
+end;
+
 procedure TpvResourceManager.DestroyDelayedFreeingObjectsWithParent(const aObject:TObject);
-var Index:TpvSizeInt;
+var Index,OtherIndex:TpvSizeInt;
     Resource,Current:TpvResource;
     OK:boolean;
 begin
- Index:=0;
- while Index<fDelayedToFreeResources.Count do begin
-  OK:=false;
-  Resource:=fDelayedToFreeResources[Index];
-  Current:=Resource.fParent;
-  while assigned(Current) do begin
-   if Current=aObject then begin
-    OK:=true;
-    break;
-   end;
-   Current:=Current.fParent;
-  end;
-  if OK then begin
-   Resource:=fDelayedToFreeResources.Extract(Index);
+
+ fDelayedToFreeResourcesLock.Acquire;
+ try
+
+  SortDelayedToFreeResourcesByCreationIndices(false);
+
+  for Index:=fDelayedToFreeResources.Count-1 downto 0 do begin
+   OK:=false;
+   Resource:=fDelayedToFreeResources[Index];
    if assigned(Resource) then begin
-    FreeAndNil(Resource);
+    if Resource.fParent=aObject then begin
+     OK:=true;
+    end else begin
+     for OtherIndex:=0 to length(Resource.fParents)-1 do begin
+      Current:=Resource.fParents[OtherIndex];
+      if Current=aObject then begin
+       OK:=true;
+       break;
+      end;
+     end;
+    end;
    end;
-  end else begin
-   inc(Index);
+   if OK then begin
+    Resource:=fDelayedToFreeResources.Extract(Index);
+    if assigned(Resource) then begin
+     Resource.fIsOnDelayedToFreeResourcesList:=false;
+     FreeAndNil(Resource);
+    end;
+   end;
   end;
+
+ finally
+  fDelayedToFreeResourcesLock.Release;
  end;
+
 end;
 
 function TpvResourceManager.GetResourceClassType(const aResourceClass:TpvResourceClass):TpvResourceClassType;
@@ -1702,7 +2217,7 @@ begin
  end;
 end;
 
-function TpvResourceManager.LoadResource(const aResourceClass:TpvResourceClass;const aFileName:TpvUTF8String;const aOnFinish:TpvResourceOnFinish=nil;const aLoadInBackground:boolean=false;const aParent:TpvResource=nil):TpvResource;
+function TpvResourceManager.LoadResource(const aResourceClass:TpvResourceClass;const aFileName:TpvUTF8String;const aOnFinish:TpvResourceOnFinish;const aLoadInBackground:boolean;const aParent:TpvResource;const aParallelLoadable:TpvResource.TParallelLoadable):TpvResource;
 var ResourceClassType:TpvResourceClassType;
     Resource:TpvResource;
     FileName:TpvUTF8String;
@@ -1739,7 +2254,7 @@ begin
    try
     fLocked:=true;
     try
-     Resource:=aResourceClass.Create(self,aParent);
+     Resource:=aResourceClass.Create(self,aParent,nil,aParallelLoadable);
      Resource.SetFileName(FileName);
      Resource.fOnFinish:=aOnFinish;
     finally
@@ -1770,22 +2285,30 @@ begin
  end;
 end;
 
-function TpvResourceManager.GetResource(const aResourceClass:TpvResourceClass;const aFileName:TpvUTF8String;const aOnFinish:TpvResourceOnFinish=nil):TpvResource;
+function TpvResourceManager.GetResource(const aResourceClass:TpvResourceClass;const aFileName:TpvUTF8String;const aOnFinish:TpvResourceOnFinish):TpvResource;
 begin
  result:=LoadResource(aResourceClass,aFileName,aOnFinish,false,nil);
 end;
 
-function TpvResourceManager.BackgroundLoadResource(const aResourceClass:TpvResourceClass;const aFileName:TpvUTF8String;const aOnFinish:TpvResourceOnFinish=nil;const aParent:TpvResource=nil):TpvResource;
+function TpvResourceManager.BackgroundLoadResource(const aResourceClass:TpvResourceClass;const aFileName:TpvUTF8String;const aOnFinish:TpvResourceOnFinish;const aParent:TpvResource;const aParallelLoadable:TpvResource.TParallelLoadable):TpvResource;
 begin
- result:=LoadResource(aResourceClass,aFileName,aOnFinish,true,aParent);
+ result:=LoadResource(aResourceClass,aFileName,aOnFinish,true,aParent,aParallelLoadable);
 end;
 
 function TpvResourceManager.FinishResources(const aTimeout:TpvInt64=5):boolean;
 var Index:TpvSizeInt;
 begin
- for Index:=fDelayedToFreeResources.Count-1 downto 0 do begin
-  if TPasMPInterlocked.Decrement(fDelayedToFreeResources[Index].fReleaseFrameDelay)=0 then begin
-   fDelayedToFreeResources.Delete(Index);
+ if fDelayedToFreeResources.Count>0 then begin
+  fDelayedToFreeResourcesLock.Acquire;
+  try
+   SortDelayedToFreeResourcesByCreationIndices(false);
+   for Index:=fDelayedToFreeResources.Count-1 downto 0 do begin
+    if TPasMPInterlocked.Decrement(fDelayedToFreeResources[Index].fReleaseFrameDelay)=0 then begin
+     fDelayedToFreeResources.Delete(Index);
+    end;
+   end;
+  finally
+   fDelayedToFreeResourcesLock.Release;
   end;
  end;
  result:=fBackgroundLoader.Process(aTimeout);
@@ -1801,6 +2324,21 @@ begin
  repeat
   result:=TpvUUID.Create;
  until not assigned(GetMetaResourceByUUID(result));
+end;
+
+procedure DeferredFreeAndNil(var aObject);
+begin
+ if assigned(pointer(aObject)) then begin
+  try
+   if TObject(aObject) is TpvResource then begin
+    TpvResource(AObject).DeferredFree;
+   end else begin
+    TObject(AObject).Free;
+   end;
+  finally
+   TObject(aObject):=nil;
+  end;
+ end;
 end;
 
 initialization

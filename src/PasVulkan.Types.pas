@@ -6,7 +6,7 @@
  *                                zlib license                                *
  *============================================================================*
  *                                                                            *
- * Copyright (C) 2016-2020, Benjamin Rosseaux (benjamin@rosseaux.de)          *
+ * Copyright (C) 2016-2024, Benjamin Rosseaux (benjamin@rosseaux.de)          *
  *                                                                            *
  * This software is provided 'as-is', without any express or implied          *
  * warranty. In no event will the authors be held liable for any damages      *
@@ -146,6 +146,10 @@ type PPpvInt8=^PpvInt8;
 
      TpvFloats=array of TpvFloat;
 
+     PPpvFloatArray=^PpvFloatArray;
+     PpvFloatArray=^TpvFloatArray;
+     TpvFloatArray=array[0..65535] of TpvFloat;
+
      PPpvDouble=^PpvDouble;
      PpvDouble=^TpvDouble;
      TpvDouble=Double;
@@ -198,6 +202,8 @@ type PPpvInt8=^PpvInt8;
      PPpvSizeInt=^PpvSizeInt;
      PpvSizeInt=^TpvSizeInt;
      TpvSizeInt=TpvPtrInt;
+
+     TpvSizeIntDynamicArray=array of TpvSizeInt;
 
      PPpvNativeUInt=^PpvNativeUInt;
      PpvNativeUInt=^TpvNativeUInt;
