@@ -132,6 +132,7 @@ type TpvScene3DAtmosphere=class;
              CountViews:TpvInt32;
              FrameIndex:TpvUInt32;
              Flags:TpvUInt32;
+             CountSamples:TpvUInt32;
             end;
             PCloudRaymarchingPushConstants=^TCloudRaymarchingPushConstants;
             TRaymarchingPushConstants=packed record
@@ -139,6 +140,7 @@ type TpvScene3DAtmosphere=class;
              CountViews:TpvInt32;
              FrameIndex:TpvUInt32;
              Flags:TpvUInt32;
+             CountSamples:TpvUInt32;
             end;
             PRaymarchingPushConstants=^TRaymarchingPushConstants;
             TCloudWeatherMapPushConstants=packed record
@@ -452,6 +454,14 @@ type TpvScene3DAtmosphere=class;
               RayMinSteps:TpvUInt32;
               RayMaxSteps:TpvUInt32;
 
+              OuterSpaceRayMinSteps:TpvUInt32;
+              OuterSpaceRayMaxSteps:TpvUInt32;
+
+              DirectScatteringIntensity:TpvFloat;
+              IndirectScatteringIntensity:TpvFloat;
+
+              AmbientLightIntensity:TpvFloat;
+
               LayerLow:TVolumetricCloudLayerLow;
           
               LayerHigh:TVolumetricCloudLayerHigh;
@@ -587,6 +597,16 @@ type TpvScene3DAtmosphere=class;
               RayMinSteps:TpvUInt32;
               RayMaxSteps:TpvUInt32;
              
+              OuterSpaceRayMinSteps:TpvUInt32;
+              OuterSpaceRayMaxSteps:TpvUInt32;
+              DirectScatteringIntensity:TpvFloat;
+              IndirectScatteringIntensity:TpvFloat;
+
+              AmbientLightIntensity:TpvFloat;
+              Padding0:TpvFloat;
+              Padding1:TpvFloat;
+              Padding2:TpvFloat;
+
               LayerLow:TGPUVolumetricCloudLayerLow;
               LayerHigh:TGPUVolumetricCloudLayerHigh;
              
@@ -1538,6 +1558,11 @@ begin
  DensityAlongConeLengthFarMultiplier:=3.0;
  RayMinSteps:=64;
  RayMaxSteps:=128;
+ OuterSpaceRayMinSteps:=64;
+ OuterSpaceRayMaxSteps:=256;
+ DirectScatteringIntensity:=1.0;
+ IndirectScatteringIntensity:=1.0;
+ AmbientLightIntensity:=1.0;
  LayerLow.Initialize;
  LayerHigh.Initialize;
 end;
@@ -1563,6 +1588,11 @@ begin
   DensityAlongConeLengthFarMultiplier:=TPasJSON.GetNumber(JSONRootObject.Properties['densityalongconelengthfarmultiplier'],DensityAlongConeLengthFarMultiplier);
   RayMinSteps:=TPasJSON.GetInt64(JSONRootObject.Properties['rayminsteps'],RayMinSteps);
   RayMaxSteps:=TPasJSON.GetInt64(JSONRootObject.Properties['raymaxsteps'],RayMaxSteps);
+  OuterSpaceRayMinSteps:=TPasJSON.GetInt64(JSONRootObject.Properties['outerspacerayminsteps'],OuterSpaceRayMinSteps);
+  OuterSpaceRayMaxSteps:=TPasJSON.GetInt64(JSONRootObject.Properties['outerspaceraymaxsteps'],OuterSpaceRayMaxSteps);
+  DirectScatteringIntensity:=TPasJSON.GetNumber(JSONRootObject.Properties['directscatteringintensity'],DirectScatteringIntensity);
+  IndirectScatteringIntensity:=TPasJSON.GetNumber(JSONRootObject.Properties['indirectscatteringintensity'],IndirectScatteringIntensity);
+  AmbientLightIntensity:=TPasJSON.GetNumber(JSONRootObject.Properties['ambientlightintensity'],AmbientLightIntensity);
   LayerLow.LoadFromJSON(JSONRootObject.Properties['layerlow']);
   LayerHigh.LoadFromJSON(JSONRootObject.Properties['layerhigh']);
  end;
@@ -1613,6 +1643,11 @@ begin
  result.Add('densityalongconelengthfarmultiplier',TPasJSONItemNumber.Create(DensityAlongConeLengthFarMultiplier));
  result.Add('rayminsteps',TPasJSONItemNumber.Create(RayMinSteps));
  result.Add('raymaxsteps',TPasJSONItemNumber.Create(RayMaxSteps));
+ result.Add('outerspacerayminsteps',TPasJSONItemNumber.Create(OuterSpaceRayMinSteps));
+ result.Add('outerspaceraymaxsteps',TPasJSONItemNumber.Create(OuterSpaceRayMaxSteps));
+ result.Add('directscatteringintensity',TPasJSONItemNumber.Create(DirectScatteringIntensity));
+ result.Add('indirectscatteringintensity',TPasJSONItemNumber.Create(IndirectScatteringIntensity));
+ result.Add('ambientlightintensity',TPasJSONItemNumber.Create(AmbientLightIntensity));
  result.Add('layerlow',LayerLow.SaveToJSON);
  result.Add('layerhigh',LayerHigh.SaveToJSON);
 end;
@@ -2036,6 +2071,13 @@ begin
 
  RayMinSteps:=aVolumetricCloudParameters.RayMinSteps;
  RayMaxSteps:=aVolumetricCloudParameters.RayMaxSteps;
+
+ OuterSpaceRayMinSteps:=aVolumetricCloudParameters.OuterSpaceRayMinSteps;
+ OuterSpaceRayMaxSteps:=aVolumetricCloudParameters.OuterSpaceRayMaxSteps;
+
+ DirectScatteringIntensity:=aVolumetricCloudParameters.DirectScatteringIntensity;
+ IndirectScatteringIntensity:=aVolumetricCloudParameters.IndirectScatteringIntensity;
+ AmbientLightIntensity:=aVolumetricCloudParameters.AmbientLightIntensity;
 
  LayerLow.Assign(aVolumetricCloudParameters.LayerLow); 
  LayerHigh.Assign(aVolumetricCloudParameters.LayerHigh);
@@ -2544,7 +2586,7 @@ begin
                                                             TVkDescriptorPoolCreateFlags(VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT_EXT),
                                                             TpvScene3D(fAtmosphere.fScene3D).CountInFlightFrames*1);
  fCubeMapPassDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,TpvScene3D(fAtmosphere.fScene3D).CountInFlightFrames*1);
- fCubeMapPassDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,TpvScene3D(fAtmosphere.fScene3D).CountInFlightFrames*2);
+ fCubeMapPassDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,TpvScene3D(fAtmosphere.fScene3D).CountInFlightFrames*3);
  fCubeMapPassDescriptorPool.AddDescriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,TpvScene3D(fAtmosphere.fScene3D).CountInFlightFrames*1);
  fCubeMapPassDescriptorPool.Initialize;
  TpvScene3D(fAtmosphere.fScene3D).VulkanDevice.DebugUtils.SetObjectName(fCubeMapPassDescriptorPool.Handle,VK_OBJECT_TYPE_DESCRIPTOR_POOL,'CubeMapPassDescriptorPool');
@@ -2588,6 +2630,17 @@ begin
                                                                       false);
 
   fCubeMapPassDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(3,
+                                                                      0,
+                                                                      1,
+                                                                      TVkDescriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER),
+                                                                      [TVkDescriptorImageInfo.Create(TpvScene3DRenderer(fRendererInstance).Renderer.ClampedSampler.Handle,
+                                                                                                     fSkyLuminanceLUTTexture.VulkanImageView.Handle,
+                                                                                                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)],
+                                                                      [],
+                                                                      [],
+                                                                      false);
+
+  fCubeMapPassDescriptorSets[InFlightFrameIndex].WriteToDescriptorSet(4,
                                                                       0,
                                                                       1,
                                                                       TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
@@ -4574,8 +4627,15 @@ begin
                                              TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),
                                              []);
 
-  // Atmosphere parameters
+  // Sky luminance LUT texture
   fCubeMapPassDescriptorSetLayout.AddBinding(3,
+                                             VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                             1,
+                                             TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),
+                                             []);
+
+  // Atmosphere parameters
+  fCubeMapPassDescriptorSetLayout.AddBinding(4,
                                              VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                                              1,
                                              TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),

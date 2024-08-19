@@ -11,6 +11,8 @@
 // Participating media and volumetric integration: https://media.contentapi.ea.com/content/dam/eacom/frostbite/files/s2016-pbs-frostbite-sky-clouds-new.pdf
 //     Small example: https://www.shadertoy.com/view/XlBSRz
 
+//#define SHADOWMAP
+
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_ARB_shading_language_420pack : enable
 #extension GL_GOOGLE_include_directive : enable
@@ -32,6 +34,8 @@
 
 /* clang-format on */
 
+#undef SHADOWS
+
 #define MULTISCATAPPROX_ENABLED
 #ifdef SHADOWS
  #define SHADOWS_ENABLED
@@ -44,6 +48,7 @@
 #define FLAGS_USE_FAST_AERIAL_PERSPECTIVE 2u
 #define FLAGS_USE_BLUE_NOISE 4u
 #define FLAGS_SHADOWS 8u
+#define PUSH_CONSTANT_FLAG_REVERSE_DEPTH 65536u
 
 // Push constants
 layout(push_constant, std140) uniform PushConstants {
@@ -51,6 +56,7 @@ layout(push_constant, std140) uniform PushConstants {
   int countViews;
   int frameIndex;
   uint flags;
+  int countSamples;
 } pushConstants;
 
 #include "globaldescriptorset.glsl"
@@ -64,6 +70,9 @@ layout(push_constant, std140) uniform PushConstants {
   #include "raytracing.glsl"
 #endif
 
+#ifdef SHADOWMAP
+
+#else
 #if 1 //!defined(RAYTRACING)
 #define NUM_SHADOW_CASCADES 4
 const uint SHADOWMAP_MODE_NONE = 1;
@@ -74,35 +83,46 @@ const uint SHADOWMAP_MODE_MSM = 5;
 
 #define inFrameIndex pushConstants.frameIndex
 
-layout(set = 2, binding = 4, std140) uniform uboCascadedShadowMaps {
+layout(set = 3, binding = 0, std140) uniform uboCascadedShadowMaps {
   mat4 shadowMapMatrices[NUM_SHADOW_CASCADES];
   vec4 shadowMapSplitDepthsScales[NUM_SHADOW_CASCADES];
   vec4 constantBiasNormalBiasSlopeBiasClamp[NUM_SHADOW_CASCADES];
   uvec4 metaData; // x = type
 } uCascadedShadowMaps;
 
-layout(set = 2, binding = 5) uniform sampler2DArray uCascadedShadowMapTexture;
+layout(set = 3, binding = 1) uniform sampler2DArray uCascadedShadowMapTexture;
 
 #ifdef PCFPCSS
 
 // Yay! Binding Aliasing! :-)
-layout(set = 2, binding = 5) uniform sampler2DArrayShadow uCascadedShadowMapTextureShadow;
+layout(set = 3, binding = 1) uniform sampler2DArrayShadow uCascadedShadowMapTextureShadow;
 
 #endif // PCFPCSS
 #endif // !RAYTRACING 
 
 vec3 inWorldSpacePosition, workNormal;
-#endif // SHADOWS
 
 #include "shadows.glsl"
+
+#endif // SHADOWMAP
+
+#endif // SHADOWS
 
 #include "atmosphere_common.glsl"
 
 layout(location = 0) in vec2 inTexCoord;
 
+#ifdef SHADOWMAP
+
+layout(location = 0) out vec4 outMSMCoefficients;
+
+#else
+
 layout(location = 0) out vec4 outInscattering; // w = monochromatic transmittance as alpha
 layout(location = 1) out vec4 outTransmittance; // w = monochromatic transmittance as alpha
 layout(location = 2) out float outDepth; // linear depth with infinite for far plane (requires 32-bit floating point target buffer)
+
+#endif
 
 struct View {
   mat4 viewMatrix;
@@ -114,6 +134,8 @@ struct View {
 layout(set = 1, binding = 0, std140) uniform uboViews {
   View views[256]; // 65536 / (64 * 4) = 256
 } uView;
+
+#ifndef SHADOWMAP
 
 #ifdef MSAA
 
@@ -131,7 +153,9 @@ layout(set = 2, binding = 0) uniform texture2DArray uDepthTexture;
 layout(set = 2, binding = 0) uniform texture2D uDepthTexture;
 #endif
 
-#endif
+#endif // MSAA
+
+#endif // !SHADOWMAP
 
 layout(set = 2, binding = 1, std140) uniform AtmosphereParametersBuffer {
   AtmosphereParameters atmosphereParameters;
@@ -152,6 +176,10 @@ layout(set = 2, binding = 7) uniform sampler3D uTextureCurlNoise;
 layout(set = 2, binding = 8) uniform samplerCube uTextureSkyLuminanceLUT;
 
 layout(set = 2, binding = 9) uniform samplerCube uTextureWeatherMap;
+
+#ifdef SHADOWMAP
+#include "msm_16bit.glsl" 
+#endif
 
 float bayer2(vec2 a){ 
   a = floor(a);
@@ -517,37 +545,60 @@ float sampleCloudDensityAlongCone(const in vec3 rayOrigin,
   return densityAlongCone;
 } 
 
+float projectionVectorScale;
+vec3 sideVector, upVector;
+
 bool traceVolumetricClouds(vec3 rayOrigin, 
                            vec3 rayDirection, 
+#ifndef SHADOWMAP
                            float rayLength, 
+#endif                           
                            ivec2 threadPosition,
+#ifndef SHADOWMAP
                            out vec3 inscattering,
-                           out vec3 transmittance, 
+                           out vec3 transmittance,
+#endif 
                            out float depth){
+
+#ifdef SHADOWMAP
+
+  vec3 transmittance = vec3(1.0);
+
+#else
 
   inscattering = vec3(0.0);
   
   transmittance = vec3(1.0);
 
+#endif
+
   vec3 toSunDirection = normalize(getSunDirection(uAtmosphereParameters.atmosphereParameters));
   
+#ifndef SHADOWMAP
+
   float cosAngle = dot(rayDirection, toSunDirection);
 
   float forwardScatteringPhase = henyeyGreensteinPhase(cosAngle, uAtmosphereParameters.atmosphereParameters.VolumetricClouds.ForwardScatteringG);
   float backwardScatteringPhase = henyeyGreensteinPhase(cosAngle, uAtmosphereParameters.atmosphereParameters.VolumetricClouds.BackwardScatteringG);
 
+#endif
+
   vec3 scattering = uAtmosphereParameters.atmosphereParameters.VolumetricClouds.Scattering.xyz;
   vec3 absorption = uAtmosphereParameters.atmosphereParameters.VolumetricClouds.Absorption.xyz;
   vec3 extinction = absorption + scattering;
   
+#ifndef SHADOWMAP
+
   vec3 sunColor = uAtmosphereParameters.atmosphereParameters.SolarIlluminance.xyz;
+
+#endif
 
   vec2 weightedDepth = vec2(0.0);
  
   vec2 tTopSolutions = intersectSphere(rayOrigin, rayDirection, vec2(0.0, uAtmosphereParameters.atmosphereParameters.VolumetricClouds.LayerHigh.EndHeight).xxxy);
   if(tTopSolutions.y >= 0.0){
 
-   float distanceToPlanetCenter = length(rayOrigin);
+    float distanceToPlanetCenter = length(rayOrigin);
     
     vec3 viewNormal = normalize(rayOrigin);
     
@@ -577,17 +628,46 @@ bool traceVolumetricClouds(vec3 rayOrigin,
       }
     }
     
+#ifdef SHADOWMAP    
+    tMinMax = max(tMinMax, vec2(0.0));
+#else
     tMinMax = clamp(tMinMax, vec2(0.0), vec2(rayLength));
+#endif
     
     if(tMinMax.x < tMinMax.y){
 
       float mipMapLevel = 0.0;
-      int countSteps = clamp(int(mix(float(uAtmosphereParameters.atmosphereParameters.VolumetricClouds.RayMaxSteps), float(uAtmosphereParameters.atmosphereParameters.VolumetricClouds.RayMinSteps), smoothstep(0.0, 1.0, dot(rayDirection, viewNormal)))), 8, 2048);
+
+#ifdef SHADOWMAP    
+      int countSteps = clamp(int(uAtmosphereParameters.atmosphereParameters.VolumetricClouds.RayMinSteps), 8, 2048);
+#else
+      int countSteps = clamp(
+        int(
+          (isinf(rayLength) && all(greaterThanEqual(tTopSolutions, vec2(0.0))) && all(lessThan(tGroundSolutions, vec2(0.0))))
+            ? mix(
+                float(uAtmosphereParameters.atmosphereParameters.VolumetricClouds.OuterSpaceRayMinSteps),
+                float(uAtmosphereParameters.atmosphereParameters.VolumetricClouds.OuterSpaceRayMaxSteps), 
+                clamp(max(abs(dot(rayDirection, sideVector)), abs(dot(rayDirection, upVector)) * projectionVectorScale), 0.0, 1.0)
+              )
+            : mix(
+                float(uAtmosphereParameters.atmosphereParameters.VolumetricClouds.RayMinSteps), 
+                float(uAtmosphereParameters.atmosphereParameters.VolumetricClouds.RayMaxSteps), 
+                clamp(max(abs(dot(rayDirection, sideVector)), abs(dot(rayDirection, upVector)) * projectionVectorScale), 0.0, 1.0)
+              )
+        ), 
+        8, 
+        2048
+      );
+#endif
         
       float density = 0.0;  
       float cloudTestDensity = 0.0;
       float previousSampledDensity = 0.0;
       int zeroDensitySampleCounter = 0;
+
+      const float directScatteringIntensity = uAtmosphereParameters.atmosphereParameters.VolumetricClouds.DirectScatteringIntensity;
+      const float indirectScatteringIntensity = uAtmosphereParameters.atmosphereParameters.VolumetricClouds.IndirectScatteringIntensity;
+      const float ambientLightIntensity = uAtmosphereParameters.atmosphereParameters.VolumetricClouds.AmbientLightIntensity;
 
       // 0.61803398875 is the golden ratio conjugate for better distribution of the samples over time, since temporal aliasing is less noticeable than
       // spatial aliasing 
@@ -646,11 +726,19 @@ bool traceVolumetricClouds(vec3 rayOrigin,
           
           if(density > 1e-4){
           
+#ifdef SHADOWMAP
+
+            float extinctionCoefficient = max(1e-10, density);
+
+            transmittance *= exp(-extinctionCoefficient * timeStep * extinction);     
+
+#else
+
             float heightFraction = getHeightFractionForPoint(position);
-          
+
             float scatteringCoefficient = density;
             float extinctionCoefficient = max(1e-10, density);
-     
+
             float sunLightTerm = max(0.0, dot(normalize(position), toSunDirection));
             
             float densityAlongCone = sampleCloudDensityAlongCone(
@@ -673,13 +761,14 @@ bool traceVolumetricClouds(vec3 rayOrigin,
 #endif                                                                
                                 2.0;
                                 
-            vec3 directScatting = vec3(lightEnergy) * sunColor;
+            vec3 directScatting = vec3(lightEnergy) * sunColor * directScatteringIntensity;
             
             // Fake multiple scattering 
             vec3 indirectScattering = clamp(pow(3.0 * scatteringCoefficient, 0.5), 0.7, 1.0) *
-                                      textureLod(uTextureSkyLuminanceLUT, normalize(position), 0.0).xyz * 
+                                      (textureLod(uTextureSkyLuminanceLUT, normalize(position), 0.0).xyz * ambientLightIntensity) * 
                                       beerTerm(density) *
                                       //sunLightTerm *
+                                      indirectScatteringIntensity *
                                       vec3(1.0);
             
             vec3 sampledScattering = (directScatting + indirectScattering) * scatteringCoefficient;
@@ -707,6 +796,8 @@ bool traceVolumetricClouds(vec3 rayOrigin,
             transmittance *= exp(-extinctionCoefficient * timeStep);
 #endif
             
+#endif
+
             if(all(lessThan(transmittance, vec3(1e-4)))){
               break;
             }
@@ -756,18 +847,61 @@ void main(){
   worldPos = (uAtmosphereParameters.atmosphereParameters.inverseTransform * vec4(worldPos, 1.0)).xyz;
   worldDir = normalize((uAtmosphereParameters.atmosphereParameters.inverseTransform * vec4(worldDir, 0.0)).xyz);
 
+  projectionVectorScale = length(vec2(length(view.projectionMatrix[0].xyz), length(view.projectionMatrix[1].xyz)));
+
+  sideVector = normalize(view.inverseViewMatrix[0].xyz); 
+
+  upVector = normalize(view.inverseViewMatrix[1].xyz); 
+
+#ifndef SHADOWMAP
 #ifdef MSAA
+  // At MSAA we must find the farthest depth value, since clouds are rendered without MSAA but applied to the opaque pass content with MSAA,
+  // so we must find the farthest depth value to avoid or at least minimize artifacts at the merging stage.
+  float depthBufferValue;
+  if((pushConstants.flags & PUSH_CONSTANT_FLAG_REVERSE_DEPTH) != 0u){
+    depthBufferValue = uintBitsToFloat(0x7f800000u); // +inf as marker for the farthest depth value, so the minimum value is always less than this
+    for(int sampleIndex = 0; sampleIndex < pushConstants.countSamples; sampleIndex++){
 #ifdef MULTIVIEW
-  float depthBufferValue = texelFetch(uDepthTexture, ivec3(ivec2(gl_FragCoord.xy), int(gl_ViewIndex)), gl_SampleID).x;
+      float depthValue = texelFetch(uDepthTexture, ivec3(ivec2(gl_FragCoord.xy), int(gl_ViewIndex)), sampleIndex).x;
 #else
-  float depthBufferValue = texelFetch(uDepthTexture, ivec2(gl_FragCoord.xy), gl_SampleID).x;
+      float depthValue = texelFetch(uDepthTexture, ivec2(gl_FragCoord.xy), sampleIndex).x;
 #endif
+/*    if((depthValue > 0.0) && (depthValue < depthBufferValue)){
+        depthBufferValue = depthValue;
+      }*/
+      depthBufferValue = min(depthBufferValue, depthValue);
+    }
+    if(isinf(depthBufferValue)){
+      // Replace +inf with 0.0 with the real farthest depth value 
+      depthBufferValue = 0.0;
+    }
+  }else{
+    depthBufferValue = uintBitsToFloat(0xff800000u); // -inf as marker for the farthest depth value, so the maximum value is always greater than this
+    for(int sampleIndex = 0; sampleIndex < pushConstants.countSamples; sampleIndex++){
+#ifdef MULTIVIEW
+      float depthValue = texelFetch(uDepthTexture, ivec3(ivec2(gl_FragCoord.xy), int(gl_ViewIndex)), sampleIndex).x;
 #else
+      float depthValue = texelFetch(uDepthTexture, ivec2(gl_FragCoord.xy), sampleIndex).x;
+#endif
+/*    if((depthValue < 1.0) && (depthValue > depthBufferValue)){
+        depthBufferValue = depthValue;
+      }*/
+      depthBufferValue = max(depthBufferValue, depthValue);
+    }
+    if(isinf(depthBufferValue)){
+      // Replace -inf with 1.0 with the real farthest depth value
+      depthBufferValue = 1.0;
+    }
+  }
+#else
+  // Without MSAA we can just use the depth value directly. Easy peasy. :-)
 #ifdef MULTIVIEW
   float depthBufferValue = texelFetch(uDepthTexture, ivec3(ivec2(gl_FragCoord.xy), int(gl_ViewIndex)), 0).x;
 #else
   float depthBufferValue = texelFetch(uDepthTexture, ivec2(gl_FragCoord.xy), 0).x;
 #endif
+#endif
+
 #endif
 
   vec3 sunDirection = normalize(getSunDirection(uAtmosphereParameters.atmosphereParameters));
@@ -776,6 +910,7 @@ void main(){
   lightDirection = -sunDirection;
 #endif
 
+#ifndef SHADOWMAP
   bool depthIsZFar = depthBufferValue == GetZFarDepthValue(view.projectionMatrix);
 
   if(depthIsZFar){
@@ -784,6 +919,20 @@ void main(){
     vec4 t = view.inverseProjectionMatrix * vec4(fma(uv, vec2(2.0), vec2(-1.0)), depthBufferValue, 1.0);
     depthBufferValue = -(t.z / t.w);
   }
+#endif
+
+#ifdef SHADOWMAP
+  
+  float depth;
+  if(traceVolumetricClouds(worldPos, worldDir, ivec2(gl_FragCoord), depth)){
+    vec4 clipSpace = view.projectionMatrix * view.viewMatrix * vec4(fma(worldDir, vec3(depth), worldPos), 1.0);
+    depth = clamp(clipSpace.z / clipSpace.w, 0.0, 1.0); // 0.0 .. 1.0 range 
+  }else{
+    depth = 1.0;
+  }
+  outMSMCoefficients = encodeMSM16BitCoefficients(depth);
+
+#else
 
   vec3 inscattering, transmittance;
   float depth;
@@ -795,6 +944,8 @@ void main(){
   outInscattering = vec4(clamp(inscattering, vec3(0.0), vec3(65504.0)), alpha); // clamp to 16-bit floating point range
   outTransmittance = vec4(clamp(transmittance, vec3(0.0), vec3(1.0)), alpha); // clamp to normalized range
   outDepth = depth;
+
+#endif
 
 
 }

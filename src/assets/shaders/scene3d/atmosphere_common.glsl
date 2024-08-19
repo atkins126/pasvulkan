@@ -19,6 +19,7 @@
 #define FLAGS_USE_FAST_AERIAL_PERSPECTIVE 2u
 #define FLAGS_USE_BLUE_NOISE 4u
 #define FLAGS_SHADOWS 8u
+#define PUSH_CONSTANT_FLAG_REVERSE_DEPTH 65536u
 
 #include "math.glsl"
 
@@ -235,6 +236,16 @@ struct VolumetricCloudParameters {
   uint RayMinSteps;
   uint RayMaxSteps;
 
+  uint OuterSpaceRayMinSteps;
+  uint OuterSpaceRayMaxSteps;
+  float DirectScatteringIntensity;
+  float IndirectScatteringIntensity;
+
+  float AmbientLightIntensity;
+  float Padding0;
+  float Padding1;
+  float Padding2;
+  
   VolumetricCloudLayerLow LayerLow;
   VolumetricCloudLayerHigh LayerHigh;
 
@@ -1041,6 +1052,27 @@ void GetCameraPositionDirection(out vec3 origin,
                                 const in mat4 inverseProjectionMatrix,
                                 const in vec2 uv){ 
 
+#ifdef SHADOWMAP
+
+  // For shadow map rendering, we need to compute the origin and direction of the primary ray in the more safe way, for just to be sure.
+
+  bool reversedZ = ProjectionMatrixIsReversedZ(projectionMatrix);
+
+  mat4 inverseViewProjectionMatrix = inverseViewMatrix * inverseProjectionMatrix;
+
+  vec4 nearPlane = inverseViewProjectionMatrix * vec4(fma(uv, vec2(2.0), vec2(-1.0)), reversedZ ? 1.0 : 0.0, 1.0);
+  nearPlane /= nearPlane.w;
+
+  vec4 farPlane = inverseViewProjectionMatrix * vec4(fma(uv, vec2(2.0), vec2(-1.0)), reversedZ ? 0.0 : 1.0, 1.0);
+  farPlane /= farPlane.w;
+
+  origin = nearPlane.xyz;
+  direction = normalize(farPlane.xyz - nearPlane.xyz);
+
+#else
+
+  // For the main rendering, we can use a faster way to compute the origin and direction of the primary ray.
+
   bool reversedZ = ProjectionMatrixIsReversedZ(projectionMatrix);
 
   vec4 nearPlane = vec4(fma(uv, vec2(2.0), vec2(-1.0)), reversedZ ? 1.0 : 0.0, 1.0);
@@ -1065,6 +1097,8 @@ void GetCameraPositionDirection(out vec3 origin,
 #endif
 
   direction = normalize((inverseViewMatrix * cameraDirection).xyz);
+
+#endif
 
 }
 
