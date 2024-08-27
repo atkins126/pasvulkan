@@ -288,9 +288,13 @@ compileshaderarguments=(
   "-V antialiasing_fxaa.frag -o ${tempPath}/antialiasing_fxaa_frag.spv"
   "-V antialiasing_taa.frag -o ${tempPath}/antialiasing_taa_frag.spv"
   "-V antialiasing_none.frag -o ${tempPath}/antialiasing_none_frag.spv"
+
+  "-V antialiasing_smaa_temporal_resolve.vert -o ${tempPath}/antialiasing_smaa_temporal_resolve_vert.spv"
+  "-V antialiasing_smaa_temporal_resolve.frag -o ${tempPath}/antialiasing_smaa_temporal_resolve_frag.spv"
   
   "-V antialiasing_smaa_blend.vert -o ${tempPath}/antialiasing_smaa_blend_vert.spv"
   "-V antialiasing_smaa_blend.frag -o ${tempPath}/antialiasing_smaa_blend_frag.spv"
+  "-V antialiasing_smaa_blend.frag -DSMAA_REPROJECTION=1 -o ${tempPath}/antialiasing_smaa_blend_reprojection_frag.spv"
   
   "-V antialiasing_smaa_edges.vert -o ${tempPath}/antialiasing_smaa_edges_vert.spv"
   "-V antialiasing_smaa_edges.frag -o ${tempPath}/antialiasing_smaa_edges_color_frag.spv"

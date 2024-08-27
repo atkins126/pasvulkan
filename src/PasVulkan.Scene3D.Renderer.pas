@@ -155,7 +155,7 @@ type TpvScene3DRenderer=class;
        fMeshFragTypeName:TpvUTF8String;
        fMeshFragGlobalIlluminationTypeName:TpvUTF8String;
        fMeshFragShadowTypeName:TpvUTF8String;
-       fOptimizedNonAlphaFormat:TVkFormat;
+//     fOptimizedNonAlphaFormat:TVkFormat;
        fOptimizedCubeMapFormat:TVkFormat;
        fFastSky:boolean;
        fFastAerialPerspective:boolean;
@@ -245,7 +245,7 @@ type TpvScene3DRenderer=class;
        property MeshFragTypeName:TpvUTF8String read fMeshFragTypeName;
        property MeshFragGlobalIlluminationTypeName:TpvUTF8String read fMeshFragGlobalIlluminationTypeName;
        property MeshFragShadowTypeName:TpvUTF8String read fMeshFragShadowTypeName;
-       property OptimizedNonAlphaFormat:TVkFormat read fOptimizedNonAlphaFormat;
+//     property OptimizedNonAlphaFormat:TVkFormat read fOptimizedNonAlphaFormat;
        property OptimizedCubeMapFormat:TVkFormat read fOptimizedCubeMapFormat;
        property FastSky:boolean read fFastSky write fFastSky;
        property FastAerialPerspective:boolean read fFastAerialPerspective write fFastAerialPerspective;
@@ -642,7 +642,7 @@ begin
   fMeshFragTypeName:='matssbo';
  end;
 
- FormatProperties:=fVulkanDevice.PhysicalDevice.GetFormatProperties(VK_FORMAT_B10G11R11_UFLOAT_PACK32);
+{FormatProperties:=fVulkanDevice.PhysicalDevice.GetFormatProperties(VK_FORMAT_B10G11R11_UFLOAT_PACK32);
  if (fVulkanDevice.PhysicalDevice.Properties.deviceType=VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU) and
     ((FormatProperties.linearTilingFeatures and (TVkFormatFeatureFlags(VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) or
                                                  TVkFormatFeatureFlags(VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT) or
@@ -669,7 +669,7 @@ begin
   fOptimizedNonAlphaFormat:=VK_FORMAT_R16G16B16A16_SFLOAT;
  end;
 
- fOptimizedNonAlphaFormat:=VK_FORMAT_R16G16B16A16_SFLOAT;
+ fOptimizedNonAlphaFormat:=VK_FORMAT_R16G16B16A16_SFLOAT;//}
 
 {FormatProperties:=fVulkanDevice.PhysicalDevice.GetFormatProperties(VK_FORMAT_E5B9G9R9_UFLOAT_PACK32);
  if //(fVulkanDevice.PhysicalDevice.Properties.deviceType=VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU) and
@@ -774,8 +774,11 @@ begin
 //fAntialiasingMode:=TpvScene3DRendererAntialiasingMode.TAA;
  end;
 
- if fAntialiasingMode=TpvScene3DRendererAntialiasingMode.TAA then begin
-  fVelocityBufferNeeded:=true;
+ case AntialiasingMode of
+  TpvScene3DRendererAntialiasingMode.SMAAT2x,
+  TpvScene3DRendererAntialiasingMode.TAA:begin
+   fVelocityBufferNeeded:=true;
+  end;
  end;
 
  SampleCounts:=fVulkanDevice.PhysicalDevice.Properties.limits.framebufferColorSampleCounts and
@@ -1453,6 +1456,7 @@ begin
      case fAntialiasingMode of
 
       TpvScene3DRendererAntialiasingMode.SMAA,
+      TpvScene3DRendererAntialiasingMode.SMAAT2x,
       TpvScene3DRendererAntialiasingMode.MSAASMAA:begin
 
        fSMAAAreaTexture:=TpvVulkanTexture.CreateFromMemory(fVulkanDevice,

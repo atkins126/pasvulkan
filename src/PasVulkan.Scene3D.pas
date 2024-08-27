@@ -78,6 +78,7 @@ uses {$ifdef Windows}
      PasVulkan.Types,
      PasVulkan.Utils,
      PasVulkan.Math,
+     PasVulkan.Streams,
      PasVulkan.Hash.xxHash64,
      PasVulkan.Collections,
      PasVulkan.HighResolutionTimer,
@@ -249,6 +250,7 @@ type EpvScene3D=class(Exception);
             TFileType=
              (
               Unknown, 
+              PVMF,
               GLTF,
               SAM,
               WavefrontOBJ,
@@ -271,6 +273,10 @@ type EpvScene3D=class(Exception);
             PSizeIntDynamicArray=^TSizeIntDynamicArray;
             TSizeIntDynamicArrayList=TpvDynamicArrayList<TpvSizeInt>;
             TSizeIntDynamicArrayEx=array of TpvSizeInt;
+            TInt64DynamicArray=TpvDynamicArray<TpvInt64>;
+            PInt64DynamicArray=^TInt64DynamicArray;
+            TInt64DynamicArrayList=TpvDynamicArrayList<TpvInt64>;
+            TInt64DynamicArrayEx=array of TpvInt64;
             TView=packed record
              ViewMatrix:TpvMatrix4x4;
              ProjectionMatrix:TpvMatrix4x4;
@@ -554,6 +560,15 @@ type EpvScene3D=class(Exception);
                                                 const aRenderPassIndex:TpvSizeInt;
                                                 const aPreviousInFlightFrameIndex:TpvSizeInt;
                                                 const aInFlightFrameIndex:TpvSizeInt) of object;
+            TPVMFSignature=array[0..3] of AnsiChar;
+            PPVMFSignature=^TPVMFSignature;
+            TPVMFHeader=packed record
+             Signature:TPVMFSignature;
+             Version:TpvUInt32;
+             Size:TpvUInt64;
+             MetaData:TpvUInt64;
+            end;
+            PPVMFHeader=^TPVMFHeader;
             { TBaseObject }
             TBaseObject=class(TpvResource)
              private
@@ -810,6 +825,8 @@ type EpvScene3D=class(Exception);
               procedure AssignFromDefaultNormalMapTexture;
               procedure AssignFromDefaultParticleTexture;
               procedure AssignFromStream(const aName:TpvUTF8String;const aStream:TStream);
+              procedure LoadFromStream(const aStream:TStream);
+              procedure SaveToStream(const aStream:TStream);
               procedure AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceImage:TPasGLTF.TImage);
              published
               property Kind:TKind read fKind write fKind;
@@ -853,6 +870,8 @@ type EpvScene3D=class(Exception);
               procedure AssignFromDefaultNonRepeat;
               procedure AssignFromDefaultMipMap;
               procedure AssignFromDefaultMipMapNonRepeat;
+              procedure LoadFromStream(const aStream:TStream);
+              procedure SaveToStream(const aStream:TStream);
               procedure AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceSampler:TPasGLTF.TSampler);
              published
               property MinFilter:TVkFilter read fMinFilter write fMinFilter;
@@ -889,6 +908,9 @@ type EpvScene3D=class(Exception);
               procedure AssignFromDefaultNormalMapTexture;
               procedure AssignFromDefaultParticleTexture;
               procedure AssignForImage(const aName:TpvUTF8String;const aImage:TpvScene3D.TImage);
+              procedure LoadFromStream(const aStream:TStream;const aImages,aSamplers:TpvObjectList);
+              procedure PrepareSaveToStream(const aImages,aSamplers,aTextures:TpvObjectList);
+              procedure SaveToStream(const aStream:TStream;const aImages,aSamplers:TpvObjectList);
               procedure AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceTexture:TPasGLTF.TTexture;const aImageMap:TImages;const aSamplerMap:TSamplers);
               function GetDescriptorImageInfo(const aSRGB:boolean):TVkDescriptorImageInfo;
              published
@@ -926,6 +948,8 @@ type EpvScene3D=class(Exception);
                             Scale:TpvVector2;
                            public
                             procedure AssignDefault;
+                            procedure LoadFromStream(const aStream:TStream);
+                            procedure SaveToStream(const aStream:TStream);
                             procedure AssignFromGLTF(var aTextureReference:TTextureReference;const aExtensionsItem:TPasJSONItem);
                             function ToMatrix4x4:TpvMatrix4x4;
                             function ToAlignedMatrix3x2:TAlignedMatrix3x2;
@@ -935,6 +959,8 @@ type EpvScene3D=class(Exception);
                      Texture:TpvScene3D.TTexture;
                      TexCoord:TpvSizeInt;
                      Transform:TTransform;
+                     procedure LoadFromStream(const aStream:TStream;const aTextures:TpvObjectList);
+                     procedure SaveToStream(const aStream:TStream;const aTextures:TpvObjectList);
                    end;
                    PTextureReference=^TTextureReference;
                    TPBRMetallicRoughness=record
@@ -1226,6 +1252,9 @@ type EpvScene3D=class(Exception);
               procedure Unload; override;
               procedure Assign(const aFrom:TMaterial);
               procedure AssignFromEmpty;
+              procedure LoadFromStream(const aStream:TStream;const aImages,aSamplers,aTextures:TpvObjectList);
+              procedure PrepareSaveToStream(const aImages,aSamplers,aTextures,aMaterials:TpvObjectList);
+              procedure SaveToStream(const aStream:TStream;const aImages,aSamplers,aTextures:TpvObjectList);
               procedure AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceMaterial:TPasGLTF.TMaterial;const aTextureMap:TTextures);
               procedure FillShaderData;
              public
@@ -1451,6 +1480,8 @@ type EpvScene3D=class(Exception);
               function Clone:TDrawChoreographyBatchItem;
               class function CompareTo(const aCurrent,aOther:TpvScene3D.TDrawChoreographyBatchItem):TpvInt32; static;
               class function IndexOrderCompareTo(const aCurrent,aOther:TpvScene3D.TDrawChoreographyBatchItem):TpvInt32; static;
+              procedure LoadFromStream(const aStream:TStream;const aMaterials:TpvObjectList);
+              procedure SaveToStream(const aStream:TStream;const aMaterials:TpvObjectList);
              published
               property Group:TpvScene3D.TGroup read fGroup write fGroup;
               property GroupInstance:TObject read fGroupInstance write fGroupInstance;
@@ -1782,6 +1813,8 @@ type EpvScene3D=class(Exception);
                             destructor Destroy; override;
                             procedure SetTarget(const aTargetPath:TpvUTF8String;const aTargetNode:TpvSizeInt);
                             procedure SetInterpolation(const aInterpolation:TpvUTF8String);
+                            procedure LoadFromStream(const aStream:TStream);
+                            procedure SaveToStream(const aStream:TStream);
                            published
                             property Name:TpvUTF8String read fName write fName;
                             property Target:TpvScene3D.TGroup.TAnimation.TChannel.TTarget read fTarget write fTarget;
@@ -1806,6 +1839,8 @@ type EpvScene3D=class(Exception);
                             fTargetSubIndex:TpvSizeInt;
                             fTargetInstanceIndex:TpvSizeInt;
                            public
+                            procedure LoadFromStream(const aStream:TStream);
+                            procedure SaveToStream(const aStream:TStream);
                            published
                             property Target:TpvScene3D.TGroup.TAnimation.TChannel.TTarget read fTarget write fTarget;
                             property TargetIndex:TpvSizeInt read fTargetIndex write fTargetIndex;
@@ -1824,6 +1859,8 @@ type EpvScene3D=class(Exception);
                      destructor Destroy; override;
                      function CreateChannel(const aName:TpvUTF8String=''):TpvScene3D.TGroup.TAnimation.TChannel;
                      procedure Finish;
+                     procedure LoadFromStream(const aStream:TStream);
+                     procedure SaveToStream(const aStream:TStream);
                      procedure AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceAnimation:TPasGLTF.TAnimation);
                      function GetAnimationBeginTime:TpvDouble;
                      function GetAnimationEndTime:TpvDouble;
@@ -1842,6 +1879,8 @@ type EpvScene3D=class(Exception);
                     public
                      constructor Create(const aGroup:TGroup;const aIndex:TpvSizeInt=-1); reintroduce;
                      destructor Destroy; override;
+                     procedure LoadFromStream(const aStream:TStream);
+                     procedure SaveToStream(const aStream:TStream);
                      procedure AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceCamera:TPasGLTF.TCamera);
                     public
                      property CameraData:TpvScene3D.PCameraData read fPointerToCameraData;
@@ -1916,6 +1955,8 @@ type EpvScene3D=class(Exception);
                             function AddVertex(const aVertex:TpvScene3D.TVertex):TpvSizeInt;
                             function AddIndex(const aIndex:TpvUInt32):TpvSizeInt;
                             procedure Finish;
+                            procedure LoadFromStream(const aStream:TStream;const aMaterials:TpvObjectList);
+                            procedure SaveToStream(const aStream:TStream;const aMaterials:TpvObjectList);
                            published
                             property PrimitiveTopology:TpvScene3D.TPrimitiveTopology read fPrimitiveTopology write fPrimitiveTopology;
                             property MaterialID:TpvInt64 read fMaterialID write fMaterialID;
@@ -1955,6 +1996,8 @@ type EpvScene3D=class(Exception);
                      function CreatePrimitive:TpvScene3D.TGroup.TMesh.TPrimitive;
                      procedure CalculateTangentSpace;
                      procedure Finish;
+                     procedure LoadFromStream(const aStream:TStream;const aMaterials:TpvObjectList);
+                     procedure SaveToStream(const aStream:TStream;const aMaterials:TpvObjectList);
                      procedure AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceMesh:TPasGLTF.TMesh;const aMaterialMap:TpvScene3D.TMaterials);
                     published
                      property Index:TpvSizeInt read fIndex;
@@ -1967,17 +2010,20 @@ type EpvScene3D=class(Exception);
                      property ReferencedByNodes:TpvScene3D.TGroup.TMesh.TReferencedByNodes read fReferencedByNodes;
                    end;
                    TMeshes=TpvObjectGenericList<TMesh>;
+                   { TSkin }
                    TSkin=class(TGroupObject)
                     private
                      fIndex:TpvSizeInt;
                      fSkeleton:TpvSizeInt;
-                     fJointMatrixOffset:TPasGLTFSizeInt;
+                     fJointMatrixOffset:TpvSizeInt;
                      fInverseBindMatrices:TpvScene3D.TMatrix4x4DynamicArrayList;
                      fMatrices:TpvScene3D.TMatrix4x4DynamicArrayList;
                      fJoints:TpvScene3D.TSizeIntDynamicArrayList;
                     public
                      constructor Create(const aGroup:TGroup;const aIndex:TpvSizeInt=-1); reintroduce;
                      destructor Destroy; override;
+                     procedure LoadFromStream(const aStream:TStream);
+                     procedure SaveToStream(const aStream:TStream);
                      procedure AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceSkin:TPasGLTF.TSkin);
                     published
                      property Index:TpvSizeInt read fIndex;
@@ -1989,6 +2035,7 @@ type EpvScene3D=class(Exception);
                    TSkins=TpvObjectGenericList<TSkin>;
                    TSkinDynamicArray=TpvDynamicArray<TSkin>;
                    TNodes=TpvObjectGenericList<TNode>;
+                   { TLight }
                    TLight=class(TGroupObject)
                     private
                      fData:TLightData;
@@ -1997,6 +2044,8 @@ type EpvScene3D=class(Exception);
                     public
                      constructor Create(const aGroup:TGroup;const aIndex:TpvSizeInt=-1); reintroduce;
                      destructor Destroy; override;
+                     procedure LoadFromStream(const aStream:TStream);
+                     procedure SaveToStream(const aStream:TStream);
                      procedure AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceLight:TPasJSONItemObject);
                     public
                      property Data:TLightData read fData write fData;
@@ -2030,8 +2079,11 @@ type EpvScene3D=class(Exception);
                      fIndex:TpvSizeInt;
                      fFlags:TNodeFlags;
                      fUsedByScenesList:TUsedByScenesList;
+                     fUsedByScenesListIndices:TpvScene3D.TSizeIntDynamicArrayList;
                      fChildren:TNodes;
+                     fChildrenIndices:TpvScene3D.TSizeIntDynamicArrayList;
                      fSplittedChildren:TNodes;
+                     fSplittedChildrenIndices:TpvScene3D.TSizeIntDynamicArrayList;
                      fMesh:TMesh;
                      fNodeMeshInstanceIndex:TPasGLTFSizeInt;
                      fCamera:TCamera;
@@ -2053,6 +2105,9 @@ type EpvScene3D=class(Exception);
                     public
                      constructor Create(const aGroup:TGroup;const aIndex:TpvSizeInt=-1); reintroduce;
                      destructor Destroy; override;
+                     procedure LoadFromStream(const aStream:TStream);
+                     procedure FixUp;
+                     procedure SaveToStream(const aStream:TStream);
                      procedure AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceNode:TPasGLTF.TNode;const aLightMap:TpvScene3D.TGroup.TLights);
                     published
                      property Index:TpvSizeInt read fIndex;
@@ -2097,6 +2152,8 @@ type EpvScene3D=class(Exception);
                     public
                      constructor Create(const aGroup:TGroup;const aIndex:TpvSizeInt=-1); reintroduce;
                      destructor Destroy; override;
+                     procedure LoadFromStream(const aStream:TStream;const aMaterials:TpvObjectList);
+                     procedure SaveToStream(const aStream:TStream;const aMaterials:TpvObjectList);
                      procedure AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceScene:TPasGLTF.TScene);
                     published
                      property Index:TpvSizeInt read fIndex;
@@ -2894,6 +2951,11 @@ type EpvScene3D=class(Exception);
              public
               procedure FinalizeMaterials(const aDoLock:Boolean=true);
              public
+              class function CheckStream(const aStream:TStream;const aMetaData:PpvUInt64=nil):Boolean; static;
+              class function LoadMetaDataFromStream(const aStream:TStream):TpvUInt64; static;
+              procedure LoadFromStream(const aStream:TStream);
+              procedure SaveToStream(const aStream:TStream;const aMetaData:TpvUInt64=0);
+             public
               procedure AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument);
              public
               procedure AssignFromSAM(const aSourceModel:TpvSAM.TModel);
@@ -3098,6 +3160,8 @@ type EpvScene3D=class(Exception);
             PRaytracingGroupInstanceNodeQueueItem=^TRaytracingGroupInstanceNodeQueueItem;
             TRaytracingGroupInstanceNodeQueue=TpvDynamicQueue<TRaytracingGroupInstanceNodeQueueItem>;
             TRaytracingAccelerationStructureInstanceList=TpvDynamicArrayList<TVkAccelerationStructureInstanceKHR>;
+            TInFlightFrameVector3s=array[0..MaxInFlightFrames-1] of TpvVector3;
+            PInFlightFrameVector3s=^TInFlightFrameVector3s;
             TDeltaTime=TpvDouble;
             PDeltaTime=^TDeltaTime;
             TDeltaTimes=array[0..MaxInFlightFrames-1] of TDeltaTime;
@@ -3108,6 +3172,8 @@ type EpvScene3D=class(Exception);
                (TFaceCullingMode.Normal,TFaceCullingMode.Inversed),
                (TFaceCullingMode.None,TFaceCullingMode.None)
               );
+             PVMFSignature:TPVMFSignature=('P','V','M','F');
+             PVMFVersion=TpVUInt32($00000001);
       private
        fLock:TPasMPSpinLock;
        fLoadLock:TPasMPSpinLock;
@@ -3243,7 +3309,9 @@ type EpvScene3D=class(Exception);
        fInFlightFrameImageInfoImageDescriptorGenerations:array[0..MaxInFlightFrames-1] of TpvUInt64;
        fInFlightFrameImageInfoImageDescriptorUploadedGenerations:array[0..MaxInFlightFrames-1] of TpvUInt64;
        fPrimaryLightDirection:TpvVector3;
+       fPrimaryLightDirections:TInFlightFrameVector3s;
        fPrimaryShadowMapLightDirection:TpvVector3;
+       fPrimaryShadowMapLightDirections:TInFlightFrameVector3s;
        fDebugPrimitiveVertexDynamicArrays:TpvScene3D.TDebugPrimitiveVertexDynamicArrays;
        fVulkanDebugPrimitiveVertexBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
        fOnNodeFilter:TpvScene3D.TGroup.TInstance.TOnNodeFilter;
@@ -3331,6 +3399,7 @@ type EpvScene3D=class(Exception);
        fSkyBoxTextureImage:TpvScene3D.TImage;
        fSkyBoxMode:TpvScene3DEnvironmentMode;
        fSkyBoxIntensityFactor:TpvFloat;
+       fSkyBoxOrientation:TpvMatrix4x4;
        fEnvironmentTextureImage:TpvScene3D.TImage;
        fEnvironmentMode:TpvScene3DEnvironmentMode;
        fEnvironmentIntensityFactor:TpvFloat;
@@ -3529,7 +3598,9 @@ type EpvScene3D=class(Exception);
        property GlobalVulkanInstanceMatrixBuffers:TGlobalVulkanInstanceMatrixBuffers read fGlobalVulkanInstanceMatrixBuffers;
        property GlobalVulkanDescriptorSets:TGlobalVulkanDescriptorSets read fGlobalVulkanDescriptorSets;
        property PrimaryLightDirection:TpvVector3 read fPrimaryLightDirection write fPrimaryLightDirection;
+       property PrimaryLightDirections:TInFlightFrameVector3s read fPrimaryLightDirections;
        property PrimaryShadowMapLightDirection:TpvVector3 read fPrimaryShadowMapLightDirection write fPrimaryShadowMapLightDirection;
+       property PrimaryShadowMapLightDirections:TInFlightFrameVector3s read fPrimaryShadowMapLightDirections;
        property LightBuffers:TpvScene3D.TLightBuffers read fLightBuffers;
        property DebugPrimitiveVertexDynamicArrays:TpvScene3D.TDebugPrimitiveVertexDynamicArrays read fDebugPrimitiveVertexDynamicArrays;
        property Particles:PParticles read fPointerToParticles;
@@ -3580,6 +3651,9 @@ type EpvScene3D=class(Exception);
        property SkyBoxTextureImage:TpvScene3D.TImage read fSkyBoxTextureImage write fSkyBoxTextureImage;
        property SkyBoxMode:TpvScene3DEnvironmentMode read fSkyBoxMode write fSkyBoxMode;
        property SkyBoxIntensityFactor:TpvFloat read fSkyBoxIntensityFactor write fSkyBoxIntensityFactor;
+      public
+       property SkyBoxOrientation:TpvMatrix4x4 read fSkyBoxOrientation write fSkyBoxOrientation;
+      published
        property EnvironmentTextureImage:TpvScene3D.TImage read fEnvironmentTextureImage write fEnvironmentTextureImage;
        property EnvironmentMode:TpvScene3DEnvironmentMode read fEnvironmentMode write fEnvironmentMode;
        property EnvironmentIntensityFactor:TpvFloat read fEnvironmentIntensityFactor write fEnvironmentIntensityFactor;
@@ -6373,6 +6447,93 @@ begin
  fResourceDataStream.CopyFrom(aStream,aStream.Size);
 end;
 
+procedure TpvScene3D.TImage.LoadFromStream(const aStream:TStream);
+var StreamIO:TpvStreamIO;
+    Size:TpvUInt64;
+    FileName:TpvUTF8String;
+    DataStream:TStream;
+begin
+
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+
+  fName:=StreamIO.ReadUTF8String;
+
+  fKind:=TpvScene3D.TImage.TKind(StreamIO.ReadUInt32);
+
+  if fKind=TpvScene3D.TImage.TKind.ResourceTexture then begin
+
+   FileName:=StreamIO.ReadUTF8String;
+
+   fResourceDataStream.Clear;
+   if length(FileName)<>0 then begin
+    if pvApplication.Assets.ExistAsset(FileName) then begin
+     DataStream:=pvApplication.Assets.GetAssetStream(FileName);
+     if assigned(DataStream) then begin
+      try
+       DataStream.Seek(0,soBeginning);
+       fResourceDataStream.CopyFrom(DataStream,DataStream.Size);
+      finally
+       FreeAndNil(DataStream);
+      end;
+     end;
+    end else if FileExists(FileName) then begin
+     fResourceDataStream.LoadFromFile(FileName);
+    end else begin
+     fKind:=TpvScene3D.TImage.TKind.WhiteTexture;
+    end;
+    Size:=StreamIO.ReadUInt64; // Skip size in this case, because it is not needed
+    if Size>0 then begin
+     aStream.Seek(Size,soCurrent); // Skip data in this case, because it is not needed
+    end;
+   end else begin
+    Size:=StreamIO.ReadUInt64;
+    if Size>0 then begin
+     fResourceDataStream.CopyFrom(aStream,Size);
+    end else begin
+     fKind:=TpvScene3D.TImage.TKind.WhiteTexture;
+    end;
+   end;
+
+  end;
+
+ finally
+  FreeAndNil(StreamIO);
+ end;
+
+end;
+
+procedure TpvScene3D.TImage.SaveToStream(const aStream:TStream);
+var StreamIO:TpvStreamIO;
+    Size:TpvUInt64;
+begin
+
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+
+  StreamIO.WriteUTF8String(fName);
+
+  StreamIO.WriteUInt32(TpvUInt32(fKind));
+
+  if fKind=TpvScene3D.TImage.TKind.ResourceTexture then begin
+
+   StreamIO.WriteUTF8String(''); // for later use for external texture file assets, but for now just embedded textures for simplicity
+
+   Size:=fResourceDataStream.Size;
+   StreamIO.WriteUInt64(Size);
+   if Size>0 then begin
+    fResourceDataStream.Seek(0,soBeginning);
+    aStream.CopyFrom(fResourceDataStream,Size);
+   end;
+
+  end;
+
+ finally
+  FreeAndNil(StreamIO);
+ end;
+ 
+end;
+
 procedure TpvScene3D.TImage.AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceImage:TPasGLTF.TImage);
 begin
  fName:=aSourceImage.Name;
@@ -6500,6 +6661,60 @@ begin
  fMipmapActive:=true;
  fAddressModeS:=VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
  fAddressModeT:=VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+end;
+
+procedure TpvScene3D.TSampler.LoadFromStream(const aStream:TStream);
+var StreamIO:TpvStreamIO;
+begin
+
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+
+  fName:=StreamIO.ReadUTF8String;
+
+  fMinFilter:=TVkFilter(StreamIO.ReadUInt32);
+
+  fMagFilter:=TVkFilter(StreamIO.ReadUInt32);
+
+  fMipmapMode:=TVkSamplerMipmapMode(StreamIO.ReadUInt32);
+
+  fMipmapActive:=StreamIO.ReadBoolean;
+
+  fAddressModeS:=TVkSamplerAddressMode(StreamIO.ReadUInt32);
+
+  fAddressModeT:=TVkSamplerAddressMode(StreamIO.ReadUInt32);
+
+ finally
+  FreeAndNil(StreamIO);
+ end;
+
+end; 
+
+procedure TpvScene3D.TSampler.SaveToStream(const aStream:TStream);
+var StreamIO:TpvStreamIO;
+begin
+
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+
+  StreamIO.WriteUTF8String(fName);
+
+  StreamIO.WriteUInt32(TpvUInt32(fMinFilter));
+
+  StreamIO.WriteUInt32(TpvUInt32(fMagFilter));
+
+  StreamIO.WriteUInt32(TpvUInt32(fMipmapMode));
+
+  StreamIO.WriteBoolean(fMipmapActive);
+
+  StreamIO.WriteUInt32(TpvUInt32(fAddressModeS));
+
+  StreamIO.WriteUInt32(TpvUInt32(fAddressModeT));
+
+ finally
+  FreeAndNil(StreamIO);
+ end;
+
 end;
 
 procedure TpvScene3D.TSampler.AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceSampler:TPasGLTF.TSampler);
@@ -6972,6 +7187,83 @@ begin
 
 end;
 
+procedure TpvScene3D.TTexture.LoadFromStream(const aStream:TStream;const aImages,aSamplers:TpvObjectList);
+var StreamIO:TpvStreamIO;
+    ImageIndex:TpvInt32;
+    SamplerIndex:TpvInt32;
+begin
+
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+
+  fName:=StreamIO.ReadUTF8String;
+
+  ImageIndex:=StreamIO.ReadInt64;
+  if (ImageIndex>=0) and (ImageIndex<aImages.Count) then begin
+   fImage:=TpvScene3D.TImage(aImages[ImageIndex]);
+   fImage.IncRef;
+  end else begin
+   fImage:=nil;
+  end;
+
+  SamplerIndex:=StreamIO.ReadInt64;
+  if (SamplerIndex>=0) and (SamplerIndex<aSamplers.Count) then begin
+   fSampler:=TpvScene3D.TSampler(aSamplers[SamplerIndex]);
+   fSampler.IncRef;
+  end else begin
+   fSampler:=nil;
+  end; 
+
+ finally
+  FreeAndNil(StreamIO);
+ end;
+
+end;
+
+// Ensure that the image and sampler are in linear lists for saving for later lookup at loading again, since they are
+// actually global resources and not part of the texture nor the model/group itself 
+procedure TpvScene3D.TTexture.PrepareSaveToStream(const aImages,aSamplers,aTextures:TpvObjectList);
+begin
+ if aImages.IndexOf(fImage)<0 then begin
+  aImages.Add(fImage);
+ end;
+ if aSamplers.IndexOf(fSampler)<0 then begin
+  aSamplers.Add(fSampler);
+ end;
+ if aTextures.IndexOf(self)<0 then begin
+  aTextures.Add(self);
+ end;
+end;
+
+procedure TpvScene3D.TTexture.SaveToStream(const aStream:TStream;const aImages,aSamplers:TpvObjectList);
+var StreamIO:TpvStreamIO;
+    ImageIndex:TpvInt32;
+    SamplerIndex:TpvInt32;
+begin
+
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+
+  StreamIO.WriteUTF8String(fName);
+
+  ImageIndex:=-1;
+  if assigned(fImage) then begin
+   ImageIndex:=aImages.IndexOf(fImage);
+  end;
+  StreamIO.WriteInt64(ImageIndex);
+
+  SamplerIndex:=-1;
+  if assigned(fSampler) then begin
+   SamplerIndex:=aSamplers.IndexOf(fSampler);
+  end;
+  StreamIO.WriteInt64(SamplerIndex);
+
+ finally
+  FreeAndNil(StreamIO);
+ end;
+
+end;
+
 procedure TpvScene3D.TTexture.AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceTexture:TPasGLTF.TTexture;const aImageMap:TImages;const aSamplerMap:TSamplers);
 var TextureBASISUJSONItem:TPasJSONItem;
     TextureBASISUSource:TpvInt64;
@@ -7040,6 +7332,48 @@ begin
  Scale[1]:=1.0;
 end;
 
+procedure TpvScene3D.TMaterial.TTextureReference.TTransform.LoadFromStream(const aStream:TStream);
+var StreamIO:TpvStreamIO;
+begin
+
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+
+  Active:=StreamIO.ReadBoolean;
+
+  Offset:=StreamIO.ReadVector2;
+
+  Rotation:=StreamIO.ReadFloat;
+
+  Scale:=StreamIO.ReadVector2;
+
+ finally
+  FreeAndNil(StreamIO);
+ end;
+
+end;
+
+procedure TpvScene3D.TMaterial.TTextureReference.TTransform.SaveToStream(const aStream:TStream);
+var StreamIO:TpvStreamIO;
+begin
+
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+
+  StreamIO.WriteBoolean(Active);
+
+  StreamIO.WriteVector2(Offset);
+
+  StreamIO.WriteFloat(Rotation);
+
+  StreamIO.WriteVector2(Scale);
+
+ finally
+  FreeAndNil(StreamIO);
+ end;
+
+end;
+
 procedure TpvScene3D.TMaterial.TTextureReference.TTransform.AssignFromGLTF(var aTextureReference:TTextureReference;const aExtensionsItem:TPasJSONItem);
 var JSONItem:TPasJSONItem;
     JSONObject:TPasJSONItemObject;
@@ -7089,6 +7423,65 @@ begin
  result[0]:=PpvVector2(pointer(@Temporary.RawComponents[0,0]))^;
  result[1]:=PpvVector2(pointer(@Temporary.RawComponents[1,0]))^;
  result[2]:=PpvVector2(pointer(@Temporary.RawComponents[3,0]))^;
+end;
+
+{ TpvScene3D.TMaterial.TTextureReference }
+
+procedure TpvScene3D.TMaterial.TTextureReference.LoadFromStream(const aStream:TStream;const aTextures:TpvObjectList);
+var StreamIO:TpvStreamIO;
+    TextureIndex:TpvInt32;
+begin
+
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+
+  TextureIndex:=StreamIO.ReadInt64;
+  if (TextureIndex>=0) and (TextureIndex<aTextures.Count) then begin
+   Texture:=TpvScene3D.TTexture(aTextures[TextureIndex]);
+   Texture.IncRef;
+  end else begin
+   Texture:=nil;
+  end;
+
+  if TextureIndex>=0 then begin
+   Transform.LoadFromStream(aStream);
+   TexCoord:=StreamIO.ReadInt64;
+  end else begin
+   Transform.AssignDefault;
+   TexCoord:=0;
+  end; 
+
+ finally
+  FreeAndNil(StreamIO);
+ end;
+
+end;
+
+procedure TpvScene3D.TMaterial.TTextureReference.SaveToStream(const aStream:TStream;const aTextures:TpvObjectList);
+var StreamIO:TpvStreamIO;
+    TextureIndex:TpvInt32;
+begin
+
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+
+  if assigned(Texture) then begin
+   TextureIndex:=aTextures.IndexOf(Texture);
+  end else begin
+   TextureIndex:=-1;
+  end;
+
+  StreamIO.WriteInt64(TextureIndex);
+  
+  if TextureIndex>=0 then begin
+   Transform.SaveToStream(aStream);
+   StreamIO.WriteInt64(TexCoord);
+  end; 
+
+ finally
+  FreeAndNil(StreamIO);
+ end;
+
 end;
 
 { TpvScene3D.TMaterial.TData }
@@ -7793,6 +8186,499 @@ begin
  FillShaderData;
 
 end;
+
+procedure TpvScene3D.TMaterial.LoadFromStream(const aStream:TStream;const aImages,aSamplers,aTextures:TpvObjectList);
+var StreamIO:TpvStreamIO;
+begin
+
+ fVisible:=true;
+
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+
+  fName:=StreamIO.ReadUTF8String;
+
+  fSceneInstance.fTextureListLock.Acquire;
+  try
+
+   fData:=TpvScene3D.TMaterial.DefaultData;
+
+   fData.ShadingModel:=TpvScene3D.TMaterial.TShadingModel(TpvUInt32(StreamIO.ReadUInt32));
+
+   fData.CastingShadows:=StreamIO.ReadBoolean;
+   fData.ReceiveShadows:=StreamIO.ReadBoolean;
+
+   fData.AlphaCutOff:=StreamIO.ReadFloat;
+
+   fData.AlphaMode:=TpvScene3D.TMaterial.TAlphaMode(TpvUInt32(StreamIO.ReadUInt32));
+
+   fData.DoubleSided:=StreamIO.ReadBoolean;
+
+   fData.NormalTexture.LoadFromStream(aStream,aTextures);
+
+   fData.NormalTextureScale:=StreamIO.ReadFloat;
+
+   fData.OcclusionTexture.LoadFromStream(aStream,aTextures);
+
+   fData.OcclusionTextureStrength:=StreamIO.ReadFloat;
+
+   fData.EmissiveFactor:=StreamIO.ReadVector4;
+
+   fData.EmissiveTexture.LoadFromStream(aStream,aTextures);
+
+   begin
+
+    // PBRMetallicRoughness
+
+    fData.PBRMetallicRoughness.BaseColorFactor:=StreamIO.ReadVector4;
+
+    fData.PBRMetallicRoughness.BaseColorTexture.LoadFromStream(aStream,aTextures);
+
+    fData.PBRMetallicRoughness.RoughnessFactor:=StreamIO.ReadFloat;
+
+    fData.PBRMetallicRoughness.MetallicFactor:=StreamIO.ReadFloat;
+
+    fData.PBRMetallicRoughness.MetallicRoughnessTexture.LoadFromStream(aStream,aTextures);
+
+    fData.PBRMetallicRoughness.SpecularFactor:=StreamIO.ReadFloat;
+
+    fData.PBRMetallicRoughness.SpecularTexture.LoadFromStream(aStream,aTextures);
+
+    fData.PBRMetallicRoughness.SpecularColorFactor:=StreamIO.ReadVector3;
+
+    fData.PBRMetallicRoughness.SpecularColorTexture.LoadFromStream(aStream,aTextures);
+
+   end;
+
+   begin
+
+    // PBRSpecularGlossiness
+
+    fData.PBRSpecularGlossiness.DiffuseFactor:=StreamIO.ReadVector4;
+
+    fData.PBRSpecularGlossiness.DiffuseTexture.LoadFromStream(aStream,aTextures); 
+
+    fData.PBRSpecularGlossiness.GlossinessFactor:=StreamIO.ReadFloat;
+
+    fData.PBRSpecularGlossiness.SpecularFactor:=StreamIO.ReadVector3;
+
+    fData.PBRSpecularGlossiness.SpecularGlossinessTexture.LoadFromStream(aStream,aTextures);
+
+   end;
+
+   begin
+
+    // PBRSheen
+
+    fData.PBRSheen.Active:=StreamIO.ReadBoolean;
+
+    fData.PBRSheen.ColorFactor:=StreamIO.ReadVector3;
+
+    fData.PBRSheen.ColorTexture.LoadFromStream(aStream,aTextures);
+    
+    fData.PBRSheen.RoughnessFactor:=StreamIO.ReadFloat;
+
+    fData.PBRSheen.RoughnessTexture.LoadFromStream(aStream,aTextures);
+
+   end;
+
+   begin
+
+    // PBRClearCoat
+
+    fData.PBRClearCoat.Active:=StreamIO.ReadBoolean;
+
+    fData.PBRClearCoat.Factor:=StreamIO.ReadFloat;
+
+    fData.PBRClearCoat.Texture.LoadFromStream(aStream,aTextures);
+
+    fData.PBRClearCoat.RoughnessFactor:=StreamIO.ReadFloat;
+
+    fData.PBRClearCoat.RoughnessTexture.LoadFromStream(aStream,aTextures);
+
+    fData.PBRClearCoat.NormalTexture.LoadFromStream(aStream,aTextures);
+
+   end;
+
+   begin
+
+    // Unlit
+
+    // nothing to do
+
+   end;
+
+   begin
+
+    // Iridescence
+
+    fData.IOR:=StreamIO.ReadFloat;
+
+    fData.Iridescence.Active:=StreamIO.ReadBoolean;
+
+    fData.Iridescence.Factor:=StreamIO.ReadFloat;
+
+    fData.Iridescence.Texture.LoadFromStream(aStream,aTextures);
+    fData.Iridescence.Ior:=StreamIO.ReadFloat;
+
+    fData.Iridescence.ThicknessMinimum:=StreamIO.ReadFloat;
+
+    fData.Iridescence.ThicknessMaximum:=StreamIO.ReadFloat;
+
+    fData.Iridescence.ThicknessTexture.LoadFromStream(aStream,aTextures);
+
+   end;
+
+   begin
+
+    // Transmission
+
+    fData.Transmission.Active:=StreamIO.ReadBoolean;
+
+    fData.Transmission.Opaque:=StreamIO.ReadBoolean;
+
+    fData.Transmission.Factor:=StreamIO.ReadFloat;
+
+    fData.Transmission.Texture.LoadFromStream(aStream,aTextures);
+
+   end;
+
+   begin
+
+    // Volume
+
+    fData.Volume.Active:=StreamIO.ReadBoolean;
+
+    fData.Volume.ThicknessFactor:=StreamIO.ReadFloat;
+
+    fData.Volume.ThicknessTexture.LoadFromStream(aStream,aTextures);
+
+    fData.Volume.AttenuationColor:=StreamIO.ReadVector3;
+
+    fData.Volume.AttenuationDistance:=StreamIO.ReadFloat;
+
+   end;
+
+   begin
+
+    // Anisotropy
+
+    fData.Anisotropy.Active:=StreamIO.ReadBoolean;
+
+    fData.Anisotropy.AnisotropyStrength:=StreamIO.ReadFloat;
+
+    fData.Anisotropy.AnisotropyRotation:=StreamIO.ReadFloat;
+
+    fData.Anisotropy.AnisotropyTexture.LoadFromStream(aStream,aTextures);
+
+   end;
+
+   begin
+
+    // Dispersion
+
+    fData.Dispersion.Active:=StreamIO.ReadBoolean;
+
+    fData.Dispersion.Dispersion:=StreamIO.ReadFloat;
+
+   end;
+
+   fData.AnimatedTextureMask:=StreamIO.ReadUInt64;
+
+  finally
+   fSceneInstance.fTextureListLock.Release;
+  end;
+
+ finally
+  FreeAndNil(StreamIO);
+ end;
+
+ FillShaderData;
+
+end;
+
+procedure TpvScene3D.TMaterial.PrepareSaveToStream(const aImages,aSamplers,aTextures,aMaterials:TpvObjectList);
+begin
+
+ if aMaterials.IndexOf(self)<0 then begin
+  aMaterials.Add(self);
+ end;
+
+ if assigned(fData.NormalTexture.Texture) then begin
+  fData.NormalTexture.Texture.PrepareSaveToStream(aImages,aSamplers,aTextures);
+ end;
+
+ if assigned(fData.OcclusionTexture.Texture) then begin
+  fData.OcclusionTexture.Texture.PrepareSaveToStream(aImages,aSamplers,aTextures);
+ end;
+
+ if assigned(fData.EmissiveTexture.Texture) then begin
+  fData.EmissiveTexture.Texture.PrepareSaveToStream(aImages,aSamplers,aTextures);
+ end;
+
+ if assigned(fData.PBRMetallicRoughness.BaseColorTexture.Texture) then begin
+  fData.PBRMetallicRoughness.BaseColorTexture.Texture.PrepareSaveToStream(aImages,aSamplers,aTextures);
+ end;
+
+ if assigned(fData.PBRMetallicRoughness.MetallicRoughnessTexture.Texture) then begin
+  fData.PBRMetallicRoughness.MetallicRoughnessTexture.Texture.PrepareSaveToStream(aImages,aSamplers,aTextures);
+ end;
+
+ if assigned(fData.PBRMetallicRoughness.SpecularTexture.Texture) then begin
+  fData.PBRMetallicRoughness.SpecularTexture.Texture.PrepareSaveToStream(aImages,aSamplers,aTextures);
+ end;
+
+ if assigned(fData.PBRMetallicRoughness.SpecularColorTexture.Texture) then begin
+  fData.PBRMetallicRoughness.SpecularColorTexture.Texture.PrepareSaveToStream(aImages,aSamplers,aTextures);
+ end;
+
+ if assigned(fData.PBRSpecularGlossiness.DiffuseTexture.Texture) then begin
+  fData.PBRSpecularGlossiness.DiffuseTexture.Texture.PrepareSaveToStream(aImages,aSamplers,aTextures);
+ end;
+
+ if assigned(fData.PBRSpecularGlossiness.SpecularGlossinessTexture.Texture) then begin
+  fData.PBRSpecularGlossiness.SpecularGlossinessTexture.Texture.PrepareSaveToStream(aImages,aSamplers,aTextures);
+ end;
+
+ if assigned(fData.PBRSheen.ColorTexture.Texture) then begin
+  fData.PBRSheen.ColorTexture.Texture.PrepareSaveToStream(aImages,aSamplers,aTextures);
+ end;
+
+ if assigned(fData.PBRSheen.RoughnessTexture.Texture) then begin
+  fData.PBRSheen.RoughnessTexture.Texture.PrepareSaveToStream(aImages,aSamplers,aTextures);
+ end;
+
+ if assigned(fData.PBRClearCoat.Texture.Texture) then begin
+  fData.PBRClearCoat.Texture.Texture.PrepareSaveToStream(aImages,aSamplers,aTextures);
+ end;
+
+ if assigned(fData.PBRClearCoat.RoughnessTexture.Texture) then begin
+  fData.PBRClearCoat.RoughnessTexture.Texture.PrepareSaveToStream(aImages,aSamplers,aTextures);
+ end;
+
+ if assigned(fData.PBRClearCoat.NormalTexture.Texture) then begin
+  fData.PBRClearCoat.NormalTexture.Texture.PrepareSaveToStream(aImages,aSamplers,aTextures);
+ end;
+
+ if assigned(fData.Iridescence.Texture.Texture) then begin
+  fData.Iridescence.Texture.Texture.PrepareSaveToStream(aImages,aSamplers,aTextures);
+ end;
+
+ if assigned(fData.Iridescence.ThicknessTexture.Texture) then begin
+  fData.Iridescence.ThicknessTexture.Texture.PrepareSaveToStream(aImages,aSamplers,aTextures);
+ end;
+
+ if assigned(fData.Transmission.Texture.Texture) then begin
+  fData.Transmission.Texture.Texture.PrepareSaveToStream(aImages,aSamplers,aTextures);
+ end;
+
+ if assigned(fData.Volume.ThicknessTexture.Texture) then begin
+  fData.Volume.ThicknessTexture.Texture.PrepareSaveToStream(aImages,aSamplers,aTextures);
+ end;
+
+ if assigned(fData.Anisotropy.AnisotropyTexture.Texture) then begin
+  fData.Anisotropy.AnisotropyTexture.Texture.PrepareSaveToStream(aImages,aSamplers,aTextures);
+ end;
+
+end;
+
+procedure TpvScene3D.TMaterial.SaveToStream(const aStream:TStream;const aImages,aSamplers,aTextures:TpvObjectList);
+var StreamIO:TpvStreamIO;
+begin
+ 
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+
+  StreamIO.WriteUTF8String(fName);
+
+  StreamIO.WriteUInt32(TpvUInt32(fData.ShadingModel));
+
+  StreamIO.WriteBoolean(fData.CastingShadows);
+  StreamIO.WriteBoolean(fData.ReceiveShadows);
+
+  StreamIO.WriteFloat(fData.AlphaCutOff);
+
+  StreamIO.WriteUInt32(TpvUInt32(fData.AlphaMode));
+
+  StreamIO.WriteBoolean(fData.DoubleSided);
+
+  fData.NormalTexture.SaveToStream(aStream,aTextures);
+
+  StreamIO.WriteFloat(fData.NormalTextureScale);
+
+  fData.OcclusionTexture.SaveToStream(aStream,aTextures);
+
+  StreamIO.WriteFloat(fData.OcclusionTextureStrength);
+
+  StreamIO.WriteVector4(fData.EmissiveFactor);
+
+  fData.EmissiveTexture.SaveToStream(aStream,aTextures);
+  
+  begin
+
+   // PBRMetallicRoughness
+
+   StreamIO.WriteVector4(fData.PBRMetallicRoughness.BaseColorFactor);
+
+   fData.PBRMetallicRoughness.BaseColorTexture.SaveToStream(aStream,aTextures);
+
+   StreamIO.WriteFloat(fData.PBRMetallicRoughness.RoughnessFactor);
+
+   StreamIO.WriteFloat(fData.PBRMetallicRoughness.MetallicFactor);
+
+   fData.PBRMetallicRoughness.MetallicRoughnessTexture.SaveToStream(aStream,aTextures);
+
+   StreamIO.WriteFloat(fData.PBRMetallicRoughness.SpecularFactor);
+
+   fData.PBRMetallicRoughness.SpecularTexture.SaveToStream(aStream,aTextures);
+
+   StreamIO.WriteVector3(fData.PBRMetallicRoughness.SpecularColorFactor);
+
+   fData.PBRMetallicRoughness.SpecularColorTexture.SaveToStream(aStream,aTextures);
+   
+  end;
+
+  begin
+
+   // PBRSpecularGlossiness
+
+   StreamIO.WriteVector4(fData.PBRSpecularGlossiness.DiffuseFactor);
+
+   fData.PBRSpecularGlossiness.DiffuseTexture.SaveToStream(aStream,aTextures);
+
+   StreamIO.WriteFloat(fData.PBRSpecularGlossiness.GlossinessFactor);
+
+   StreamIO.WriteVector3(fData.PBRSpecularGlossiness.SpecularFactor);
+
+   fData.PBRSpecularGlossiness.SpecularGlossinessTexture.SaveToStream(aStream,aTextures);
+
+  end;
+
+  begin
+
+   // PBRSheen
+
+   StreamIO.WriteBoolean(fData.PBRSheen.Active);
+
+   StreamIO.WriteVector3(fData.PBRSheen.ColorFactor);
+
+   fData.PBRSheen.ColorTexture.SaveToStream(aStream,aTextures);
+
+   StreamIO.WriteFloat(fData.PBRSheen.RoughnessFactor);
+
+   fData.PBRSheen.RoughnessTexture.SaveToStream(aStream,aTextures);
+
+  end;
+
+  begin
+
+   // PBRClearCoat
+
+   StreamIO.WriteBoolean(fData.PBRClearCoat.Active);
+
+   StreamIO.WriteFloat(fData.PBRClearCoat.Factor);
+
+   fData.PBRClearCoat.Texture.SaveToStream(aStream,aTextures);
+
+   StreamIO.WriteFloat(fData.PBRClearCoat.RoughnessFactor);
+
+   fData.PBRClearCoat.RoughnessTexture.SaveToStream(aStream,aTextures);
+
+   fData.PBRClearCoat.NormalTexture.SaveToStream(aStream,aTextures);
+
+  end;
+
+  begin
+
+   // Unlit
+
+   // nothing to do
+
+  end;
+
+  begin
+
+   // Iridescence
+
+   StreamIO.WriteFloat(fData.IOR);
+
+   StreamIO.WriteBoolean(fData.Iridescence.Active);
+
+   StreamIO.WriteFloat(fData.Iridescence.Factor);
+
+   fData.Iridescence.Texture.SaveToStream(aStream,aTextures);
+
+   StreamIO.WriteFloat(fData.Iridescence.Ior);
+
+   StreamIO.WriteFloat(fData.Iridescence.ThicknessMinimum);
+
+   StreamIO.WriteFloat(fData.Iridescence.ThicknessMaximum);
+
+   fData.Iridescence.ThicknessTexture.SaveToStream(aStream,aTextures);
+
+  end;
+
+  begin
+
+   // Transmission
+
+   StreamIO.WriteBoolean(fData.Transmission.Active);
+
+   StreamIO.WriteBoolean(fData.Transmission.Opaque);
+
+   StreamIO.WriteFloat(fData.Transmission.Factor);
+
+   fData.Transmission.Texture.SaveToStream(aStream,aTextures);
+
+  end;
+
+  begin
+
+   // Volume
+
+   StreamIO.WriteBoolean(fData.Volume.Active);
+
+   StreamIO.WriteFloat(fData.Volume.ThicknessFactor);
+
+   fData.Volume.ThicknessTexture.SaveToStream(aStream,aTextures);
+   
+   StreamIO.WriteVector3(fData.Volume.AttenuationColor);
+
+   StreamIO.WriteFloat(fData.Volume.AttenuationDistance);
+
+  end;
+
+  begin
+
+   // Anisotropy
+
+   StreamIO.WriteBoolean(fData.Anisotropy.Active);
+
+   StreamIO.WriteFloat(fData.Anisotropy.AnisotropyStrength);
+
+   StreamIO.WriteFloat(fData.Anisotropy.AnisotropyRotation);
+
+   fData.Anisotropy.AnisotropyTexture.SaveToStream(aStream,aTextures);
+   
+  end;
+
+  begin
+
+   // Dispersion
+
+   StreamIO.WriteBoolean(fData.Dispersion.Active);
+
+   StreamIO.WriteFloat(fData.Dispersion.Dispersion);
+
+  end;
+
+  StreamIO.WriteUInt64(fData.AnimatedTextureMask);
+
+ finally
+  FreeAndNil(StreamIO); 
+ end;
+
+end; 
 
 procedure TpvScene3D.TMaterial.AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceMaterial:TPasGLTF.TMaterial;const aTextureMap:TTextures);
 var Index:TpvSizeInt;
@@ -8961,6 +9847,114 @@ begin
  if result=0 then begin
   result:=Sign(aCurrent.fCountIndices-aOther.fCountIndices);
  end;
+end;
+
+procedure TpvScene3D.TDrawChoreographyBatchItem.LoadFromStream(const aStream:TStream;const aMaterials:TpvObjectList);
+var StreamIO:TpvStreamIO;
+    Index:TpvSizeInt;
+begin
+
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+
+  fGroupInstance:=nil;
+
+  fAlphaMode:=TpvScene3D.TMaterial.TAlphaMode(TpvUInt32(StreamIO.ReadUInt32));
+
+  fPrimitiveTopology:=TpvScene3D.TPrimitiveTopology(TpvUInt32(StreamIO.ReadUInt32));
+
+  fDoubleSided:=StreamIO.ReadBoolean;
+
+  Index:=StreamIO.ReadInt64;
+  if (Index>=0) and (Index<aMaterials.Count) then begin
+   fMaterial:=TpvScene3D.TMaterial(aMaterials[Index]);
+  end else begin
+   fMaterial:=nil;
+  end;
+
+  Index:=StreamIO.ReadInt64;
+  if not assigned(fNode) then begin
+   if (Index>=0) and (Index<fGroup.fNodes.Count) then begin
+    fNode:=fGroup.fNodes[Index];
+   end else begin
+    fNode:=nil;
+   end;
+  end; 
+
+  fObjectIndex:=StreamIO.ReadUInt32;
+
+  Index:=StreamIO.ReadInt64;
+  if (Index>=0) and (Index<fGroup.fMeshes.Count) then begin
+   fMesh:=fGroup.fMeshes[Index];
+  end else begin
+   fMesh:=nil;
+  end;
+
+  fMeshPrimitive:=StreamIO.ReadInt64;
+
+  fStartIndex:=StreamIO.ReadInt64;
+
+  fCountIndices:=StreamIO.ReadInt64;
+  
+ finally
+  FreeAndNil(StreamIO);
+ end;
+
+end;
+
+procedure TpvScene3D.TDrawChoreographyBatchItem.SaveToStream(const aStream:TStream;const aMaterials:TpvObjectList);
+var StreamIO:TpvStreamIO;
+    Index:TpvSizeInt;
+begin
+
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+
+  StreamIO.WriteUInt32(TpvUInt32(fAlphaMode));
+
+  StreamIO.WriteUInt32(TpvUInt32(fPrimitiveTopology));
+
+  StreamIO.WriteBoolean(fDoubleSided);
+
+  if assigned(fMaterial) then begin
+   Index:=aMaterials.IndexOf(fMaterial);
+  end else begin
+   Index:=-1;
+  end;
+  StreamIO.WriteInt64(Index);
+
+  if assigned(fNode) then begin
+   Index:=TpvScene3D.TGroup.TNode(fNode).fIndex;
+   if Index<0 then begin
+    Index:=fGroup.fNodes.IndexOf(TpvScene3D.TGroup.TNode(fNode));
+   end;
+  end else begin
+   Index:=-1;
+  end;
+  StreamIO.WriteInt64(Index);
+
+  StreamIO.WriteUInt32(fObjectIndex);
+
+  if assigned(fMesh) then begin
+   Index:=TpvScene3D.TGroup.TMesh(fMesh).fIndex;
+   if Index<0 then begin
+    Index:=fGroup.fMeshes.IndexOf(TpvScene3D.TGroup.TMesh(fMesh));
+   end;
+  end else begin
+   Index:=-1;
+  end;
+  StreamIO.WriteInt64(Index);
+
+  StreamIO.WriteInt64(fMeshPrimitive);
+
+  StreamIO.WriteInt64(fStartIndex);
+
+  StreamIO.WriteInt64(fCountIndices);
+
+ finally
+  FreeAndNil(StreamIO);
+ end;
+
 end;
 
 { TpvScene3D.TGroup.TDrawChoreographyBatchItems }
@@ -10392,6 +11386,171 @@ begin
  end;
 end;
 
+procedure TpvScene3D.TGroup.TAnimation.TChannel.LoadFromStream(const aStream:TStream);
+var StreamIO:TpvStreamIO;
+    Index,Count:TpvSizeInt;
+begin
+
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+
+  fName:=StreamIO.ReadUTF8String; 
+
+  fTarget:=TpvScene3D.TGroup.TAnimation.TChannel.TTarget(TpvUInt32(StreamIO.ReadUInt32));
+
+  fTargetPointer:=StreamIO.ReadUTF8String;
+
+  fTargetIndex:=StreamIO.ReadInt64;
+
+  fTargetSubIndex:=StreamIO.ReadInt64;
+
+  fTargetInstanceIndex:=StreamIO.ReadInt64;
+
+  fInterpolation:=TpvScene3D.TGroup.TAnimation.TChannel.TInterpolation(StreamIO.ReadUInt32);
+
+  fInputTimeArray:=nil;
+  Count:=StreamIO.ReadInt64;
+  if Count>0 then begin
+   SetLength(fInputTimeArray,Count);
+   StreamIO.ReadWithCheck(fInputTimeArray[0],Count*SizeOf(TpvDouble));
+  end;
+
+  fOutputScalarArray:=nil;
+  Count:=StreamIO.ReadInt64;
+  if Count>0 then begin
+   SetLength(fOutputScalarArray,Count);
+   StreamIO.ReadWithCheck(fOutputScalarArray[0],Count*SizeOf(TpvFloat));
+  end;
+
+  fOutputVector2Array:=nil;
+  Count:=StreamIO.ReadInt64;
+  if Count>0 then begin
+   SetLength(fOutputVector2Array,Count);
+   StreamIO.ReadWithCheck(fOutputVector2Array[0],Count*SizeOf(TpvVector2));
+  end;
+
+  fOutputVector3Array:=nil;
+  Count:=StreamIO.ReadInt64;
+  if Count>0 then begin
+   SetLength(fOutputVector3Array,Count);
+   StreamIO.ReadWithCheck(fOutputVector3Array[0],Count*SizeOf(TpvVector3));
+  end;
+
+  fOutputVector4Array:=nil;
+  Count:=StreamIO.ReadInt64;
+  if Count>0 then begin
+   SetLength(fOutputVector4Array,Count);
+   StreamIO.ReadWithCheck(fOutputVector4Array[0],Count*SizeOf(TpvVector4));
+  end;
+
+ finally
+  FreeAndNil(StreamIO);
+ end;
+
+end;
+
+procedure TpvScene3D.TGroup.TAnimation.TChannel.SaveToStream(const aStream:TStream);
+var StreamIO:TpvStreamIO;
+    Index,Count:TpvSizeInt;
+begin
+
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+
+  StreamIO.WriteUTF8String(fName);
+
+  StreamIO.WriteUInt32(TpvUInt32(fTarget));
+
+  StreamIO.WriteUTF8String(fTargetPointer);
+
+  StreamIO.WriteInt64(fTargetIndex);
+
+  StreamIO.WriteInt64(fTargetSubIndex);
+
+  StreamIO.WriteInt64(fTargetInstanceIndex);
+
+  StreamIO.WriteUInt32(TpvUInt32(fInterpolation));
+
+  Count:=length(fInputTimeArray);
+  StreamIO.WriteInt64(Count);
+  if Count>0 then begin
+   StreamIO.WriteWithCheck(fInputTimeArray[0],Count*SizeOf(TpvDouble));
+  end;
+
+  Count:=length(fOutputScalarArray);
+  StreamIO.WriteInt64(Count);
+  if Count>0 then begin
+   StreamIO.WriteWithCheck(fOutputScalarArray[0],Count*SizeOf(TpvFloat));
+  end;
+
+  Count:=length(fOutputVector2Array);
+  StreamIO.WriteInt64(Count);
+  if Count>0 then begin
+   StreamIO.WriteWithCheck(fOutputVector2Array[0],Count*SizeOf(TpvVector2));
+  end;
+
+  Count:=length(fOutputVector3Array);
+  StreamIO.WriteInt64(Count);
+  if Count>0 then begin
+   StreamIO.WriteWithCheck(fOutputVector3Array[0],Count*SizeOf(TpvVector3));
+  end;
+
+  Count:=length(fOutputVector4Array);
+  StreamIO.WriteInt64(Count);
+  if Count>0 then begin
+   StreamIO.WriteWithCheck(fOutputVector4Array[0],Count*SizeOf(TpvVector4));
+  end;
+
+ finally
+  FreeAndNil(StreamIO);
+ end;
+
+end;
+
+{ TpvScene3D.TGroup.TAnimation.TDefaultChannel }
+
+procedure TpvScene3D.TGroup.TAnimation.TDefaultChannel.LoadFromStream(const aStream:TStream);
+var StreamIO:TpvStreamIO;
+begin
+ 
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+
+  fTarget:=TpvScene3D.TGroup.TAnimation.TChannel.TTarget(StreamIO.ReadUInt32);
+
+  fTargetIndex:=StreamIO.ReadInt64;
+
+  fTargetSubIndex:=StreamIO.ReadInt64;
+
+  fTargetInstanceIndex:=StreamIO.ReadInt64;
+
+ finally
+  FreeAndNil(StreamIO);
+ end;
+
+end;
+
+procedure TpvScene3D.TGroup.TAnimation.TDefaultChannel.SaveToStream(const aStream:TStream);
+var StreamIO:TpvStreamIO;
+begin
+
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+
+  StreamIO.WriteUInt32(TpvUInt32(fTarget));
+
+  StreamIO.WriteInt64(fTargetIndex);
+
+  StreamIO.WriteInt64(fTargetSubIndex);
+
+  StreamIO.WriteInt64(fTargetInstanceIndex);
+
+ finally
+  FreeAndNil(StreamIO);
+ end;
+
+end;
+
 { TpvScene3D.TGroup.TAnimation }
 
 constructor TpvScene3D.TGroup.TAnimation.Create(const aGroup:TGroup;const aIndex:TpvSizeInt);
@@ -10440,6 +11599,90 @@ begin
     fAnimationEndTime:=Max(fAnimationEndTime,Channel.fInputTimeArray[length(Channel.fInputTimeArray)-1]);
    end;
   end;
+ end;
+
+end;
+
+procedure TpvScene3D.TGroup.TAnimation.LoadFromStream(const aStream:TStream);
+var StreamIO:TpvStreamIO;
+    Index,Count:TpvSizeInt;
+    Channel:TpvScene3D.TGroup.TAnimation.TChannel;
+    DefaultChannel:TpvScene3D.TGroup.TAnimation.TDefaultChannel;
+begin
+
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+
+  fName:=StreamIO.ReadUTF8String;
+
+  fIndex:=StreamIO.ReadInt64;
+
+  fChannels.Clear;
+  Count:=StreamIO.ReadInt64;
+  for Index:=0 to Count-1 do begin
+   Channel:=TpvScene3D.TGroup.TAnimation.TChannel.Create;
+   try
+    Channel.LoadFromStream(aStream);
+    fChannels.Add(Channel);
+   except
+    FreeAndNil(Channel);
+    raise;
+   end;
+  end;
+
+  fDefaultChannels.Clear;
+  Count:=StreamIO.ReadInt64;
+  for Index:=0 to Count-1 do begin
+   DefaultChannel:=TpvScene3D.TGroup.TAnimation.TDefaultChannel.Create;
+   try
+    DefaultChannel.LoadFromStream(aStream);
+    fDefaultChannels.Add(DefaultChannel);
+   except
+    FreeAndNil(DefaultChannel);
+    raise;
+   end;
+  end;
+
+  fAnimationBeginTime:=StreamIO.ReadDouble;
+
+  fAnimationEndTime:=StreamIO.ReadDouble;
+
+ finally
+  FreeAndNil(StreamIO);
+ end;
+
+end;
+
+procedure TpvScene3D.TGroup.TAnimation.SaveToStream(const aStream:TStream);
+var StreamIO:TpvStreamIO;
+    Index,Count:TpvSizeInt;
+begin
+
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+
+  StreamIO.WriteUTF8String(fName);
+
+  StreamIO.WriteInt64(fIndex);
+
+  Count:=fChannels.Count;
+  StreamIO.WriteInt64(Count);
+  for Index:=0 to Count-1 do begin
+   fChannels[Index].SaveToStream(aStream);
+  end;
+
+  Count:=fDefaultChannels.Count;
+  StreamIO.WriteInt64(Count);
+  for Index:=0 to Count-1 do begin
+   fDefaultChannels[Index].SaveToStream(aStream);
+  end;
+
+  StreamIO.WriteDouble(fAnimationBeginTime);
+
+  StreamIO.WriteDouble(fAnimationEndTime);
+
+ finally
+  FreeAndNil(StreamIO);
  end;
 
 end;
@@ -10616,7 +11859,7 @@ begin
     end;
    end;
   end else begin
-   raise EPasGLTF.Create('Non-existent sampler');
+   raise EpvScene3D.Create('Non-existent sampler');
   end;
 
  end;
@@ -10647,6 +11890,80 @@ end;
 destructor TpvScene3D.TGroup.TCamera.Destroy;
 begin
  inherited Destroy;
+end;
+
+procedure TpvScene3D.TGroup.TCamera.LoadFromStream(const aStream:TStream);
+var StreamIO:TpvStreamIO;
+begin
+
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+  
+  fName:=StreamIO.ReadUTF8String;
+
+  fCameraData.Type_:=TCameraData.TCameraType(TpvUInt32(StreamIO.ReadUInt32));
+
+  case fCameraData.Type_ of
+   TCameraData.TCameraType.None:begin
+   end;
+   TCameraData.TCameraType.Orthographic:begin
+    fCameraData.Orthographic.XMag:=StreamIO.ReadFloat;
+    fCameraData.Orthographic.YMag:=StreamIO.ReadFloat;
+    fCameraData.Orthographic.ZNear:=StreamIO.ReadFloat;
+    fCameraData.Orthographic.ZFar:=StreamIO.ReadFloat;
+   end;
+   TCameraData.TCameraType.Perspective:begin
+    fCameraData.Perspective.AspectRatio:=StreamIO.ReadFloat;
+    fCameraData.Perspective.YFoV:=StreamIO.ReadFloat;
+    fCameraData.Perspective.ZNear:=StreamIO.ReadFloat;
+    fCameraData.Perspective.ZFar:=StreamIO.ReadFloat;
+   end;
+   else begin
+    Assert(false);
+   end;
+  end;
+
+ finally
+  FreeAndNil(StreamIO);
+ end; 
+
+end;
+
+procedure TpvScene3D.TGroup.TCamera.SaveToStream(const aStream:TStream);
+var StreamIO:TpvStreamIO;
+begin
+
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+  
+  StreamIO.WriteUTF8String(fName);
+
+  StreamIO.WriteUInt32(TpvUInt32(fCameraData.Type_));
+
+  case fCameraData.Type_ of
+   TCameraData.TCameraType.None:begin
+   end;
+   TCameraData.TCameraType.Orthographic:begin
+    StreamIO.WriteFloat(fCameraData.Orthographic.XMag);
+    StreamIO.WriteFloat(fCameraData.Orthographic.YMag);
+    StreamIO.WriteFloat(fCameraData.Orthographic.ZNear);
+    StreamIO.WriteFloat(fCameraData.Orthographic.ZFar);
+   end;
+   TCameraData.TCameraType.Perspective:begin
+    StreamIO.WriteFloat(fCameraData.Perspective.AspectRatio);
+    StreamIO.WriteFloat(fCameraData.Perspective.YFoV);
+    StreamIO.WriteFloat(fCameraData.Perspective.ZNear);
+    StreamIO.WriteFloat(fCameraData.Perspective.ZFar);
+   end;
+   else begin
+    Assert(false);
+   end;
+  end;
+
+ finally
+  FreeAndNil(StreamIO);
+ end; 
+
 end;
 
 procedure TpvScene3D.TGroup.TCamera.AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceCamera:TPasGLTF.TCamera);
@@ -10812,6 +12129,145 @@ begin
  FreeAndNil(fTemporaryVertices);
 
  FreeAndNil(fTemporaryIndices);
+
+end;
+
+procedure TpvScene3D.TGroup.TMesh.TPrimitive.LoadFromStream(const aStream:TStream;const aMaterials:TpvObjectList);
+var StreamIO:TpvStreamIO;
+    MaterialIndex,Index,VertexIndex,MaterialID:TpvSizeInt;
+    Count,OtherCount:TpvSizeInt;
+    Target:TpvScene3D.TGroup.TMesh.TPrimitive.TTarget;
+    NodeMeshPrimitiveInstance:TpvScene3D.TGroup.TMesh.TPrimitive.TNodeMeshPrimitiveInstance;
+    Vertex:TpvScene3D.PVertex;
+begin
+
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+
+  fPrimitiveIndex:=StreamIO.ReadUInt32;
+
+  fPrimitiveTopology:=TpvScene3D.TPrimitiveTopology(TpvUInt32(StreamIO.ReadUInt32));
+
+  MaterialIndex:=StreamIO.ReadInt64;
+  if (MaterialIndex>=0) and (MaterialIndex<aMaterials.Count) then begin
+   fMaterial:=TpvScene3D.TMaterial(aMaterials[MaterialIndex]);
+  end else begin
+   fMaterial:=nil;
+  end;
+
+  if fMesh.fGroup.fMaterialIndexHashMap.TryGet(fMaterial,MaterialID) then begin
+   fMaterialID:=MaterialID;
+  end else begin
+   fMaterialID:=MaterialIndex;
+  end;
+
+  Count:=StreamIO.ReadInt64;
+  for Index:=0 to Count-1 do begin
+   Target:=TpvScene3D.TGroup.TMesh.TPrimitive.TTarget.Create;
+   try
+    Target.fName:=StreamIO.ReadUTF8String;
+    OtherCount:=StreamIO.ReadInt64;
+    Target.fVertices.Resize(OtherCount);
+    if OtherCount>0 then begin
+     StreamIO.ReadWithCheck(Target.fVertices.ItemArray[0],OtherCount*SizeOf(TpvScene3D.TGroup.TMesh.TPrimitive.TTarget.TTargetVertex));
+    end;
+   finally
+    fTargets.Add(Target);
+   end; 
+  end;
+
+  fMorphTargetBaseIndex:=StreamIO.ReadInt64;
+  fStartBufferVertexOffset:=StreamIO.ReadInt64;
+  fStartBufferIndexOffset:=StreamIO.ReadInt64;
+  fCountVertices:=StreamIO.ReadInt64;
+  fCountIndices:=StreamIO.ReadInt64;
+
+  Count:=StreamIO.ReadInt64;
+  for Index:=0 to Count-1 do begin
+
+   NodeMeshPrimitiveInstance:=TpvScene3D.TGroup.TMesh.TPrimitive.TNodeMeshPrimitiveInstance.Create;
+   try
+  
+    NodeMeshPrimitiveInstance.fMorphTargetBaseIndex:=StreamIO.ReadInt64;
+    NodeMeshPrimitiveInstance.fStartBufferVertexOffset:=StreamIO.ReadInt64;
+    NodeMeshPrimitiveInstance.fStartBufferIndexOffset:=StreamIO.ReadInt64;
+    NodeMeshPrimitiveInstance.fStartBufferDrawIndexOffset:=StreamIO.ReadInt64;
+
+    // Fix material IDs in the vertices, since these could be different after re-loading 
+    Vertex:=@fMesh.fGroup.fVertices.ItemArray[NodeMeshPrimitiveInstance.fStartBufferVertexOffset];
+    for VertexIndex:=0 to fCountVertices-1 do begin
+     Vertex^.MaterialID:=fMaterialID+1; // +1 because 0 = empty material
+     inc(Vertex);
+    end;
+
+   finally
+    fNodeMeshPrimitiveInstances.Add(NodeMeshPrimitiveInstance);
+   end;
+
+  end;
+
+  fRaytracingPrimitiveID:=StreamIO.ReadUInt64;
+ 
+ finally
+  FreeAndNil(StreamIO);
+ end;
+
+end;
+
+procedure TpvScene3D.TGroup.TMesh.TPrimitive.SaveToStream(const aStream:TStream;const aMaterials:TpvObjectList);
+var StreamIO:TpvStreamIO;
+    Index:TpvSizeInt;
+    Count,OtherCount:TpvSizeInt;
+    Target:TpvScene3D.TGroup.TMesh.TPrimitive.TTarget;
+    NodeMeshPrimitiveInstance:TpvScene3D.TGroup.TMesh.TPrimitive.TNodeMeshPrimitiveInstance;
+begin
+
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+
+  StreamIO.WriteUInt32(fPrimitiveIndex);
+
+  StreamIO.WriteUInt32(TpvUInt32(fPrimitiveTopology));
+
+  if assigned(fMaterial) then begin
+   StreamIO.WriteInt64(aMaterials.IndexOf(fMaterial));
+  end else begin
+   StreamIO.WriteInt64(-1);
+  end;
+
+  Count:=fTargets.Count;
+  StreamIO.WriteInt64(Count);
+  for Index:=0 to Count-1 do begin
+   Target:=fTargets[Index];
+   StreamIO.WriteUTF8String(Target.fName);
+   OtherCount:=Target.fVertices.Count;
+   StreamIO.WriteInt64(OtherCount);
+   if OtherCount>0 then begin
+    StreamIO.WriteWithCheck(Target.fVertices.ItemArray[0],OtherCount*SizeOf(TpvScene3D.TGroup.TMesh.TPrimitive.TTarget.TTargetVertex));
+   end;
+  end;
+
+  StreamIO.WriteInt64(fMorphTargetBaseIndex);
+  StreamIO.WriteInt64(fStartBufferVertexOffset);
+  StreamIO.WriteInt64(fStartBufferIndexOffset);
+  StreamIO.WriteInt64(fCountVertices);
+  StreamIO.WriteInt64(fCountIndices);
+
+  Count:=fNodeMeshPrimitiveInstances.Count;
+  StreamIO.WriteInt64(Count);
+  for Index:=0 to Count-1 do begin
+   NodeMeshPrimitiveInstance:=fNodeMeshPrimitiveInstances[Index];
+   StreamIO.WriteInt64(NodeMeshPrimitiveInstance.fMorphTargetBaseIndex);
+   StreamIO.WriteInt64(NodeMeshPrimitiveInstance.fStartBufferVertexOffset);
+   StreamIO.WriteInt64(NodeMeshPrimitiveInstance.fStartBufferIndexOffset);
+   StreamIO.WriteInt64(NodeMeshPrimitiveInstance.fStartBufferDrawIndexOffset);
+  end;
+
+  StreamIO.WriteUInt64(fRaytracingPrimitiveID);
+
+ finally
+  FreeAndNil(StreamIO);
+ end;
 
 end;
 
@@ -11340,6 +12796,110 @@ begin
  TPasMPInterlocked.Increment(fGeneration);
 
  TPasMPInterlocked.Increment(fGroup.fMeshContentGeneration);
+
+end;
+
+procedure TpvScene3D.TGroup.TMesh.LoadFromStream(const aStream:TStream;const aMaterials:TpvObjectList);
+var StreamIO:TpvStreamIO;
+    Index,Count:TpvSizeInt;
+    Primitive:TpvScene3D.TGroup.TMesh.TPrimitive;
+begin
+
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+
+  fName:=StreamIO.ReadUTF8String;
+
+  fIndex:=StreamIO.ReadInt64;
+
+  fMorphTargetBaseIndex:=StreamIO.ReadUInt64;
+  fCountMorphTargets:=StreamIO.ReadInt64;
+
+  Count:=StreamIO.ReadInt64;
+  fNodeInstanceMorphTargetBaseIndices.Resize(Count);
+  for Index:=0 to Count-1 do begin
+   fNodeInstanceMorphTargetBaseIndices[Index]:=StreamIO.ReadUInt64;
+  end;
+
+  Count:=StreamIO.ReadInt64;
+  for Index:=0 to Count-1 do begin
+   Primitive:=TpvScene3D.TGroup.TMesh.TPrimitive.Create(self);
+   try
+    Primitive.LoadFromStream(aStream,aMaterials);
+   finally
+    fPrimitives.Add(Primitive);
+    if Primitive.fRaytracingPrimitiveID>0 then begin
+     fRaytracingPrimitives.Add(Primitive);
+    end;
+   end;
+  end;
+
+  fBoundingBox:=StreamIO.ReadAABB;
+
+  Count:=StreamIO.ReadInt64;
+  fWeights.Resize(Count);
+  if Count>0 then begin
+   StreamIO.ReadWithCheck(fWeights.ItemArray[0],Count*SizeOf(TpvFloat));
+  end;
+
+  fNodeMeshInstances:=StreamIO.ReadUInt64;
+
+  Count:=StreamIO.ReadUInt64;
+  fReferencedByNodes.Resize(Count);
+  for Index:=0 to fReferencedByNodes.Count-1 do begin
+   fReferencedByNodes[Index]:=StreamIO.ReadUInt64;
+  end;
+  
+ finally
+  FreeAndNil(StreamIO);
+ end;
+
+end;
+
+procedure TpvScene3D.TGroup.TMesh.SaveToStream(const aStream:TStream;const aMaterials:TpvObjectList);
+var StreamIO:TpvStreamIO;
+    Index:TpvSizeInt;
+    Primitive:TpvScene3D.TGroup.TMesh.TPrimitive;
+begin
+
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+
+  StreamIO.WriteUTF8String(fName);
+
+  StreamIO.WriteInt64(fIndex);
+
+  StreamIO.WriteUInt64(fMorphTargetBaseIndex);
+  StreamIO.WriteInt64(fCountMorphTargets);
+
+  StreamIO.WriteInt64(fNodeInstanceMorphTargetBaseIndices.Count);
+  for Index:=0 to fNodeInstanceMorphTargetBaseIndices.Count-1 do begin
+   StreamIO.WriteUInt64(fNodeInstanceMorphTargetBaseIndices[Index]);
+  end;
+
+  StreamIO.WriteInt64(fPrimitives.Count);
+  for Index:=0 to fPrimitives.Count-1 do begin
+   Primitive:=fPrimitives[Index];
+   Primitive.SaveToStream(aStream,aMaterials);  
+  end;
+   
+  StreamIO.WriteAABB(fBoundingBox);
+
+  StreamIO.WriteInt64(fWeights.Count);
+  if fWeights.Count>0 then begin
+   StreamIO.WriteWithCheck(fWeights.ItemArray[0],fWeights.Count*SizeOf(TpvFloat));
+  end;
+
+  StreamIO.WriteUInt64(fNodeMeshInstances);
+
+  StreamIO.WriteUInt64(fReferencedByNodes.Count);
+  for Index:=0 to fReferencedByNodes.Count-1 do begin
+   StreamIO.WriteUInt64(fReferencedByNodes[Index]);
+  end;
+
+ finally
+  FreeAndNil(StreamIO);
+ end;
 
 end;
 
@@ -12483,6 +14043,86 @@ begin
  inherited Destroy;
 end;
 
+procedure TpvScene3D.TGroup.TSkin.LoadFromStream(const aStream:TStream);
+var StreamIO:TpvStreamIO;
+    Index,Count:TpvSizeInt;
+begin
+
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+  
+  fName:=StreamIO.ReadUTF8String;
+
+  fIndex:=StreamIO.ReadInt64;
+
+  fSkeleton:=StreamIO.ReadInt64;
+
+  fJointMatrixOffset:=StreamIO.ReadInt64;
+
+  Count:=StreamIO.ReadInt64;
+  fInverseBindMatrices.Resize(Count);
+  for Index:=0 to Count-1 do begin
+   fInverseBindMatrices.Items[Index]:=StreamIO.ReadMatrix4x4;
+  end;
+
+  Count:=StreamIO.ReadInt64;
+  fMatrices.Resize(Count);
+  for Index:=0 to Count-1 do begin
+   fMatrices.Items[Index]:=StreamIO.ReadMatrix4x4;
+  end;
+
+  Count:=StreamIO.ReadInt64;
+  fJoints.Resize(Count);
+  for Index:=0 to Count-1 do begin
+   fJoints.Items[Index]:=StreamIO.ReadInt64;
+  end;
+
+ finally
+  FreeAndNil(StreamIO);
+ end;
+
+end;
+
+procedure TpvScene3D.TGroup.TSkin.SaveToStream(const aStream:TStream);
+var StreamIO:TpvStreamIO;
+    Index,Count:TpvSizeInt;
+begin
+
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+
+  StreamIO.WriteUTF8String(fName);
+
+  StreamIO.WriteInt64(fIndex);
+
+  StreamIO.WriteInt64(fSkeleton);
+
+  StreamIO.WriteInt64(fJointMatrixOffset);
+
+  Count:=fInverseBindMatrices.Count;
+  StreamIO.WriteInt64(Count);
+  for Index:=0 to Count-1 do begin
+   StreamIO.WriteMatrix4x4(fInverseBindMatrices.Items[Index]);
+  end;
+
+  Count:=fMatrices.Count;
+  StreamIO.WriteInt64(Count);
+  for Index:=0 to Count-1 do begin
+   StreamIO.WriteMatrix4x4(fMatrices.Items[Index]);
+  end;
+
+  Count:=fJoints.Count;
+  StreamIO.WriteInt64(Count);
+  for Index:=0 to Count-1 do begin
+   StreamIO.WriteInt64(fJoints.Items[Index]);
+  end;
+
+ finally
+  FreeAndNil(StreamIO);
+ end;
+
+end;
+
 procedure TpvScene3D.TGroup.TSkin.AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceSkin:TPasGLTF.TSkin);
 var JointIndex,OldCount:TPasGLTFSizeInt;
     InverseBindMatrices:TPasGLTF.TMatrix4x4DynamicArray;
@@ -12541,6 +14181,90 @@ destructor TpvScene3D.TGroup.TLight.Destroy;
 begin
  FreeAndNil(fNodes);
  inherited Destroy;
+end;
+
+procedure TpvScene3D.TGroup.TLight.LoadFromStream(const aStream:TStream);
+var StreamIO:TpvStreamIO;
+    Index,Count:TpvSizeInt;
+begin
+
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+
+  fName:=StreamIO.ReadUTF8String;
+
+  fIndex:=StreamIO.ReadInt64;
+
+  fData.fType_:=TpvScene3D.TLightData.TLightType(StreamIO.ReadInt32);
+
+  fData.fIntensity:=StreamIO.ReadFloat;
+
+  fData.fRange:=StreamIO.ReadFloat;
+
+  fData.fInnerConeAngle:=StreamIO.ReadFloat;
+
+  fData.fOuterConeAngle:=StreamIO.ReadFloat;
+
+  fData.fColor:=StreamIO.ReadVector3;
+
+  fData.fCastShadows:=StreamIO.ReadBoolean;
+
+  fData.fVisible:=StreamIO.ReadBoolean;
+
+  fData.fAlways:=StreamIO.ReadBoolean;
+
+  Count:=StreamIO.ReadInt64;
+  fNodes.Clear;
+  for Index:=0 to Count-1 do begin
+   StreamIO.ReadInt64;
+  end;
+
+ finally
+  FreeAndNil(StreamIO);
+ end;
+
+end;
+
+procedure TpvScene3D.TGroup.TLight.SaveToStream(const aStream:TStream);
+var StreamIO:TpvStreamIO;
+    Index,Count:TpvSizeInt;
+begin
+
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+
+  StreamIO.WriteUTF8String(fName);
+
+  StreamIO.WriteInt64(fIndex);
+
+  StreamIO.WriteInt32(TpvInt32(fData.fType_));
+
+  StreamIO.WriteFloat(fData.fIntensity);
+
+  StreamIO.WriteFloat(fData.fRange);
+
+  StreamIO.WriteFloat(fData.fInnerConeAngle);
+
+  StreamIO.WriteFloat(fData.fOuterConeAngle);
+
+  StreamIO.WriteVector3(fData.fColor);
+
+  StreamIO.WriteBoolean(fData.fCastShadows);
+
+  StreamIO.WriteBoolean(fData.fVisible);
+
+  StreamIO.WriteBoolean(fData.fAlways);
+
+  Count:=fNodes.Count;
+  StreamIO.WriteInt64(Count);
+  for Index:=0 to Count-1 do begin
+   StreamIO.WriteInt64(fNodes.Items[Index].fIndex);
+  end;
+
+ finally
+  FreeAndNil(StreamIO);
+ end;
+
 end;
 
 procedure TpvScene3D.TGroup.TLight.AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceLight:TPasJSONItemObject);
@@ -12632,14 +14356,20 @@ begin
 
  fJoint:=-1;
 
+ fUsedByScenesList:=TUsedByScenesList.Create;
+ fUsedByScenesList.OwnsObjects:=false;
+
+ fUsedByScenesListIndices:=TpvScene3D.TSizeIntDynamicArrayList.Create;
+
  fChildren:=TNodes.Create;
  fChildren.OwnsObjects:=false;
+
+ fChildrenIndices:=TpvScene3D.TSizeIntDynamicArrayList.Create;
 
  fSplittedChildren:=TNodes.Create;
  fSplittedChildren.OwnsObjects:=false;
 
- fUsedByScenesList:=TUsedByScenesList.Create;
- fUsedByScenesList.OwnsObjects:=false;
+ fSplittedChildrenIndices:=TpvScene3D.TSizeIntDynamicArrayList.Create;
 
  fWeights:=TpvScene3D.TFloatDynamicArrayList.Create;
 
@@ -12686,7 +14416,13 @@ begin
 
  FreeAndNil(fUsedByScenesList);
 
+ FreeAndNil(fUsedByScenesListIndices);
+
+ FreeAndNil(fSplittedChildrenIndices);
+
  FreeAndNil(fSplittedChildren);
+
+ FreeAndNil(fChildrenIndices);
 
  FreeAndNil(fChildren);
 
@@ -12696,6 +14432,291 @@ begin
 
  inherited Destroy;
 
+end;
+
+procedure TpvScene3D.TGroup.TNode.LoadFromStream(const aStream:TStream);
+var StreamIO:TpvStreamIO;
+    Index,Count:TpvSizeInt;
+    Flags:TpvUInt32;
+    UsedJoint:TpvScene3D.TGroup.TNode.PUsedJoint;
+begin
+
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+
+  fName:=StreamIO.ReadUTF8String;
+
+  fIndex:=StreamIO.ReadInt64;
+
+  Flags:=StreamIO.ReadUInt32;
+  fFlags:=[];
+  if (Flags and 1)<>0 then begin
+   Include(fFlags,TpvScene3D.TGroup.TNode.TNodeFlag.TransformAnimated);
+  end;
+  if (Flags and 2)<>0 then begin
+   Include(fFlags,TpvScene3D.TGroup.TNode.TNodeFlag.SkinAnimated);
+  end;
+  if (Flags and 4)<>0 then begin
+   Include(fFlags,TpvScene3D.TGroup.TNode.TNodeFlag.WeightsAnimated);
+  end;
+
+  Count:=StreamIO.ReadInt64;
+  fUsedByScenesListIndices.Clear;
+  for Index:=0 to Count-1 do begin
+   fUsedByScenesListIndices.Add(StreamIO.ReadInt64);
+  end;
+
+  Count:=StreamIO.ReadInt64;
+  fChildrenIndices.Clear;
+  for Index:=0 to Count-1 do begin
+   fChildrenIndices.Add(StreamIO.ReadInt64);
+  end;
+
+  Count:=StreamIO.ReadInt64;
+  fSplittedChildrenIndices.Clear;
+  for Index:=0 to Count-1 do begin
+   fSplittedChildrenIndices.Add(StreamIO.ReadInt64);
+  end;
+
+  Index:=StreamIO.ReadInt64;
+  if (Index>=0) and (Index<fGroup.fMeshes.Count) then begin
+   fMesh:=fGroup.fMeshes[Index];
+  end else begin
+   fMesh:=nil;
+  end;
+
+  fNodeMeshInstanceIndex:=StreamIO.ReadInt64;
+
+  Index:=StreamIO.ReadInt64;
+  if (Index>=0) and (Index<fGroup.fCameras.Count) then begin
+   fCamera:=fGroup.fCameras[Index];
+  end else begin
+   fCamera:=nil;
+  end;
+
+  Index:=StreamIO.ReadInt64;
+  if (Index>=0) and (Index<fGroup.fSkins.Count) then begin
+   fSkin:=fGroup.fSkins[Index];
+  end else begin
+   fSkin:=nil;
+  end;
+  
+  fLightIndex:=StreamIO.ReadInt64;
+
+  Index:=StreamIO.ReadInt64;
+  if (Index>=0) and (Index<fGroup.fLights.Count) then begin
+   fLight:=fGroup.fLights[Index];
+  end else begin
+   fLight:=nil;
+  end;
+
+  fMatrix:=StreamIO.ReadMatrix4x4;
+
+  fTranslation:=StreamIO.ReadVector3;
+
+  fRotation:=StreamIO.ReadQuaternion;
+
+  fScale:=StreamIO.ReadVector3;
+
+  Count:=StreamIO.ReadInt64;
+  fWeights.Resize(Count);
+  if Count>0 then begin
+   StreamIO.ReadWithCheck(fWeights.ItemArray[0],Count*SizeOf(TpvFloat));
+  end;
+  fWeights.Finish;
+  
+  fWeightsOffset:=StreamIO.ReadInt64;
+
+  fJoint:=StreamIO.ReadInt64;
+
+  fRaytracingMask:=StreamIO.ReadUInt8;
+
+  Count:=StreamIO.ReadInt64;
+  fDrawChoreographyBatchItemIndices.Resize(Count);
+  for Index:=0 to Count-1 do begin
+   fDrawChoreographyBatchItemIndices.ItemArray[Index]:=StreamIO.ReadInt64;
+  end;
+  fDrawChoreographyBatchItemIndices.Finish;
+
+  Count:=StreamIO.ReadInt64;
+  fDrawChoreographyBatchUniqueItemIndices.Resize(Count);
+  for Index:=0 to Count-1 do begin
+   fDrawChoreographyBatchUniqueItemIndices.ItemArray[Index]:=StreamIO.ReadInt64;
+  end;
+  fDrawChoreographyBatchUniqueItemIndices.Finish;
+
+  Count:=StreamIO.ReadInt64;
+  fUsedJoints.Resize(Count);
+  for Index:=0 to Count-1 do begin
+   UsedJoint:=@fUsedJoints.ItemArray[Index];
+   UsedJoint^.Joint:=StreamIO.ReadInt64;
+   UsedJoint^.Weight:=StreamIO.ReadFloat;
+   UsedJoint^.AABB:=StreamIO.ReadAABB;
+  end;
+  fUsedJoints.Finish;
+
+ finally
+  FreeAndNil(StreamIO);
+ end;
+
+end;
+
+procedure TpvScene3D.TGroup.TNode.FixUp;
+var Index,SceneIndex,NodeIndex:TpvSizeInt;
+    Scene:TScene;
+    Node:TNode;
+begin
+
+ fUsedByScenesList.Clear;
+ for Index:=0 to fUsedByScenesListIndices.Count-1 do begin
+  SceneIndex:=fUsedByScenesListIndices.Items[Index];
+  if (SceneIndex>=0) and (SceneIndex<fGroup.fScenes.Count) then begin
+   Scene:=fGroup.fScenes[SceneIndex];
+   if assigned(Scene) then begin
+    fUsedByScenesList.Add(Scene);
+   end;
+  end;
+ end;
+
+ fChildren.Clear;
+ for Index:=0 to fChildrenIndices.Count-1 do begin
+  NodeIndex:=fChildrenIndices.Items[Index];
+  if (NodeIndex>=0) and (NodeIndex<fGroup.fNodes.Count) then begin
+   Node:=fGroup.fNodes[NodeIndex];
+   if assigned(Node) then begin
+    fChildren.Add(Node);
+   end;
+  end;
+ end;
+
+ fSplittedChildren.Clear;
+ for Index:=0 to fSplittedChildrenIndices.Count-1 do begin
+  NodeIndex:=fSplittedChildrenIndices.Items[Index];
+  if (NodeIndex>=0) and (NodeIndex<fGroup.fNodes.Count) then begin
+   Node:=fGroup.fNodes[NodeIndex];
+   if assigned(Node) then begin
+    fSplittedChildren.Add(Node);
+   end;
+  end;
+ end;
+
+end;
+
+procedure TpvScene3D.TGroup.TNode.SaveToStream(const aStream:TStream);
+var StreamIO:TpvStreamIO;
+    Index,Count:TpvSizeInt;
+    Flags:TpvUInt32;
+begin
+
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+
+  StreamIO.WriteUTF8String(fName);
+
+  StreamIO.WriteInt64(fIndex);
+
+  Flags:=0;
+  if TpvScene3D.TGroup.TNode.TNodeFlag.TransformAnimated in fFlags then begin
+   Flags:=Flags or 1;
+  end;
+  if TpvScene3D.TGroup.TNode.TNodeFlag.SkinAnimated in fFlags then begin
+   Flags:=Flags or 2;
+  end;
+  if TpvScene3D.TGroup.TNode.TNodeFlag.WeightsAnimated in fFlags then begin
+   Flags:=Flags or 4;
+  end;
+  StreamIO.WriteUInt32(Flags);
+
+  Count:=fUsedByScenesList.Count;
+  StreamIO.WriteInt64(Count);
+  for Index:=0 to Count-1 do begin
+   StreamIO.WriteInt64(fUsedByScenesList.Items[Index].fIndex); 
+  end;
+
+  Count:=fChildren.Count;
+  StreamIO.WriteInt64(Count);
+  for Index:=0 to Count-1 do begin
+   StreamIO.WriteInt64(fChildren.Items[Index].fIndex);
+  end;
+
+  Count:=fSplittedChildren.Count;
+  StreamIO.WriteInt64(Count);
+  for Index:=0 to Count-1 do begin
+   StreamIO.WriteInt64(fSplittedChildren.Items[Index].fIndex);
+  end;
+  
+  if assigned(fMesh) then begin
+   StreamIO.WriteInt64(fMesh.fIndex);
+  end else begin
+   StreamIO.WriteInt64(-1);
+  end;
+
+  StreamIO.WriteInt64(fNodeMeshInstanceIndex);
+
+  if assigned(fCamera) then begin
+   StreamIO.WriteInt64(fCamera.fIndex);
+  end else begin
+   StreamIO.WriteInt64(-1);
+  end;
+
+  if assigned(fSkin) then begin
+   StreamIO.WriteInt64(fSkin.fIndex);
+  end else begin
+   StreamIO.WriteInt64(-1);
+  end;
+
+  StreamIO.WriteInt64(fLightIndex);
+
+  if assigned(fLight) then begin
+   StreamIO.WriteInt64(fLight.fIndex);
+  end else begin
+   StreamIO.WriteInt64(-1);
+  end;
+
+  StreamIO.WriteMatrix4x4(fMatrix);
+
+  StreamIO.WriteVector3(fTranslation);
+
+  StreamIO.WriteQuaternion(fRotation);
+
+  StreamIO.WriteVector3(fScale);
+
+  Count:=fWeights.Count;
+  StreamIO.WriteInt64(Count);
+  if Count>0 then begin
+   StreamIO.WriteWithCheck(fWeights.ItemArray[0],Count*SizeOf(TpvFloat));
+  end;
+
+  StreamIO.WriteInt64(fWeightsOffset);
+
+  StreamIO.WriteInt64(fJoint);
+
+  StreamIO.WriteUInt8(fRaytracingMask);
+
+  Count:=fDrawChoreographyBatchItemIndices.Count;
+  StreamIO.WriteInt64(Count);
+  for Index:=0 to Count-1 do begin
+   StreamIO.WriteInt64(fDrawChoreographyBatchItemIndices[Index]);
+  end;
+
+  Count:=fDrawChoreographyBatchUniqueItemIndices.Count;
+  StreamIO.WriteInt64(Count);
+  for Index:=0 to Count-1 do begin
+   StreamIO.WriteInt64(fDrawChoreographyBatchUniqueItemIndices[Index]);
+  end;
+
+  Count:=fUsedJoints.Count;
+  StreamIO.WriteInt64(Count);
+  for Index:=0 to Count-1 do begin
+   StreamIO.WriteInt64(fUsedJoints.Items[Index].Joint);
+   StreamIO.WriteFloat(fUsedJoints.Items[Index].Weight);
+   StreamIO.WriteAABB(fUsedJoints.Items[Index].AABB);
+  end;
+
+ finally
+  FreeAndNil(StreamIO);
+ end;
+ 
 end;
 
 procedure TpvScene3D.TGroup.TNode.Finish;
@@ -12747,7 +14768,7 @@ begin
 end;
 
 procedure TpvScene3D.TGroup.TNode.AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceNode:TPasGLTF.TNode;const aLightMap:TpvScene3D.TGroup.TLights);
-var WeightIndex,ChildrenIndex:TpvSizeInt;
+var WeightIndex{,ChildrenIndex}:TpvSizeInt;
     ExtensionObject:TPasJSONItemObject;
     KHRLightsPunctualItem:TPasJSONItem;
     KHRLightsPunctualObject:TPasJSONItemObject;
@@ -12939,6 +14960,189 @@ begin
 
  finally
   Stack.Finalize;
+ end;
+
+end;
+
+procedure TpvScene3D.TGroup.TScene.LoadFromStream(const aStream:TStream;const aMaterials:TpvObjectList);
+var StreamIO:TpvStreamIO;
+    Index,Count,NodeIndex:TpvSizeInt;    
+    DrawChoreographyBatchItem:TDrawChoreographyBatchItem;
+    SkipListItem:PSkipListItem;
+begin
+
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+
+  fName:=StreamIO.ReadUTF8String;
+
+  fIndex:=StreamIO.ReadInt64;
+
+  Count:=StreamIO.ReadInt64;
+  fNodes.Clear;
+  for Index:=0 to Count-1 do begin
+   NodeIndex:=StreamIO.ReadInt64;
+   if (NodeIndex>=0) and (NodeIndex<fGroup.fNodes.Count) then begin
+    fNodes.Add(fGroup.fNodes[NodeIndex]);
+   end else begin
+    raise EpvScene3D.Create('Node index out of range');
+   end;
+  end;
+
+  Count:=StreamIO.ReadInt64;
+  fAllNodes.Clear;
+  for Index:=0 to Count-1 do begin
+   NodeIndex:=StreamIO.ReadInt64;
+   if (NodeIndex>=0) and (NodeIndex<fGroup.fNodes.Count) then begin
+    fAllNodes.Add(fGroup.fNodes[NodeIndex]);
+   end else begin
+    raise EpvScene3D.Create('Node index out of range');
+   end;
+  end;
+
+  Count:=StreamIO.ReadInt64;
+  fTransformAnimatedNodes.Clear;
+  for Index:=0 to Count-1 do begin
+   NodeIndex:=StreamIO.ReadInt64;
+   if (NodeIndex>=0) and (NodeIndex<fGroup.fNodes.Count) then begin
+    fTransformAnimatedNodes.Add(fGroup.fNodes[NodeIndex]);
+   end else begin
+    raise EpvScene3D.Create('Node index out of range');
+   end;
+  end;
+
+  Count:=StreamIO.ReadInt64;
+  fSkinOrWeightsAnimatedNodes.Clear;
+  for Index:=0 to Count-1 do begin
+   NodeIndex:=StreamIO.ReadInt64;
+   if (NodeIndex>=0) and (NodeIndex<fGroup.fNodes.Count) then begin
+    fSkinOrWeightsAnimatedNodes.Add(fGroup.fNodes[NodeIndex]);
+   end else begin
+    raise EpvScene3D.Create('Node index out of range');
+   end;
+  end;
+
+  Count:=StreamIO.ReadInt64;
+  fStaticNodes.Clear;
+  for Index:=0 to Count-1 do begin
+   NodeIndex:=StreamIO.ReadInt64;
+   if (NodeIndex>=0) and (NodeIndex<fGroup.fNodes.Count) then begin
+    fStaticNodes.Add(fGroup.fNodes[NodeIndex]);
+   end else begin
+    raise EpvScene3D.Create('Node index out of range');
+   end;
+  end;
+
+  Count:=StreamIO.ReadInt64;
+  fDrawChoreographyBatchItems.Clear;
+  for Index:=0 to Count-1 do begin
+   DrawChoreographyBatchItem:=TDrawChoreographyBatchItem.Create;
+   try
+    DrawChoreographyBatchItem.fGroup:=fGroup;
+    DrawChoreographyBatchItem.fNode:=nil;
+    DrawChoreographyBatchItem.LoadFromStream(aStream,aMaterials);
+   finally 
+    fDrawChoreographyBatchItems.Add(DrawChoreographyBatchItem);
+   end; 
+  end;
+
+  Count:=StreamIO.ReadInt64;
+  fDrawChoreographyBatchUniqueItems.Clear;
+  for Index:=0 to Count-1 do begin
+   DrawChoreographyBatchItem:=TDrawChoreographyBatchItem.Create;
+   try
+    DrawChoreographyBatchItem.fGroup:=fGroup;
+    DrawChoreographyBatchItem.fNode:=nil;
+    DrawChoreographyBatchItem.LoadFromStream(aStream,aMaterials);
+   finally 
+    fDrawChoreographyBatchUniqueItems.Add(DrawChoreographyBatchItem);
+   end; 
+  end;
+
+  Count:=StreamIO.ReadInt64;
+  SetLength(fSkipList,Count);
+  for Index:=0 to Count-1 do begin
+   SkipListItem:=@fSkipList[Index];
+   SkipListItem^.NodeIndex:=StreamIO.ReadInt64;
+   SkipListItem^.Level:=StreamIO.ReadInt64;
+   SkipListItem^.SkipCount:=StreamIO.ReadInt64;
+  end;
+
+ finally
+  FreeAndNil(StreamIO);
+ end;
+
+end;
+
+procedure TpvScene3D.TGroup.TScene.SaveToStream(const aStream:TStream;const aMaterials:TpvObjectList);
+var StreamIO:TpvStreamIO;
+    Index,Count:TpvSizeInt;
+    DrawChoreographyBatchItem:TDrawChoreographyBatchItem;
+    SkipListItem:PSkipListItem;
+begin
+
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+
+  StreamIO.WriteUTF8String(fName);
+
+  StreamIO.WriteInt64(fIndex);
+
+  Count:=fNodes.Count;
+  StreamIO.WriteInt64(Count);
+  for Index:=0 to Count-1 do begin
+   StreamIO.WriteInt64(fNodes[Index].fIndex);
+  end;
+
+  Count:=fAllNodes.Count;
+  StreamIO.WriteInt64(Count);
+  for Index:=0 to Count-1 do begin
+   StreamIO.WriteInt64(fAllNodes[Index].fIndex);
+  end;
+
+  Count:=fTransformAnimatedNodes.Count;
+  StreamIO.WriteInt64(Count);
+  for Index:=0 to Count-1 do begin
+   StreamIO.WriteInt64(fTransformAnimatedNodes[Index].fIndex);
+  end;
+
+  Count:=fSkinOrWeightsAnimatedNodes.Count;
+  StreamIO.WriteInt64(Count);
+  for Index:=0 to Count-1 do begin
+   StreamIO.WriteInt64(fSkinOrWeightsAnimatedNodes[Index].fIndex);
+  end;
+
+  Count:=fStaticNodes.Count;
+  StreamIO.WriteInt64(Count);
+  for Index:=0 to Count-1 do begin
+   StreamIO.WriteInt64(fStaticNodes[Index].fIndex);
+  end;
+
+  Count:=fDrawChoreographyBatchItems.Count;
+  StreamIO.WriteInt64(Count);
+  for Index:=0 to Count-1 do begin
+   DrawChoreographyBatchItem:=fDrawChoreographyBatchItems[Index];
+   DrawChoreographyBatchItem.SaveToStream(aStream,aMaterials);
+  end;
+
+  Count:=fDrawChoreographyBatchUniqueItems.Count;
+  StreamIO.WriteInt64(Count);
+  for Index:=0 to Count-1 do begin
+   DrawChoreographyBatchItem:=fDrawChoreographyBatchUniqueItems[Index];
+   DrawChoreographyBatchItem.SaveToStream(aStream,aMaterials);
+  end;
+
+  Count:=length(fSkipList);
+  StreamIO.WriteInt64(Count);
+  for Index:=0 to Count-1 do begin
+   SkipListItem:=@fSkipList[Index];
+   StreamIO.WriteInt64(SkipListItem^.NodeIndex);
+   StreamIO.WriteInt64(SkipListItem^.Level);
+   StreamIO.WriteInt64(SkipListItem^.SkipCount);
+  end;
+
+ finally
+  FreeAndNil(StreamIO);
  end;
 
 end;
@@ -14325,6 +16529,14 @@ var NodeIndex,PrimitiveIndex,StartIndex,DrawChoreographyBatchItemIndex,
 begin
 
  fDrawChoreographyBatchItems.Clear;
+ fDrawChoreographyBatchUniqueItems.Clear;
+ fDrawChoreographyBatchCondensedIndices.Clear;
+ fDrawChoreographyBatchCondensedUniqueIndices.Clear;
+
+ for Scene in fScenes do begin
+  Scene.fDrawChoreographyBatchItems.Clear;
+  Scene.fDrawChoreographyBatchUniqueItems.Clear;
+ end;
 
  for Node in fUsedVisibleDrawNodes do begin
   Mesh:=Node.fMesh;
@@ -14511,11 +16723,11 @@ begin
       fSceneInstance.fTextureListLock.Release;
      end;
     finally
-     FreeAndNil(fNewTextures);
+     fNewTextures.Clear;
     end;
    end;
   finally
-   FreeAndNil(fNewTextureMap);
+   fNewTextureMap.Clear;
   end;
 
  finally
@@ -14534,11 +16746,11 @@ begin
        fSceneInstance.fSamplerListLock.Release;
       end;
      finally
-      FreeAndNil(fNewSamplers);
+      fNewSamplers.Clear;
      end;
     end;
    finally
-    FreeAndNil(fNewSamplerMap);
+    fNewSamplerMap.Clear;
    end;
 
   finally
@@ -14557,15 +16769,15 @@ begin
         fSceneInstance.fImageListLock.Release;
        end;
       finally
-       FreeAndNil(fNewImages);
+       fNewImages.Clear;
       end;
      end;
     finally
-     FreeAndNil(fNewImageMap);
+     fNewImageMap.Clear;
     end;
 
    finally
-    FreeAndNil(fNewLightMap);
+    fNewLightMap.Clear;
    end;
 
   end;
@@ -15101,6 +17313,755 @@ begin
 
 end;
 
+class function TpvScene3D.TGroup.CheckStream(const aStream:TStream;const aMetaData:PpvUInt64):Boolean;
+var StreamIO:TpvStreamIO;
+    PMVFHeader:TpvScene3D.TPVMFHeader;
+    HeaderPosition:TpvInt64;
+begin
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+  HeaderPosition:=aStream.Position;
+  StreamIO.ReadWithCheck(PMVFHeader,SizeOf(TpvScene3D.TPVMFHeader));
+  if (PMVFHeader.Signature=PVMFSignature) and (PMVFHeader.Version=PVMFVersion) then begin
+   if assigned(aMetaData) then begin
+    aMetaData^:=PMVFHeader.MetaData;
+   end;
+   result:=true;
+  end else begin  
+   result:=false;
+  end;
+  aStream.Seek(HeaderPosition,soBeginning);
+ finally
+  FreeAndNil(StreamIO);
+ end;
+end;
+
+class function TpvScene3D.TGroup.LoadMetaDataFromStream(const aStream:TStream):TpvUInt64;
+var StreamIO:TpvStreamIO;
+    PMVFHeader:TpvScene3D.TPVMFHeader;
+    HeaderPosition:TpvInt64;
+begin
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+  HeaderPosition:=aStream.Position;
+  StreamIO.ReadWithCheck(PMVFHeader,SizeOf(TpvScene3D.TPVMFHeader));
+  if (PMVFHeader.Signature=PVMFSignature) and (PMVFHeader.Version=PVMFVersion) then begin
+   result:=PMVFHeader.MetaData;
+  end else begin
+   result:=0;
+  end;
+  aStream.Seek(HeaderPosition,soBeginning);
+ finally
+  FreeAndNil(StreamIO);
+ end;
+end;
+
+procedure TpvScene3D.TGroup.LoadFromStream(const aStream:TStream);
+var StreamIO:TpvStreamIO;
+    PMVFHeader:TpvScene3D.TPVMFHeader;
+    HeaderPosition:TpvInt64;
+    Index,OtherIndex,Count,InFlightFrameIndex:TpvSizeInt;
+    Camera:TpvScene3D.TGroup.TCamera;
+    Light:TpvScene3D.TGroup.TLight;
+    Image:TpvScene3D.TImage;
+    Sampler:TpvScene3D.TSampler;
+    Texture:TpvScene3D.TTexture;
+    Material:TpvScene3D.TMaterial;
+    Mesh:TpvScene3D.TGroup.TMesh;
+    Skin:TpvScene3D.TGroup.TSkin;
+    Animation:TpvScene3D.TGroup.TAnimation;
+    Node:TpvScene3D.TGroup.TNode;
+    Scene:TpvScene3D.TGroup.TScene;
+    CollectedImages,CollectedSamplers,CollectedTextures,CollectedMaterials:TpvObjectList;
+    DrawChoreographyBatchItem:TpvScene3D.TDrawChoreographyBatchItem;
+    MaterialIDMap:TMaterialIDMapArrayIndexHashMap;
+begin
+
+ MaterialIDMap:=TMaterialIDMapArrayIndexHashMap.Create(-1);
+ try
+
+  StreamIO:=TpvStreamIO.Create(aStream);
+  try
+
+   HeaderPosition:=aStream.Position;
+
+   // Read initial header
+   StreamIO.ReadWithCheck(PMVFHeader,SizeOf(TpvScene3D.TPVMFHeader));
+
+   if (PMVFHeader.Signature=PVMFSignature) and (PMVFHeader.Version=PVMFVersion) then begin
+
+    CollectedImages:=TpvObjectList.Create(false);
+    try
+
+     CollectedSamplers:=TpvObjectList.Create(false);
+     try
+
+      CollectedTextures:=TpvObjectList.Create(false);
+      try
+
+       CollectedMaterials:=TpvObjectList.Create(false);
+       try
+
+        // Read culling
+        fCulling:=StreamIO.ReadBoolean;
+
+        // Read dynamic AABB tree culling
+        fDynamicAABBTreeCulling:=StreamIO.ReadBoolean;
+
+        // Read morph target count
+        fMorphTargetCount:=StreamIO.ReadInt64;
+
+        // Read count node weights
+        fCountNodeWeights:=StreamIO.ReadInt64;
+
+        // Read count joint node matrices
+        fCountJointNodeMatrices:=StreamIO.ReadInt64;
+
+        // Read bounding box
+        fBoundingBox:=StreamIO.ReadAABB;
+
+        // Read has static bounding box
+        fHasStaticBoundingBox:=StreamIO.ReadBoolean;
+
+        // Read static bounding box
+        fStaticBoundingBox:=StreamIO.ReadAABB;
+
+        // Read raytracing mask
+        fRaytracingMask:=StreamIO.ReadUInt8;
+
+        // Read vertices
+        Count:=StreamIO.ReadInt64;
+        fVertices.Resize(Count);
+        if Count>0 then begin
+         StreamIO.ReadWithCheck(fVertices.Memory^,Count*SizeOf(TpvScene3D.TVertex));
+        end;
+
+        // Read indices
+        Count:=StreamIO.ReadInt64;
+        fIndices.Resize(Count);
+        if Count>0 then begin
+         StreamIO.ReadWithCheck(fIndices.Memory^,Count*SizeOf(TpvUInt32));
+        end;
+
+        // Read draw choreography batch condensed indices
+        Count:=StreamIO.ReadInt64;
+        fDrawChoreographyBatchCondensedIndices.Resize(Count);
+        if Count>0 then begin
+         StreamIO.ReadWithCheck(fDrawChoreographyBatchCondensedIndices.Memory^,Count*SizeOf(TpvUInt32));
+        end;
+
+        // Read draw choreography batch condensed unique indices
+        Count:=StreamIO.ReadInt64;
+        fDrawChoreographyBatchCondensedUniqueIndices.Resize(Count);
+        if Count>0 then begin
+         StreamIO.ReadWithCheck(fDrawChoreographyBatchCondensedUniqueIndices.Memory^,Count*SizeOf(TpvUInt32));
+        end;
+
+        // Read joint blocks
+        Count:=StreamIO.ReadInt64;
+        fJointBlocks.Resize(Count);
+        if Count>0 then begin
+         StreamIO.ReadWithCheck(fJointBlocks.Memory^,Count*SizeOf(TpvScene3D.TJointBlock));
+        end;
+
+        // Read joint block offsets
+        Count:=StreamIO.ReadInt64;
+        SetLength(fJointBlockOffsets,Count);
+        if Count>0 then begin
+         for Index:=0 to Count-1 do begin
+          fJointBlockOffsets[Index]:=StreamIO.ReadInt64;
+         end;
+        end;
+
+        // Read morph target vertices
+        Count:=StreamIO.ReadInt64;
+        fMorphTargetVertices.Resize(Count);
+        if Count>0 then begin
+         StreamIO.ReadWithCheck(fMorphTargetVertices.Memory^,Count*SizeOf(TpvScene3D.TMorphTargetVertex));
+        end;
+
+        // Read cameras
+        Count:=StreamIO.ReadInt64;
+        fCameras.Clear;
+        for Index:=0 to Count-1 do begin
+         Camera:=TpvScene3D.TGroup.TCamera.Create(self);
+         try
+          Camera.LoadFromStream(aStream);
+          AddCamera(Camera);
+         except
+          FreeAndNil(Camera);
+          raise;
+         end;
+        end;
+
+        // Read lights
+        Count:=StreamIO.ReadInt64;
+        fLights.Clear;
+        for Index:=0 to Count-1 do begin
+         Light:=TpvScene3D.TGroup.TLight.Create(self);
+         try
+          Light.LoadFromStream(aStream);
+          AddLight(Light);
+         except
+          FreeAndNil(Light);
+          raise;
+         end;
+        end;
+
+        // Read images
+        Count:=StreamIO.ReadInt64;
+        for Index:=0 to Count-1 do begin
+         Image:=TpvScene3D.TImage.Create(ResourceManager,fSceneInstance);
+         try
+          Image.LoadFromStream(aStream);
+          OtherIndex:=AddImage(Image,false);
+          if (OtherIndex>=0) and (OtherIndex<fNewImageMap.Count) then begin
+           CollectedImages.Add(fNewImageMap[OtherIndex]);
+          end else begin
+           CollectedImages.Add(nil); // should never happen
+          end;
+         except
+          FreeAndNil(Image);
+          raise;
+         end;
+        end;
+
+        // Read samplers
+        Count:=StreamIO.ReadInt64;
+        for Index:=0 to Count-1 do begin
+         Sampler:=TpvScene3D.TSampler.Create(ResourceManager,fSceneInstance);
+         try
+          Sampler.LoadFromStream(aStream);
+          OtherIndex:=AddSampler(Sampler,false);
+          if (OtherIndex>=0) and (OtherIndex<fNewSamplerMap.Count) then begin
+           CollectedSamplers.Add(fNewSamplerMap[OtherIndex]);
+          end else begin
+           CollectedSamplers.Add(nil); // should never happen
+          end;
+         except
+          FreeAndNil(Sampler);
+          raise;
+         end;
+        end;
+
+        // Read textures
+        Count:=StreamIO.ReadInt64;
+        for Index:=0 to Count-1 do begin
+         Texture:=TpvScene3D.TTexture.Create(ResourceManager,fSceneInstance);
+         try
+          Texture.LoadFromStream(aStream,CollectedImages,CollectedSamplers);
+          OtherIndex:=AddTexture(Texture,false);
+          if (OtherIndex>=0) and (OtherIndex<fNewTextureMap.Count) then begin
+           CollectedTextures.Add(fNewTextureMap[OtherIndex]);
+          end else begin
+           CollectedTextures.Add(nil); // should never happen
+          end;
+         except
+          FreeAndNil(Texture);
+          raise;
+         end;
+        end;
+
+        // Read materials
+        fSceneInstance.fMaterialListLock.Acquire;
+        try
+         Count:=StreamIO.ReadInt64;
+         for Index:=0 to Count-1 do begin
+          Material:=TpvScene3D.TMaterial.Create(ResourceManager,fSceneInstance);
+          try
+           Material.LoadFromStream(aStream,CollectedImages,CollectedSamplers,CollectedTextures);
+           OtherIndex:=AddMaterial(Material,false,false);
+           if (OtherIndex>=0) and (OtherIndex<fMaterials.Count) then begin
+            MaterialIDMap[Index]:=OtherIndex;
+            CollectedMaterials.Add(fMaterials[OtherIndex]);
+           end else begin
+            CollectedMaterials.Add(nil); // should never happen
+           end;
+          except
+           FreeAndNil(Material);
+           raise;
+          end;
+         end;
+         FinalizeMaterials(false);
+        finally
+         fSceneInstance.fMaterialListLock.Release;
+        end;
+
+        // Read meshes
+        Count:=StreamIO.ReadInt64;
+        fMeshes.Clear;
+        for Index:=0 to Count-1 do begin
+         Mesh:=TpvScene3D.TGroup.TMesh.Create(self,Index);
+         try
+          Mesh.LoadFromStream(aStream,CollectedMaterials);
+          AddMesh(Mesh);
+         except
+          FreeAndNil(Mesh);
+          raise;
+         end;
+        end;
+
+        // Read skins
+        Count:=StreamIO.ReadInt64;
+        fSkins.Clear;
+        for Index:=0 to Count-1 do begin
+         Skin:=TpvScene3D.TGroup.TSkin.Create(self);
+         try
+          Skin.LoadFromStream(aStream);
+          AddSkin(Skin);
+         except
+          FreeAndNil(Skin);
+          raise;
+         end;
+        end;
+
+        // Read nodes
+        Count:=StreamIO.ReadInt64;
+        fNodes.Clear;
+        for Index:=0 to Count-1 do begin
+         Node:=TpvScene3D.TGroup.TNode.Create(self);
+         try
+          Node.LoadFromStream(aStream);
+          AddNode(Node);
+         except
+          FreeAndNil(Node);
+          raise;
+         end;
+        end;
+
+        // Read used visible draw nodes
+        Count:=StreamIO.ReadInt64;
+        fUsedVisibleDrawNodes.Clear;
+        if Count>0 then begin
+         for Index:=0 to Count-1 do begin
+          OtherIndex:=StreamIO.ReadInt64;
+          if (OtherIndex>=0) and (OtherIndex<fNodes.Count) then begin
+           fUsedVisibleDrawNodes.Add(fNodes[OtherIndex]);
+          end else begin
+           raise EpvScene3D.Create('Invalid used visible draw node index');
+          end;
+         end;
+        end;
+
+        // Read scenes
+        Count:=StreamIO.ReadInt64;
+        fScenes.Clear;
+        for Index:=0 to Count-1 do begin
+         Scene:=TpvScene3D.TGroup.TScene.Create(self);
+         try
+          Scene.LoadFromStream(aStream,CollectedMaterials);
+          AddScene(Scene);
+         except
+          FreeAndNil(Scene);
+          raise;
+         end;
+        end;
+
+        // Fix up nodes
+        for Index:=0 to fNodes.Count-1 do begin
+         fNodes[Index].FixUp;
+        end;
+
+        // Read default scene
+        Index:=StreamIO.ReadInt64;
+        if (Index>=0) and (Index<fScenes.Count) then begin
+         fScene:=fScenes[Index];
+        end else begin
+         fScene:=nil;
+        end;
+
+        // Read animations
+        Count:=StreamIO.ReadInt64;
+        fAnimations.Clear;
+        for Index:=0 to Count-1 do begin
+         Animation:=TpvScene3D.TGroup.TAnimation.Create(self);
+         try
+          Animation.LoadFromStream(aStream);
+          AddAnimation(Animation);
+         except
+          FreeAndNil(Animation);
+          raise;
+         end;
+        end;
+
+        // Read draw choreography batch items
+        Count:=StreamIO.ReadInt64;
+        fDrawChoreographyBatchItems.Clear;
+        for Index:=0 to Count-1 do begin
+         DrawChoreographyBatchItem:=TpvScene3D.TDrawChoreographyBatchItem.Create;
+         try
+          DrawChoreographyBatchItem.fGroup:=self;
+          DrawChoreographyBatchItem.fNode:=nil;
+          DrawChoreographyBatchItem.LoadFromStream(aStream,CollectedMaterials);
+          fDrawChoreographyBatchItems.Add(DrawChoreographyBatchItem);
+         except
+          FreeAndNil(DrawChoreographyBatchItem);
+          raise;
+         end;
+        end;
+
+        // Read draw choreography batch unique items
+        Count:=StreamIO.ReadInt64;
+        fDrawChoreographyBatchUniqueItems.Clear;
+        for Index:=0 to Count-1 do begin
+         DrawChoreographyBatchItem:=TpvScene3D.TDrawChoreographyBatchItem.Create;
+         try
+          DrawChoreographyBatchItem.fGroup:=self;
+          DrawChoreographyBatchItem.fNode:=nil;
+          DrawChoreographyBatchItem.LoadFromStream(aStream,CollectedMaterials);
+          fDrawChoreographyBatchUniqueItems.Add(DrawChoreographyBatchItem);
+         except
+          FreeAndNil(DrawChoreographyBatchItem);
+          raise;
+         end;
+        end;
+
+        // Read camera node indices
+        Count:=StreamIO.ReadInt64;
+        fCameraNodeIndices.Clear;
+        if Count>0 then begin
+         for Index:=0 to Count-1 do begin
+          fCameraNodeIndices.Add(StreamIO.ReadInt64);
+         end;
+        end;
+
+       finally
+        CollectedMaterials.Free;
+       end;
+
+      finally
+       CollectedTextures.Free;
+      end;
+
+     finally
+      CollectedSamplers.Free;
+     end;
+
+    finally
+     CollectedImages.Free;
+    end;
+
+   end else begin
+    aStream.Seek(HeaderPosition,soBeginning);
+    raise EpvScene3D.Create('Invalid PVMF header');
+   end;
+
+  finally
+   FreeAndNil(StreamIO);
+  end;
+
+ finally
+  FreeAndNil(MaterialIDMap);
+ end;
+
+ //PostProcessSkins;
+
+// PostProcessNodes;
+
+ PostProcessAnimations;
+
+{MarkAnimatedElements;
+
+// CollectAllSceneNodesAndSplitNodesIntoAnimatedOrNotAnimatedSubtreesPerScene;
+
+ CalculateBoundingBox;
+
+ ConstructBuffers;
+
+ CollectUsedVisibleDrawNodes;
+
+ CollectMaterials;
+
+ CollectNodeUsedJoints;}
+
+//ConstructDrawChoreographyBatchItems;
+
+// ConstructSkipLists;
+
+ fUpdatedMeshContentGeneration:=fMeshContentGeneration;
+
+ for InFlightFrameIndex:=0 to fSceneInstance.CountInFlightFrames-1 do begin
+  fFrameUpdatedMeshContentGenerations[InFlightFrameIndex]:=fMeshContentGeneration;
+ end;
+
+ fReady:=true;
+
+end;
+
+procedure TpvScene3D.TGroup.SaveToStream(const aStream:TStream;const aMetaData:TpvUInt64);
+var StreamIO:TpvStreamIO;
+    PMVFHeader:TpvScene3D.TPVMFHeader;
+    HeaderPosition:TpvInt64;
+    Index,OtherIndex,Count:TpvSizeInt;
+    CollectedImages,CollectedSamplers,CollectedTextures,CollectedMaterials:TpvObjectList;
+    Mesh:TpvScene3D.TGroup.TMesh;
+    MeshPrimitive:TpvScene3D.TGroup.TMesh.TPrimitive;
+begin
+
+ StreamIO:=TpvStreamIO.Create(aStream);
+ try
+
+  HeaderPosition:=aStream.Position;
+
+  // Write initial header
+  FillChar(PMVFHeader,SizeOf(TpvScene3D.TPVMFHeader),#0);
+  PMVFHeader.Signature:=PVMFSignature;
+  PMVFHeader.Version:=PVMFVersion;
+  PMVFHeader.Size:=0;
+  PMVFHeader.MetaData:=aMetaData;
+  StreamIO.WriteWithCheck(PMVFHeader,SizeOf(TpvScene3D.TPVMFHeader));
+
+  CollectedImages:=TpvObjectList.Create(false);
+  try
+
+   CollectedSamplers:=TpvObjectList.Create(false);
+   try
+
+    CollectedTextures:=TpvObjectList.Create(false);
+    try
+
+     CollectedMaterials:=TpvObjectList.Create(false);
+     try
+
+      // Collect all images, samplers, textures and materials
+      for Index:=0 to fMaterials.Count-1 do begin
+       fMaterials[Index].PrepareSaveToStream(CollectedImages,CollectedSamplers,CollectedTextures,CollectedMaterials);
+      end;
+      for Index:=0 to fMeshes.Count-1 do begin
+       Mesh:=fMeshes[Index];
+       if assigned(Mesh) then begin
+        for OtherIndex:=0 to Mesh.Primitives.Count-1 do begin
+         MeshPrimitive:=Mesh.Primitives[OtherIndex];
+         if assigned(MeshPrimitive) and assigned(MeshPrimitive.Material) then begin
+          MeshPrimitive.Material.PrepareSaveToStream(CollectedImages,CollectedSamplers,CollectedTextures,CollectedMaterials);
+         end;
+        end;
+       end;
+      end; 
+
+      // Write culling
+      StreamIO.WriteBoolean(fCulling);
+
+      // Write dynamic AABB tree culling
+      StreamIO.WriteBoolean(fDynamicAABBTreeCulling);
+
+      // Write morph target count 
+      StreamIO.WriteInt64(fMorphTargetCount);
+
+      // Write count node weights
+      StreamIO.WriteInt64(fCountNodeWeights);
+
+      // Write count joint node matrices
+      StreamIO.WriteInt64(fCountJointNodeMatrices);
+
+      // Write bounding box
+      StreamIO.WriteAABB(fBoundingBox);
+
+      // Write has static bounding box
+      StreamIO.WriteBoolean(fHasStaticBoundingBox);
+
+      // Write static bounding box
+      StreamIO.WriteAABB(fStaticBoundingBox);
+
+      // Write raytracing mask
+      StreamIO.WriteUInt8(fRaytracingMask);
+
+      // Write vertices
+      Count:=fVertices.Count;
+      StreamIO.WriteInt64(Count);
+      if Count>0 then begin
+       StreamIO.WriteWithCheck(fVertices.Memory^,Count*SizeOf(TpvScene3D.TVertex));
+      end;
+
+      // Write indices
+      Count:=fIndices.Count;
+      StreamIO.WriteInt64(Count);
+      if Count>0 then begin
+       StreamIO.WriteWithCheck(fIndices.Memory^,Count*SizeOf(TpvUInt32));
+      end;
+
+      // Write draw choreography batch condensed indices
+      Count:=fDrawChoreographyBatchCondensedIndices.Count;
+      StreamIO.WriteInt64(Count);
+      if Count>0 then begin
+       StreamIO.WriteWithCheck(fDrawChoreographyBatchCondensedIndices.Memory^,Count*SizeOf(TpvUInt32));
+      end;
+
+      // Write draw choreography batch condensed unique indices
+      Count:=fDrawChoreographyBatchCondensedUniqueIndices.Count;
+      StreamIO.WriteInt64(Count);
+      if Count>0 then begin
+       StreamIO.WriteWithCheck(fDrawChoreographyBatchCondensedUniqueIndices.Memory^,Count*SizeOf(TpvUInt32));
+      end;
+          
+      // Write joint blocks
+      Count:=fJointBlocks.Count;
+      StreamIO.WriteInt64(Count);
+      if Count>0 then begin
+       StreamIO.WriteWithCheck(fJointBlocks.Memory^,Count*SizeOf(TpvScene3D.TJointBlock));
+      end;
+
+      // Write joint block offsets
+      Count:=length(fJointBlockOffsets);
+      StreamIO.WriteInt64(Count);
+      if Count>0 then begin
+       for Index:=0 to Count-1 do begin
+        StreamIO.WriteInt64(fJointBlockOffsets[Index]);
+       end;
+      end;
+
+      // Write morph target vertices
+      Count:=fMorphTargetVertices.Count;
+      StreamIO.WriteInt64(Count);
+      if Count>0 then begin
+       StreamIO.WriteWithCheck(fMorphTargetVertices.Memory^,Count*SizeOf(TpvScene3D.TMorphTargetVertex));
+      end;
+
+      // Write cameras
+      Count:=fCameras.Count;
+      StreamIO.WriteInt64(Count);
+      for Index:=0 to Count-1 do begin
+       TpvScene3D.TGroup.TCamera(fCameras[Index]).SaveToStream(aStream);
+      end;
+
+      // Write lights
+      Count:=fLights.Count;
+      StreamIO.WriteInt64(Count);
+      for Index:=0 to Count-1 do begin
+       TpvScene3D.TGroup.TLight(fLights[Index]).SaveToStream(aStream);
+      end;
+
+      // Write images
+      Count:=CollectedImages.Count;
+      StreamIO.WriteInt64(Count);
+      for Index:=0 to Count-1 do begin
+       TpvScene3D.TImage(CollectedImages[Index]).SaveToStream(aStream);
+      end;
+
+      // Write samplers
+      Count:=CollectedSamplers.Count;
+      StreamIO.WriteInt64(Count);
+      for Index:=0 to Count-1 do begin
+       TpvScene3D.TSampler(CollectedSamplers[Index]).SaveToStream(aStream);
+      end;
+
+      // Write textures
+      Count:=CollectedTextures.Count;
+      StreamIO.WriteInt64(Count);
+      for Index:=0 to Count-1 do begin
+       TpvScene3D.TTexture(CollectedTextures[Index]).SaveToStream(aStream,CollectedImages,CollectedSamplers);
+      end;
+
+      // Write materials
+      Count:=CollectedMaterials.Count;
+      StreamIO.WriteInt64(Count);
+      for Index:=0 to Count-1 do begin
+       TpvScene3D.TMaterial(CollectedMaterials[Index]).SaveToStream(aStream,CollectedImages,CollectedSamplers,CollectedTextures);
+      end;
+
+      // Write meshes
+      Count:=fMeshes.Count;
+      StreamIO.WriteInt64(Count);
+      for Index:=0 to Count-1 do begin
+       TpvScene3D.TGroup.TMesh(fMeshes[Index]).SaveToStream(aStream,CollectedMaterials);
+      end;
+
+      // Write skins
+      Count:=fSkins.Count;
+      StreamIO.WriteInt64(Count);
+      for Index:=0 to Count-1 do begin
+       TpvScene3D.TGroup.TSkin(fSkins[Index]).SaveToStream(aStream);
+      end;
+
+      // Write nodes
+      Count:=fNodes.Count;
+      StreamIO.WriteInt64(Count);
+      for Index:=0 to Count-1 do begin
+       TpvScene3D.TGroup.TNode(fNodes[Index]).SaveToStream(aStream);
+      end;
+
+      // Write used visible draw nodes
+      Count:=fUsedVisibleDrawNodes.Count;
+      StreamIO.WriteInt64(Count);
+      for Index:=0 to Count-1 do begin
+       StreamIO.WriteInt64(fUsedVisibleDrawNodes[Index].fIndex);
+      end;
+
+      // Write scenes
+      Count:=fScenes.Count;
+      StreamIO.WriteInt64(Count);
+      for Index:=0 to Count-1 do begin
+       TpvScene3D.TGroup.TScene(fScenes[Index]).SaveToStream(aStream,CollectedMaterials);
+      end;
+
+      if assigned(fScene) then begin
+       StreamIO.WriteInt64(fScenes.IndexOf(fScene));
+      end else begin
+       StreamIO.WriteInt64(-1);
+      end;
+
+      // Write animations
+      Count:=fAnimations.Count;
+      StreamIO.WriteInt64(Count);
+      for Index:=0 to Count-1 do begin
+       TpvScene3D.TGroup.TAnimation(fAnimations[Index]).SaveToStream(aStream);
+      end;
+
+      // Write draw choreography batch items
+      Count:=fDrawChoreographyBatchItems.Count;
+      StreamIO.WriteInt64(Count);
+      if Count>0 then begin
+       for Index:=0 to Count-1 do begin
+        fDrawChoreographyBatchItems[Index].SaveToStream(aStream,CollectedMaterials);
+       end;
+      end;
+
+      // Write draw choreography batch unique items
+      Count:=fDrawChoreographyBatchUniqueItems.Count;
+      StreamIO.WriteInt64(Count);
+      if Count>0 then begin
+       for Index:=0 to Count-1 do begin
+        fDrawChoreographyBatchUniqueItems[Index].SaveToStream(aStream,CollectedMaterials);
+       end;
+      end;
+
+      // Write camera node indices
+      Count:=fCameraNodeIndices.Count;
+      StreamIO.WriteInt64(Count);
+      if Count>0 then begin
+       for Index:=0 to Count-1 do begin
+        StreamIO.WriteInt64(fCameraNodeIndices[Index]);
+       end;
+      end;
+
+      // Write final header
+      PMVFHeader.Size:=aStream.Position-HeaderPosition;
+      aStream.Seek(HeaderPosition,soBeginning);
+      StreamIO.WriteWithCheck(PMVFHeader,SizeOf(TpvScene3D.TPVMFHeader));
+      aStream.Seek(0,soEnd);
+      
+     finally
+      FreeAndNil(CollectedMaterials);
+     end;
+
+    finally
+     FreeAndNil(CollectedTextures);
+    end;
+
+   finally
+    FreeAndNil(CollectedSamplers);
+   end;
+
+  finally
+   FreeAndNil(CollectedImages);
+  end;
+
+ finally
+  FreeAndNil(StreamIO);
+ end;
+
+end;
+
 procedure TpvScene3D.TGroup.AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument);
 var POCACodeString:TpvUTF8String;
  procedure ProcessLights;
@@ -15308,7 +18269,6 @@ var POCACodeString:TpvUTF8String;
      POCAFileHashMap:TPOCAFileHashMap;
      NodeChildNodeIndices:TNodeChildNodeIndices;
      ChildNodeIndices:PChildNodeIndices;
-
  begin
 
   NodeChildNodeIndices.Initialize;
@@ -16025,11 +18985,16 @@ begin
  result:=false;
  fSceneInstance.fLoadLock.Acquire;
  try
-  pvApplication.Log(LOG_DEBUG,'TpvScene3D.TGroup.BeginLoad','Entering...');
+  pvApplication.Log(LOG_DEBUG,'TpvScene3D.TGroup.BeginLoad("'+FileName+'")','Entering...');
   try
    if assigned(aStream) then begin
     fName:=FileName;
     case TpvScene3D.DetectFileType(aStream) of
+     TpvScene3D.TFileType.PVMF:begin
+      // our own native but version dependent format (can be changed every time, but is for fast loading without further time-costing
+      // post-processing) 
+      LoadFromStream(aStream); 
+     end;
      TpvScene3D.TFileType.GLTF:begin
       GLTF:=TPasGLTF.TDocument.Create;
       try
@@ -16081,7 +19046,7 @@ begin
     end;
    end;
   finally
-   pvApplication.Log(LOG_DEBUG,'TpvScene3D.TGroup.BeginLoad','Leaving...');
+   pvApplication.Log(LOG_DEBUG,'TpvScene3D.TGroup.BeginLoad("'+FileName+'")','Leaving...');
   end;
  finally
   fSceneInstance.fLoadLock.Release;
@@ -16092,7 +19057,7 @@ function TpvScene3D.TGroup.EndLoad:boolean;
 begin
  fSceneInstance.fLoadLock.Acquire;
  try
-  pvApplication.Log(LOG_DEBUG,'TpvScene3D.TGroup.EndLoad','Entering...');
+  pvApplication.Log(LOG_DEBUG,'TpvScene3D.TGroup.EndLoad("'+FileName+'")','Entering...');
   try
    result:=inherited EndLoad;
    if result then begin
@@ -16103,7 +19068,7 @@ begin
     end;
    end;
   finally
-   pvApplication.Log(LOG_DEBUG,'TpvScene3D.TGroup.EndLoad','Leaving...');
+   pvApplication.Log(LOG_DEBUG,'TpvScene3D.TGroup.EndLoad("'+FileName+'")','Leaving...');
   end;
  finally
   fSceneInstance.fLoadLock.Release;
@@ -18117,7 +21082,7 @@ end;
 
 function TpvScene3D.TGroup.TInstance.GetScene:TpvScene3D.TGroup.TScene;
 begin
- if fGroup.fUploaded then begin
+ if fGroup.fReady then begin
   if fScene<0 then begin
    result:=fGroup.fScene;
   end else if fScene<fGroup.fScenes.Count then begin
@@ -22381,6 +25346,8 @@ begin
 
  fSkyBoxMode:=TpvScene3DEnvironmentMode.Sky;
 
+ fSkyBoxOrientation:=TpvMatrix4x4.Identity;
+
  fEnvironmentTextureImage:=nil;
 
  fEnvironmentMode:=TpvScene3DEnvironmentMode.Sky;
@@ -23272,6 +26239,15 @@ class function TpvScene3D.DetectFileType(const aMemory:pointer;const aSize:TpvSi
 // is usually within the first few bytes. This approach balances efficiency and practicality. 
 // While edge cases (e.g., long comments at the beginning of ASCII files) may exist, they are rare and can be 
 // ignored for simplicity.
+ function IsPVMF(const aMemory:pointer;const aSize:TpvSizeInt):boolean;
+ var PVMFHeader:TPVMFHeader;
+ begin
+  if assigned(aMemory) and (aSize>=SizeOf(TPVMFHeader)) then begin     
+   result:=(PPVMFHeader(aMemory)^.Signature=PVMFSignature) and (PPVMFHeader(aMemory)^.Version=PVMFVersion);
+  end else begin
+   result:=false;
+  end;
+ end; 
  function IsJSON(const aMemory:pointer;const aSize:TpvSizeInt):boolean;
  var Index:TpvSizeInt;
  begin
@@ -23529,8 +26505,10 @@ begin
   // long comments at the beginning, we can ignore this and similar edge cases for now for simplicity.
   Size:=Min(aSize,1024); 
 
-  if ((aSize>=2) and IsJSON(aMemory,Size)) or // GLTF, which is just JSON with a JSON object at the beginning  
-     ((aSize>=4) and (RawBytes^[0]=ord('g')) and (RawBytes^[1]=ord('l')) and (RawBytes^[2]=ord('T')) and (RawBytes^[3]=ord('F'))) then begin // Binary GLTF
+  if (aSize>=SizeOf(TPVMFHeader)) and IsPVMF(aMemory,Size) then begin // PVMF, our own native file format (can be changed every time, so it's only for version-dependent files)
+   result:=TpvScene3D.TFileType.PVMF;
+ end else if ((aSize>=2) and IsJSON(aMemory,Size)) or // GLTF, which is just JSON with a JSON object at the beginning  
+             ((aSize>=4) and (RawBytes^[0]=ord('g')) and (RawBytes^[1]=ord('l')) and (RawBytes^[2]=ord('T')) and (RawBytes^[3]=ord('F'))) then begin // Binary GLTF
    result:=TpvScene3D.TFileType.GLTF;
   end else if (aSize>=2) and IsXML(aMemory,Size) then begin // Collada DAE, which is XML 
    result:=TpvScene3D.TFileType.ColladaDAE;
@@ -24931,6 +27909,10 @@ var Index,ItemID:TpvSizeInt;
     MaterialIDDirtyMap:TpvScene3D.PMaterialIDDirtyMap;
     Planet:TpvScene3DPlanet;
 begin
+
+ fPrimaryLightDirections[aInFlightFrameIndex]:=fPrimaryLightDirection;
+
+ fPrimaryShadowMapLightDirections[aInFlightFrameIndex]:=fPrimaryShadowMapLightDirection;
 
  if assigned(fVulkanDevice) then begin
 
