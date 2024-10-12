@@ -96,6 +96,9 @@ type { TScreenMain }
        fOldFPS:TpvInt32;
        fFPSTimeAccumulator:TpvDouble;
        fFrameTimeString:string;
+       fLoadedFileName:string;
+       fLoadDelay:TpvInt32;
+       fResetCameraOnLoad:Boolean;
       public
 
        constructor Create; override;
@@ -164,6 +167,12 @@ begin
  fFPSTimeAccumulator:=0;
 
  fAnimationIndex:=-2;
+
+ fLoadedFileName:='';
+
+ fLoadDelay:=0;
+
+ fResetCameraOnLoad:=false;
 
  fCameraMode:=TCameraMode.Orbit;
 
@@ -411,6 +420,12 @@ end;
 procedure TScreenMain.Check(const aDeltaTime:TpvDouble);
 begin
  inherited Check(aDeltaTime);
+ if fLoadDelay>0 then begin
+  dec(fLoadDelay);
+  if fLoadDelay=0 then begin
+// pvApplication.ResourceManager.BackgroundLoadResource(TpvScene3D.TGroup,fLoadedFileName,OnFinish,fScene3D);
+  end;
+ end;
  fScene3D.Check(pvApplication.UpdateInFlightFrameIndex);
 end;
 
@@ -487,44 +502,44 @@ begin
 
    if fAnimationIndex=-2 then begin
     if fGroupInstance.Group.Animations.Count>0 then begin
-     fGroupInstance.Automations[-1].Time:=0;
-     fGroupInstance.Automations[-1].ShadowTime:=-0;
-     fGroupInstance.Automations[-1].Complete:=false;
-     Factor:=fGroupInstance.Automations[-1].Factor;
+     fGroupInstance.Animations[-1].Time:=0;
+     fGroupInstance.Animations[-1].ShadowTime:=-0;
+     fGroupInstance.Animations[-1].Complete:=false;
+     Factor:=fGroupInstance.Animations[-1].Factor;
      if Factor>0.0 then begin
       Factor:=Factor*(1.0-BlendFactor);
       if Factor<1e-5 then begin
        Factor:=-1.0;
       end;
      end;
-     fGroupInstance.Automations[-1].Factor:=0.0;
+     fGroupInstance.Animations[-1].Factor:=0.0;
      for Index:=0 to fGroupInstance.Group.Animations.Count-1 do begin
       t0:=fGroupInstance.Group.Animations[Index].GetAnimationBeginTime;
       t1:=fGroupInstance.Group.Animations[Index].GetAnimationEndTime;
-      fGroupInstance.Automations[Index].Time:=fGroupInstance.Automations[Index].ShadowTime+t0;
-      fGroupInstance.Automations[Index].ShadowTime:=ModuloPos(fGroupInstance.Automations[Index].ShadowTime+(pvApplication.DeltaTime*1.0),t1-t0);
-      fGroupInstance.Automations[Index].Complete:=false;
-      Factor:=fGroupInstance.Automations[Index].Factor;
+      fGroupInstance.Animations[Index].Time:=fGroupInstance.Animations[Index].ShadowTime+t0;
+      fGroupInstance.Animations[Index].ShadowTime:=ModuloPos(fGroupInstance.Animations[Index].ShadowTime+(pvApplication.DeltaTime*1.0),t1-t0);
+      fGroupInstance.Animations[Index].Complete:=false;
+      Factor:=fGroupInstance.Animations[Index].Factor;
       if Factor<0.0 then begin
        Factor:=0.0;
-       fGroupInstance.Automations[Index].ShadowTime:=0.0;
+       fGroupInstance.Animations[Index].ShadowTime:=0.0;
       end;
       Factor:=(Factor*(1.0-BlendFactor))+(1.0*BlendFactor);
-      fGroupInstance.Automations[Index].Factor:=Factor;
+      fGroupInstance.Animations[Index].Factor:=Factor;
      end;
     end else begin
-     fGroupInstance.Automations[-1].Time:=0;
-     fGroupInstance.Automations[-1].ShadowTime:=-0;
-     fGroupInstance.Automations[-1].Complete:=true;
-     fGroupInstance.Automations[-1].Factor:=0.0;
+     fGroupInstance.Animations[-1].Time:=0;
+     fGroupInstance.Animations[-1].ShadowTime:=-0;
+     fGroupInstance.Animations[-1].Complete:=true;
+     fGroupInstance.Animations[-1].Factor:=0.0;
     end;
    end else begin
     for Index:=-1 to fGroupInstance.Group.Animations.Count-1 do begin
-     Factor:=fGroupInstance.Automations[Index].Factor;
+     Factor:=fGroupInstance.Animations[Index].Factor;
      if Index=fAnimationIndex then begin
       if Factor<0.0 then begin
        Factor:=0.0;
-       fGroupInstance.Automations[Index].ShadowTime:=0.0;
+       fGroupInstance.Animations[Index].ShadowTime:=0.0;
       end;
       Factor:=(Factor*(1.0-BlendFactor))+(1.0*BlendFactor);
      end else if Factor>0.0 then begin
@@ -537,21 +552,23 @@ begin
       if Index>=0 then begin
        t0:=fGroupInstance.Group.Animations[Index].GetAnimationBeginTime;
        t1:=fGroupInstance.Group.Animations[Index].GetAnimationEndTime;
-       fGroupInstance.Automations[Index].Time:=fGroupInstance.Automations[Index].ShadowTime+t0;
-       fGroupInstance.Automations[Index].ShadowTime:=ModuloPos(fGroupInstance.Automations[Index].ShadowTime+pvApplication.DeltaTime,t1-t0);
-       fGroupInstance.Automations[Index].Complete:=true;
+       fGroupInstance.Animations[Index].Time:=fGroupInstance.Animations[Index].ShadowTime+t0;
+       fGroupInstance.Animations[Index].ShadowTime:=ModuloPos(fGroupInstance.Animations[Index].ShadowTime+pvApplication.DeltaTime,t1-t0);
+       fGroupInstance.Animations[Index].Complete:=true;
       end else begin
-       fGroupInstance.Automations[Index].Time:=0.0;
-       fGroupInstance.Automations[Index].Complete:=false;
+       fGroupInstance.Animations[Index].Time:=0.0;
+       fGroupInstance.Animations[Index].Complete:=false;
       end;
      end else begin
-      fGroupInstance.Automations[Index].Time:=0.0;
+      fGroupInstance.Animations[Index].Time:=0.0;
      end;
-     fGroupInstance.Automations[Index].Factor:=Factor;
+     fGroupInstance.Animations[Index].Factor:=Factor;
     end;
    end;//}
 
   end;
+
+  fScene3D.SceneTimes[InFlightFrameIndex]:=fTime;
 
   fScene3D.Update(InFlightFrameIndex);
 
@@ -673,7 +690,16 @@ var Index:TpvSizeInt;
     StringList:TStringList;
 begin
  result:=inherited KeyEvent(aKeyEvent);
- if aKeyEvent.KeyEventType=TpvApplicationInputKeyEventType.Down then begin
+ if aKeyEvent.KeyEventType=TpvApplicationInputKeyEventType.Typed then begin
+  case aKeyEvent.KeyCode of
+   KEYCODE_F5:begin
+    if length(fLoadedFileName)>0 then begin
+     fResetCameraOnLoad:=not (TpvApplicationInputKeyModifier.SHIFT in aKeyEvent.KeyModifiers);
+     LoadGLTF(fLoadedFileName);
+    end;
+   end;
+  end;
+ end else if aKeyEvent.KeyEventType=TpvApplicationInputKeyEventType.Down then begin
   case aKeyEvent.KeyCode of
    KEYCODE_ESCAPE:begin
     pvApplication.Terminate;
@@ -922,42 +948,48 @@ begin
    end;
   end;//}
 
-  fCameraIndex:=-1;
+  if not fResetCameraOnLoad then begin
 
-  if assigned(fGroup) then begin
+   fCameraIndex:=-1;
 
-   Center:=(fGroup.BoundingBox.Min+fGroup.BoundingBox.Max)*0.5;
+   if assigned(fGroup) then begin
 
-   Bounds:=(fGroup.BoundingBox.Max-fGroup.BoundingBox.Min)*0.5;
+    Center:=(fGroup.BoundingBox.Min+fGroup.BoundingBox.Max)*0.5;
 
-   fCameraSpeed:=Max(1.0,fGroup.BoundingBox.Radius)*0.1;
+    Bounds:=(fGroup.BoundingBox.Max-fGroup.BoundingBox.Min)*0.5;
 
-  end else begin
+    fCameraSpeed:=Max(1.0,fGroup.BoundingBox.Radius)*0.1;
 
-   Center:=TpvVector3.InlineableCreate(0.0,0.0,0.0);
+   end else begin
 
-   Bounds:=TpvVector3.InlineableCreate(10.0,10.0,10.0);
+    Center:=TpvVector3.InlineableCreate(0.0,0.0,0.0);
 
-   fCameraSpeed:=1.0;
+    Bounds:=TpvVector3.InlineableCreate(10.0,10.0,10.0);
+
+    fCameraSpeed:=1.0;
+
+   end;
+
+   CameraRotationX:=0.0;
+   CameraRotationY:=0.0;
+
+   fZoom:=1.0;
+
+   fCameraMatrix:=TpvMatrix4x4.CreateLookAt(Center+(TpvVector3.Create(sin(CameraRotationX*PI*2.0)*cos(-CameraRotationY*PI*2.0),
+                                                                       sin(-CameraRotationY*PI*2.0),
+                                                                       cos(CameraRotationX*PI*2.0)*cos(-CameraRotationY*PI*2.0)).Normalize*
+                                                             (Max(Max(Bounds[0],Bounds[1]),Bounds[2])*2.0*1.0)),
+                                             Center,
+                                             TpvVector3.Create(0.0,1.0,0.0)).SimpleInverse;
+
+   fCameraRotationX:=0.0;
+   fCameraRotationY:=0.0;
 
   end;
 
-  CameraRotationX:=0.0;
-  CameraRotationY:=0.0;
-
-  fZoom:=1.0;
-
-  fCameraMatrix:=TpvMatrix4x4.CreateLookAt(Center+(TpvVector3.Create(sin(CameraRotationX*PI*2.0)*cos(-CameraRotationY*PI*2.0),
-                                                                      sin(-CameraRotationY*PI*2.0),
-                                                                      cos(CameraRotationX*PI*2.0)*cos(-CameraRotationY*PI*2.0)).Normalize*
-                                                            (Max(Max(Bounds[0],Bounds[1]),Bounds[2])*2.0*1.0)),
-                                            Center,
-                                            TpvVector3.Create(0.0,1.0,0.0)).SimpleInverse;
-
-  fCameraRotationX:=0.0;
-  fCameraRotationY:=0.0;
-
  end;
+
+ fResetCameraOnLoad:=false;
 
 {if fGroupInstance.Group.Animations.Count>=1 then begin
   fAnimationIndex:=1;
@@ -978,7 +1010,10 @@ begin
   fGroup:=nil;
  end;
 
- pvApplication.ResourceManager.BackgroundLoadResource(TpvScene3D.TGroup,aFileName,OnFinish,fScene3D);
+ fLoadedFileName:=aFileName;
+ fLoadDelay:=(pvApplication.CountInFlightFrames*2)+1;
+
+ pvApplication.ResourceManager.BackgroundLoadResource(TpvScene3D.TGroup,fLoadedFileName,OnFinish,fScene3D);
 
  pvApplication.SetFocus;
 

@@ -387,7 +387,7 @@ compileshaderarguments=(
   "-V planet_heightmap_data_initialization.comp -o ${tempPath}/planet_heightmap_data_initialization_comp.spv"
   
   "-V planet_heightmap_flatten.comp -o ${tempPath}/planet_heightmap_flatten_comp.spv"
-  
+
   "-V planet_heightmap_modification.comp -o ${tempPath}/planet_heightmap_modification_comp.spv"
 
   "-V planet_normalmap_generation.comp -o ${tempPath}/planet_normalmap_generation_comp.spv"
@@ -395,6 +395,8 @@ compileshaderarguments=(
   "-V planet_tiled_mesh_index_generation.comp -o ${tempPath}/planet_tiled_mesh_index_generation_comp.spv"
 
   "-V planet_tiled_mesh_vertex_generation.comp -o ${tempPath}/planet_tiled_mesh_vertex_generation_comp.spv"
+
+  "-V planet_tiled_mesh_slope_generation.comp -o ${tempPath}/planet_tiled_mesh_slope_generation_comp.spv"
 
   "-V planet_tiled_neighbour_distance_map_generation.comp -o ${tempPath}/planet_tiled_neighbour_distance_map_generation_comp.spv"
 

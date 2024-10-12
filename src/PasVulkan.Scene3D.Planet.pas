@@ -92,6 +92,8 @@ uses Classes,
      PasVulkan.Scene3D.Renderer.MipmapImage2D,
      PasVulkan.Scene3D.Renderer.IBLDescriptor,
      PasVulkan.Image.Utils,
+     PasVulkan.Image.PNG,
+     PasVulkan.Image.QOI,
      PasVulkan.Compression,
      PasVulkan.Hash.xxHash64;
 
@@ -154,6 +156,9 @@ type TpvScene3DPlanets=class;
             end;
             PMeshVertex=^TMeshVertex;
             TMeshVertices=TpvDynamicArrayList<TMeshVertex>;
+            TMeshSlope=TpvFloat;
+            PMeshSlope=^TMeshSlope;
+            TMeshSlopes=TpvDynamicArrayList<TMeshSlope>;
             TMeshIndex=TpvUInt32;
             PMeshIndex=^TMeshIndex;
             TMeshIndices=TpvDynamicArrayList<TMeshIndex>;
@@ -198,6 +203,10 @@ type TpvScene3DPlanets=class;
             end;
             PWaterModification=^TWaterModification;
             TWaterModifications=array[0..MaxInFlightFrames-1] of TWaterModification;
+            TBrush=array[0..255,0..255] of TpvUInt8;
+            PBrush=^TBrush;
+            TBrushes=array[0..255] of TBrush;
+            PBrushes=^TBrushes;
             { TData }
             TData=class // one ground truth instance and one or more in-flight instances for flawlessly parallel rendering
              public
@@ -230,7 +239,7 @@ type TpvScene3DPlanets=class;
               fInFlightFrameIndex:TpvInt32; // -1 is the ground truth instance, >=0 are the in-flight frame instances
               fHeightMap:THeightMap; // only on the ground truth instance, otherwise nil
               fHeightMapImage:TpvScene3DRendererMipmapImage2D; // R32_SFLOAT (at least for now, just for the sake of simplicity, later maybe R16_UNORM or R16_SNORM)
-              fNormalMapImage:TpvScene3DRendererMipmapImage2D; // R16G16B16A16_SNORM (at least for now, just for the sake of simplicity, later maybe RGBA8_SNORM)
+              fNormalMapImage:TpvScene3DRendererMipmapImage2D; // A2B10G10R10_UNORM_PACK32
 //            fHeightMapBuffer:TpvVulkanBuffer;
 //            fNormalMapBuffer:TpvVulkanBuffer;
               fBlendMapImage:TpvScene3DRendererImage2D; // A2B10G10R10_UNORM_PACK32
@@ -258,6 +267,7 @@ type TpvScene3DPlanets=class;
               fTiledVisualMeshIndexGroupsBuffer:TpvVulkanBuffer;
               fVisualMeshIndexBuffer:TpvVulkanBuffer;
               fVisualMeshVertexBuffers:TDoubleBufferedVulkanBuffers; // Double-buffered
+              fVisualMeshSlopeBuffers:TDoubleBufferedVulkanBuffers; // Double-buffered
               fVisualMeshDistanceBuffers:TDoubleBufferedVulkanBuffers; // Double-buffered
               fVisualMeshVertexBufferCopies:TVisualMeshVertexBufferCopies;
               fVisualMeshDistanceBufferCopies:TVisualMeshVertexBufferCopies;
@@ -266,6 +276,7 @@ type TpvScene3DPlanets=class;
               fVisualMeshVertexBufferRenderIndex:TPasMPInt32;
               fPhysicsMeshIndexBuffer:TpvVulkanBuffer;
               fPhysicsMeshVertexBuffer:TpvVulkanBuffer;
+              fPhysicsMeshSlopeBuffer:TpvVulkanBuffer;
               fRayIntersectionResultBuffer:TpvVulkanBuffer;
               fCountTriangleIndices:TVkUInt32;
               fCountDirtyTiles:TVkUInt32;
@@ -279,6 +290,7 @@ type TpvScene3DPlanets=class;
               fOwnershipHolderState:TpvScene3DPlanet.TData.TOwnershipHolderState;
               fSelectedRegion:TpvVector4;
               fSelectedRegionProperty:TpvVector4Property;
+              fSelectedBrush:TpvUInt32;
               fModifyHeightMapActive:Boolean;
               fModifyHeightMapBorderRadius:TpvScalar;
               fModifyHeightMapFactor:TpvScalar;
@@ -291,6 +303,7 @@ type TpvScene3DPlanets=class;
               fLODActive:Boolean;
               fPhysicsMeshVertices:TMeshVertices;
               fPhysicsMeshIndices:TMeshIndices;
+              fPhysicsMeshSlopes:TMeshSlopes;
               fTileDirtyQueueItems:TTileDirtyQueueItems;
               fTileGenerations:TTileGenerations;
               fTiledMeshBoundingBoxes:TTiledMeshBoundingBoxes;
@@ -334,13 +347,15 @@ type TpvScene3DPlanets=class;
               property GrassMapData:TGrassMapData read fGrassMapData;
              public
               property VisualMeshVertexBuffers:TDoubleBufferedVulkanBuffers read fVisualMeshVertexBuffers;
-              property VisualMeshDistanceBuffers:TDoubleBufferedVulkanBuffers read fVisualMeshDistanceBuffers;              
+              property VisualMeshSlopeBuffers:TDoubleBufferedVulkanBuffers read fVisualMeshSlopeBuffers;
+              property VisualMeshDistanceBuffers:TDoubleBufferedVulkanBuffers read fVisualMeshDistanceBuffers;
              published
               property VisualMeshVertexBufferUpdateIndex:TPasMPInt32 read fVisualMeshVertexBufferUpdateIndex;
               property VisualMeshVertexBufferRenderIndex:TPasMPInt32 read fVisualMeshVertexBufferRenderIndex;
               property VisualMeshIndexBuffer:TpvVulkanBuffer read fVisualMeshIndexBuffer;
               property PhysicsMeshVertexBuffer:TpvVulkanBuffer read fPhysicsMeshVertexBuffer;
               property PhysicsMeshIndexBuffer:TpvVulkanBuffer read fPhysicsMeshIndexBuffer;
+              property PhysicsMeshSlopeBuffer:TpvVulkanBuffer read fPhysicsMeshSlopeBuffer;
               property RayIntersectionResultBuffer:TpvVulkanBuffer read fRayIntersectionResultBuffer;
               property PhysicsMeshVertices:TMeshVertices read fPhysicsMeshVertices;
 //            property PhysicsMeshIndices:TMeshIndices read fPhysicsMeshIndices;
@@ -353,6 +368,7 @@ type TpvScene3DPlanets=class;
               property ModelMatrix:TpvMatrix4x4 read fModelMatrix write fModelMatrix;
               property Ready:TPasMPBool32 read fReady write fReady;
               property SelectedRegion:TpvVector4Property read fSelectedRegionProperty;
+              property SelectedBrush:TpvUInt32 read fSelectedBrush write fSelectedBrush;
               property ModifyHeightMapActive:Boolean read fModifyHeightMapActive write fModifyHeightMapActive;
               property ModifyHeightMapBorderRadius:TpvScalar read fModifyHeightMapBorderRadius write fModifyHeightMapBorderRadius;
               property ModifyHeightMapFactor:TpvScalar read fModifyHeightMapFactor write fModifyHeightMapFactor;
@@ -640,8 +656,8 @@ type TpvScene3DPlanets=class;
                     InnerRadiusValueMinMax:TpvVector4; // x = inner radius, y = value, z = min, w = max
                     TileMapResolution:TpvUInt32;
                     TileMapShift:TpvUInt32;
+                    BrushIndex:TpvUInt32;
                     Reserved0:TpvUInt32;
-                    Reserved1:TpvUInt32;
                    end;
                    PPushConstants=^TPushConstants;
              private
@@ -669,8 +685,8 @@ type TpvScene3DPlanets=class;
                     Vector:TpvVector4; // xyz = vector, w=unused
                     TileMapResolution:TpvUInt32;
                     TileMapShift:TpvUInt32;
+                    BrushIndex:TpvUInt32;
                     Reserved0:TpvUInt32;
-                    Reserved1:TpvUInt32;
                     InnerRadius:TpvFloat;
                     OuterRadius:TpvFloat;
                     MinHeight:TpvFloat;
@@ -904,6 +920,33 @@ type TpvScene3DPlanets=class;
               fDescriptorSetLayout:TpvVulkanDescriptorSetLayout;
               fDescriptorPool:TpvVulkanDescriptorPool;
               fDescriptorSets:array[0..1] of TpvVulkanDescriptorSet;
+              fPipelineLayout:TpvVulkanPipelineLayout;
+              fPushConstants:TPushConstants;
+             public
+              constructor Create(const aPlanet:TpvScene3DPlanet;const aPhysics:Boolean); reintroduce;
+              destructor Destroy; override;
+              procedure Execute(const aCommandBuffer:TpvVulkanCommandBuffer);
+             public
+              property PushConstants:TPushConstants read fPushConstants write fPushConstants;
+            end;
+            { TMeshSlopeGeneration }
+            TMeshSlopeGeneration=class
+             public
+              type TPushConstants=packed record
+                    TileMapResolution:TpvUInt32;
+                    TileResolution:TpvUInt32;
+                   end;
+                   PPushConstants=^TPushConstants;
+             private
+              fPlanet:TpvScene3DPlanet;
+              fPhysics:Boolean;
+              fVulkanDevice:TpvVulkanDevice;
+              fComputeShaderModule:TpvVulkanShaderModule;
+              fComputeShaderStage:TpvVulkanPipelineShaderStage;
+              fPipeline:TpvVulkanComputePipeline;
+              fDescriptorSetLayout:TpvVulkanDescriptorSetLayout;
+              fDescriptorPool:TpvVulkanDescriptorPool;
+              fDescriptorSet:TpvVulkanDescriptorSet;
               fPipelineLayout:TpvVulkanPipelineLayout;
               fPushConstants:TPushConstants;
              public
@@ -1425,6 +1468,7 @@ type TpvScene3DPlanets=class;
        fVulkanUniversalAcquireSemaphores:array[0..MaxInFlightFrames-1] of TpvVulkanSemaphore;
        fVulkanUniversalReleaseSemaphores:array[0..MaxInFlightFrames-1] of TpvVulkanSemaphore;
        fHeightMapResolution:TpvInt32;
+       fPhysicsHeightMapResolution:TpvInt32;
        fGrassMapResolution:TpvInt32;
        fWaterMapResolution:TpvInt32;
        fTileMapResolution:TpvInt32;
@@ -1434,6 +1478,7 @@ type TpvScene3DPlanets=class;
        fPhysicsTileResolution:TpvInt32;
        fVisualResolution:TpvSizeInt;
        fPhysicsResolution:TpvSizeInt;
+       fGenerateLODIndices:Boolean;
        fBottomRadius:TpvFloat; // Start of the lowest planet ground
        fTopRadius:TpvFloat; // End of the atmosphere
        fHeightMapScale:TpvFloat; // Scale factor for the height map
@@ -1474,6 +1519,7 @@ type TpvScene3DPlanets=class;
        fVisualMeshVertexGeneration:TMeshVertexGeneration;
        fVisualMeshDistanceGeneration:TMeshDistanceGeneration;
        fPhysicsMeshVertexGeneration:TMeshVertexGeneration;
+       fPhysicsMeshSlopeGeneration:TMeshSlopeGeneration;
        fWaterCullPass:TWaterCullPass;
        fWaterSimulation:TWaterSimulation;
        fRayIntersection:TRayIntersection;
@@ -1507,6 +1553,8 @@ type TpvScene3DPlanets=class;
        fImageRowChanged:array[0..16384-1] of boolean; // 16k is overkill anyway, better too much than too less
        fImageRowBufferCopy:array[0..8192-1] of TVkBufferImageCopy; // 16k / 2, since contiguous rows are merged into one copy operation
        fAtmosphere:TObject;
+       fBrushes:TpvScene3DPlanet.TBrushes; 
+       fBrushesTexture:TpvVulkanTexture;
       private
        procedure GenerateMeshIndices(const aTiledMeshIndices:TpvScene3DPlanet.TMeshIndices;
                                      const aTiledMeshIndexGroups:TpvScene3DPlanet.TTiledMeshIndexGroups;
@@ -1518,11 +1566,13 @@ type TpvScene3DPlanets=class;
                                      out aMeshLODCounts:TpvScene3DPlanet.TSizeIntArray);
       public
        constructor Create(const aScene3D:TObject;
+                          const aBrushes:TpvScene3DPlanet.TBrushes; 
                           const aHeightMapResolution:TpvInt32=4096;
                           const aVisualResolution:TpvSizeInt=4096;
                           const aPhysicsResolution:TpvSizeInt=1024;
                           const aBottomRadius:TpvFloat=70.0;
-                          const aTopRadius:TpvFloat=100.0); reintroduce;
+                          const aTopRadius:TpvFloat=100.0;
+                          const aGenerateLODIndices:Boolean=false); reintroduce;
        destructor Destroy; override;
        procedure AfterConstruction; override;
        procedure BeforeDestruction; override;
@@ -1544,7 +1594,7 @@ type TpvScene3DPlanets=class;
        procedure EndUpdate;
        procedure FlushUpdate;
        procedure Initialize(const aPasMPInstance:TPasMP=nil;const aData:TStream=nil;const aDataFreeOnDestroy:boolean=false);
-       procedure Flatten(const aVector:TpvVector3;const aInnerRadius,aOuterRadius,aTargetHeight:TpvFloat);
+       procedure Flatten(const aVector:TpvVector3;const aInnerRadius,aOuterRadius,aTargetHeight:TpvFloat;const aBrushIndex:TpvUInt32);
        function RayIntersection(const aRayOrigin,aRayDirection:TpvVector3;out aHitNormal:TpvVector3;out aHitTime:TpvScalar):boolean;
        procedure Update(const aInFlightFrameIndex:TpvSizeInt);
        procedure FrameUpdate(const aInFlightFrameIndex:TpvSizeInt);
@@ -1554,9 +1604,12 @@ type TpvScene3DPlanets=class;
        procedure ProcessSimulation(const aCommandBuffer:TpvVulkanCommandBuffer;const aInFlightFrameIndex:TpvSizeInt);
        procedure BeginFrame(const aInFlightFrameIndex:TpvSizeInt;var aWaitSemaphore:TpvVulkanSemaphore;const aWaitFence:TpvVulkanFence=nil);
        procedure EndFrame(const aInFlightFrameIndex:TpvSizeInt;var aWaitSemaphore:TpvVulkanSemaphore;const aWaitFence:TpvVulkanFence=nil);
+       procedure ExportPhysicsMeshToBIN(const aStream:TStream); overload;
+       procedure ExportPhysicsMeshToBIN(const aFileName:TpvUTF8String); overload;
        procedure ExportPhysicsMeshToOBJ(const aStream:TStream); overload;
        procedure ExportPhysicsMeshToOBJ(const aFileName:TpvUTF8String); overload;
        function GetPhysicsVertex(const aX,aY:TpvInt32):TpvScene3DPlanet.PMeshVertex;
+       function GetPhysicsSlope(const aX,aY:TpvInt32):TpvScene3DPlanet.TMeshSlope;
        function GetHeight(const aUV:TpvVector2;const aAbsolute:boolean=true):TpvScalar; overload;
        function GetHeight(const aNormal:TpvVector3;const aAbsolute:boolean=true):TpvScalar; overload;
        function GetNormal(const aUV:TpvVector2):TpvVector3; overload;
@@ -1568,9 +1621,12 @@ type TpvScene3DPlanets=class;
        function GetGrass(const aUV:TpvVector2):TpvScalar; overload;
        function GetGrass(const aNormal:TpvVector3):TpvScalar; overload;
        function GetUV(const aPosition:TpvVector3):TpvVector2;
+       function GetSlope(const aUV:TpvVector2):TpvFloat; overload;
+       function GetSlope(const aNormal:TpvVector3):TpvFloat; overload;
       published
        property Scene3D:TObject read fScene3D;
        property HeightMapResolution:TpvInt32 read fHeightMapResolution;
+       property PhysicsHeightMapResolution:TpvInt32 read fPhysicsHeightMapResolution;
        property GrassMapResolution:TpvInt32 read fGrassMapResolution;
        property WaterMapResolution:TpvInt32 read fWaterMapResolution;
        property TileMapResolution:TpvInt32 read fTileMapResolution;
@@ -1631,6 +1687,18 @@ function OctEqualAreaUnsignedEncode(const aVector:TpvVector3):TpvVector2;
 function OctEqualAreaSignedDecode(const aUV:TpvVector2):TpvVector3;
 function OctEqualAreaUnsignedDecode(const aUV:TpvVector2):TpvVector3;
 
+procedure ConvertPNGStreamsToBrushes(const aPNGStreams:array of TStream;out aBrushes:TpvScene3DPlanet.TBrushes);
+procedure ConvertPNGAssetsToBrushes(const aAssetPath:TpvUTF8String;out aBrushes:TpvScene3DPlanet.TBrushes);
+
+procedure ConvertQOIStreamsToBrushes(const aQOIStreams:array of TStream;out aBrushes:TpvScene3DPlanet.TBrushes);
+procedure ConvertQOIAssetsToBrushes(const aAssetPath:TpvUTF8String;out aBrushes:TpvScene3DPlanet.TBrushes);
+
+function LoadBrushesFromStream(const aStream:TStream;out aBrushes:TpvScene3DPlanet.TBrushes):boolean;
+function LoadBrushesFromAsset(const aAssetPath:TpvUTF8String;out aBrushes:TpvScene3DPlanet.TBrushes):boolean;
+
+procedure SaveBrushesToStream(const aStream:TStream;const aBrushes:TpvScene3DPlanet.TBrushes);
+procedure SaveBrushesToAsset(const aAssetPath:TpvUTF8String;const aBrushes:TpvScene3DPlanet.TBrushes);
+
 implementation
 
 uses PasVulkan.Scene3D,
@@ -1641,6 +1709,278 @@ uses PasVulkan.Scene3D,
 
 type TVector3Array=TpvDynamicArray<TpvVector3>;
      TIndexArray=TpvDynamicArray<TpvUInt32>;
+
+procedure ConvertPNGStreamsToBrushes(const aPNGStreams:array of TStream;out aBrushes:TpvScene3DPlanet.TBrushes);
+var PNGIndex,PixelIndex:TpvSizeInt; 
+    PNGPixelFormat:TpvPNGPixelFormat;
+    PNGWidth,PNGHeight:TpvInt32;
+    PNGData:TpvPointer;
+    PixelData:TpvPointer;
+    PNGStream:TStream;
+    p8,m8:PpvUInt8;
+    p16:PpvUInt16;
+begin
+
+ FillChar(aBrushes,SizeOf(TpvScene3DPlanet.TBrushes),#0);
+
+ for PNGIndex:=0 to Min(high(TpvScene3DPlanet.TBrushes)+1,length(aPNGStreams))-1 do begin
+  PNGStream:=aPNGStreams[PNGIndex];
+  if assigned(PNGStream) and (PNGStream.Size>0) then begin
+   GetMem(PNGData,PNGStream.Size);
+   try
+    PixelData:=nil;
+    PNGWidth:=0;
+    PNGHeight:=0;
+    PNGPixelFormat:=TpvPNGPixelFormat.Unknown;
+    PNGStream.Seek(0,soBeginning);
+    PNGStream.ReadBuffer(PNGData^,PNGStream.Size);
+    if LoadPNGImage(PNGData,PNGStream.Size,PixelData,PNGWidth,PNGHeight,false,PNGPixelFormat) then begin
+     if assigned(PixelData) and (PNGWidth>0) and (PNGHeight>0) then begin
+      if PNGPixelFormat=TpvPNGPixelFormat.R16G16B16A16 then begin
+       // Convert to R8G8B8A8
+       p8:=PixelData;
+       p16:=PixelData;
+       for PixelIndex:=0 to ((PNGWidth*PNGHeight)*4)-1 do begin
+        p8^:=p16^ shr 8;
+        inc(p8);
+        inc(p16);
+       end;
+      end;      
+     end;
+     begin
+      // Convert R8G8B8A8 to mono-channel byte
+      p8:=PixelData;
+      m8:=PixelData;
+      for PixelIndex:=0 to (PNGWidth*PNGHeight)-1 do begin
+       m8^:=p8^;
+       inc(p8,4);
+       inc(m8);
+      end;
+     end;
+     if (PNGWidth<>256) or (PNGHeight<>256) then begin
+      GetMem(p8,256*256);
+      ResizeMonoByte2D(PixelData,PNGWidth,PNGHeight,p8,256,256);
+      FreeMem(PixelData);
+      PixelData:=p8;
+      PNGWidth:=256;
+      PNGHeight:=256;
+     end;
+     Move(PixelData^,aBrushes[PNGIndex],256*256);
+    end;    
+   finally
+    FreeMem(PNGData);
+   end;
+  end;
+ end;
+
+end;
+
+procedure ConvertPNGAssetsToBrushes(const aAssetPath:TpvUTF8String;out aBrushes:TpvScene3DPlanet.TBrushes);
+var PNGStreams:array of TStream;
+    Index:TpvSizeInt;
+    PNGFileName:TpvUTF8String;
+begin
+
+ PNGStreams:=nil;
+ try
+
+  SetLength(PNGStreams,length(aBrushes));
+
+  for Index:=0 to length(aBrushes)-1 do begin
+   PNGFileName:=IntToStr(Index);
+   while length(PNGFileName)<3 do begin
+    PNGFileName:='0'+PNGFileName;
+   end;
+   if (length(aAssetPath)>0) and (aAssetPath[length(aAssetPath)]<>'/') then begin
+    PNGFileName:=aAssetPath+'/'+PNGFileName+'.png';
+   end else begin
+    PNGFileName:=aAssetPath+PNGFileName+'.png';
+   end;
+   if pvApplication.Assets.ExistAsset(PNGFileName) then begin
+    PNGStreams[Index]:=pvApplication.Assets.GetAssetStream(PNGFileName);
+   end else begin
+    PNGStreams[Index]:=nil;
+   end;
+  end;
+
+  ConvertPNGStreamsToBrushes(PNGStreams,aBrushes);
+
+ finally
+  try
+   for Index:=0 to length(PNGStreams)-1 do begin
+    if assigned(PNGStreams[Index]) then begin
+     PNGStreams[Index].Free;
+    end;
+   end;
+  finally
+   PNGStreams:=nil;
+  end;
+ end;
+end;
+
+procedure ConvertQOIStreamsToBrushes(const aQOIStreams:array of TStream;out aBrushes:TpvScene3DPlanet.TBrushes);
+var QOIIndex,PixelIndex:TpvSizeInt;
+    QOIWidth,QOIHeight:TpvInt32;
+    QOIData:TpvPointer;
+    PixelData:TpvPointer;
+    QOIStream:TStream;
+    p8,m8:PpvUInt8;
+    SRGB:boolean;
+begin
+
+ FillChar(aBrushes,SizeOf(TpvScene3DPlanet.TBrushes),#0);
+
+ for QOIIndex:=0 to Min(high(TpvScene3DPlanet.TBrushes)+1,length(aQOIStreams))-1 do begin
+  QOIStream:=aQOIStreams[QOIIndex];
+  if assigned(QOIStream) and (QOIStream.Size>0) then begin
+   GetMem(QOIData,QOIStream.Size);
+   try
+    PixelData:=nil;
+    QOIWidth:=0;
+    QOIHeight:=0;
+    QOIStream.Seek(0,soBeginning);
+    QOIStream.ReadBuffer(QOIData^,QOIStream.Size);
+    if LoadQOIImage(QOIData,QOIStream.Size,PixelData,QOIWidth,QOIHeight,false,SRGB) then begin
+     if assigned(PixelData) and (QOIWidth>0) and (QOIHeight>0) then begin
+      begin
+       // Convert R8G8B8A8 to mono-channel byte
+       p8:=PixelData;
+       m8:=PixelData;
+       for PixelIndex:=0 to (QOIWidth*QOIHeight)-1 do begin
+        m8^:=p8^;
+        inc(p8,4);
+        inc(m8);
+       end;
+      end;
+      if QOIWidth<>256 then begin
+       GetMem(p8,256*256);
+       ResizeMonoByte2D(PixelData,QOIWidth,QOIHeight,p8,256,256);
+       FreeMem(PixelData);
+       PixelData:=p8;
+       QOIWidth:=256;
+       QOIHeight:=256;
+      end;
+      Move(PixelData^,aBrushes[QOIIndex],256*256);
+     end;
+    end;
+   finally
+    FreeMem(QOIData);
+   end;
+  end;
+ end;
+
+end;
+
+procedure ConvertQOIAssetsToBrushes(const aAssetPath:TpvUTF8String;out aBrushes:TpvScene3DPlanet.TBrushes);
+var QOIStreams:array of TStream;
+    Index:TpvSizeInt;
+    QOIFileName:TpvUTF8String;
+begin
+
+ QOIStreams:=nil;
+ try
+
+  for Index:=0 to length(aBrushes)-1 do begin
+   QOIFileName:=IntToStr(Index);
+   while length(QOIFileName)<3 do begin
+    QOIFileName:='0'+QOIFileName;
+   end;
+   if (length(aAssetPath)>0) and (aAssetPath[length(aAssetPath)]<>'/') then begin
+    QOIFileName:=aAssetPath+'/'+QOIFileName+'.qoi';
+   end else begin
+    QOIFileName:=aAssetPath+QOIFileName+'.qoi';
+   end;
+   if pvApplication.Assets.ExistAsset(QOIFileName) then begin
+    QOIStreams[Index]:=pvApplication.Assets.GetAssetStream(QOIFileName);
+   end else begin
+    QOIStreams[Index]:=nil;
+   end;
+  end;
+
+  ConvertQOIStreamsToBrushes(QOIStreams,aBrushes);
+
+ finally
+  try
+   for Index:=0 to length(QOIStreams)-1 do begin
+    if assigned(QOIStreams[Index]) then begin
+     QOIStreams[Index].Free;
+    end;
+   end;
+  finally
+   QOIStreams:=nil;
+  end;
+ end;
+end;
+
+function LoadBrushesFromStream(const aStream:TStream;out aBrushes:TpvScene3DPlanet.TBrushes):boolean;
+var OutStream:TMemoryStream;
+begin
+ OutStream:=TMemoryStream.Create;
+ try
+  if DecompressStream(aStream,OutStream) then begin
+   if OutStream.Size=SizeOf(TpvScene3DPlanet.TBrushes) then begin
+    OutStream.Seek(0,soBeginning);
+    OutStream.Read(aBrushes,SizeOf(TpvScene3DPlanet.TBrushes));
+    result:=true;
+   end else begin
+    FillChar(aBrushes,SizeOf(TpvScene3DPlanet.TBrushes),#0);
+    result:=false;
+   end;
+  end else begin
+   FillChar(aBrushes,SizeOf(TpvScene3DPlanet.TBrushes),#0);
+   result:=false;
+  end;
+ finally
+  FreeAndNil(OutStream);
+ end;
+end;
+
+function LoadBrushesFromAsset(const aAssetPath:TpvUTF8String;out aBrushes:TpvScene3DPlanet.TBrushes):boolean;
+var Stream:TStream;
+begin
+ if pvApplication.Assets.ExistAsset(aAssetPath) then begin
+  Stream:=pvApplication.Assets.GetAssetStream(aAssetPath);
+  try
+   result:=LoadBrushesFromStream(Stream,aBrushes);
+  finally
+   FreeAndNil(Stream);
+  end;
+ end else begin
+  FillChar(aBrushes,SizeOf(TpvScene3DPlanet.TBrushes),#0);
+  result:=false;
+ end;
+end;
+
+procedure SaveBrushesToStream(const aStream:TStream;const aBrushes:TpvScene3DPlanet.TBrushes);
+var OutStream:TMemoryStream;
+begin
+ OutStream:=TMemoryStream.Create;
+ try
+  OutStream.Write(aBrushes,SizeOf(TpvScene3DPlanet.TBrushes));
+  OutStream.Seek(0,soBeginning);
+  if not CompressStream(OutStream,aStream,TpvCompressionMethod.LZBRRC,5,0) then begin
+   if not CompressStream(OutStream,aStream,TpvCompressionMethod.None,5,0) then begin
+    Assert(false);
+   end;
+  end;
+ finally
+  FreeAndNil(OutStream);
+ end;
+end;
+
+procedure SaveBrushesToAsset(const aAssetPath:TpvUTF8String;const aBrushes:TpvScene3DPlanet.TBrushes);
+var RealFilePath:TpvUTF8String;
+    Stream:TMemoryStream;
+begin
+ RealFilePath:=IncludeTrailingPathDelimiter(pvApplication.Assets.BasePath)+aAssetPath;
+ Stream:=TMemoryStream.Create;
+ try
+  SaveBrushesToStream(Stream,aBrushes);
+  Stream.SaveToFile(RealFilePath);
+ finally
+  FreeAndNil(Stream);
+ end;
+end;
 
 function WrapOctahedralCoordinates(const aUV:TpvVector2):TpvVector2;
 begin
@@ -1823,6 +2163,9 @@ begin
  fVisualMeshVertexBuffers[0]:=nil;
  fVisualMeshVertexBuffers[1]:=nil;
 
+ fVisualMeshSlopeBuffers[0]:=nil;
+ fVisualMeshSlopeBuffers[1]:=nil;
+
  fVisualMeshDistanceBuffers[0]:=nil;
  fVisualMeshDistanceBuffers[1]:=nil;
 
@@ -1839,6 +2182,8 @@ begin
  fPhysicsMeshVertexBuffer:=nil;
 
  fPhysicsMeshIndexBuffer:=nil;
+
+ fPhysicsMeshSlopeBuffer:=nil;
 
  fRayIntersectionResultBuffer:=nil;
 
@@ -1958,7 +2303,7 @@ begin
                                            pvAllocationGroupIDScene3DPlanetStatic);
    fPlanet.fVulkanDevice.DebugUtils.SetObjectName(fGrassMapBuffer.Handle,VK_OBJECT_TYPE_BUFFER,'TpvScene3DPlanet.TData['+IntToStr(fInFlightFrameIndex)+'].fGrassMapBuffer');
    
-  end; 
+  end;
 
   if fInFlightFrameIndex<0 then begin
 
@@ -2379,6 +2724,25 @@ begin
                                                   );
    fPlanet.fVulkanDevice.DebugUtils.SetObjectName(fPhysicsMeshIndexBuffer.Handle,VK_OBJECT_TYPE_BUFFER,'TpvScene3DPlanet.PhysicsMeshIndexBuffer['+IntToStr(fInFlightFrameIndex)+']');
 
+   fPhysicsMeshSlopeBuffer:=TpvVulkanBuffer.Create(fPlanet.fVulkanDevice,
+                                                   fPlanet.fTileMapResolution*fPlanet.fTileMapResolution*fPlanet.fPhysicsTileResolution*fPlanet.fPhysicsTileResolution*SizeOf(TpvFloat),
+                                                   TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_SRC_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_TRANSFER_DST_BIT) or TVkBufferUsageFlags(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT),
+                                                   fPlanet.fGlobalBufferSharingMode,
+                                                   fPlanet.fGlobalBufferQueueFamilyIndices,
+                                                   TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT),
+                                                   TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) or TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_HOST_CACHED_BIT),
+                                                   0,
+                                                   TVkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+                                                   0,
+                                                   0,
+                                                   0,
+                                                   0,
+                                                   [TpvVulkanBufferFlag.PersistentMappedIfPossible],
+                                                   0,
+                                                   pvAllocationGroupIDScene3DPlanetStatic
+                                                  );
+    fPlanet.fVulkanDevice.DebugUtils.SetObjectName(fPhysicsMeshSlopeBuffer.Handle,VK_OBJECT_TYPE_BUFFER,'TpvScene3DPlanet.PhysicsMeshSlopeBuffer['+IntToStr(fInFlightFrameIndex)+']');
+
   end;
 
   if fInFlightFrameIndex<0 then begin
@@ -2414,6 +2778,9 @@ begin
   fPhysicsMeshIndices:=TMeshIndices.Create;
   fPhysicsMeshIndices.Resize(fPlanet.fTileMapResolution*fPlanet.fTileMapResolution*fPlanet.fPhysicsTileResolution*fPlanet.fPhysicsTileResolution*6);
 
+  fPhysicsMeshSlopes:=TMeshSlopes.Create;
+  fPhysicsMeshSlopes.Resize(fPlanet.fTileMapResolution*fPlanet.fTileMapResolution*fPlanet.fPhysicsTileResolution*fPlanet.fPhysicsTileResolution);
+
   fTileDirtyQueueItems:=TTileDirtyQueueItems.Create;
   fTileDirtyQueueItems.Resize((fPlanet.fTileMapResolution*fPlanet.fTileMapResolution)+6);
 
@@ -2433,6 +2800,8 @@ begin
 
   fPhysicsMeshIndices:=nil;
 
+  fPhysicsMeshSlopes:=nil;
+
   fTileDirtyQueueItems:=nil;
 
   fTileGenerations:=nil;
@@ -2446,6 +2815,8 @@ begin
  fSelectedRegion:=TpvVector4.Null;
 
  fSelectedRegionProperty:=TpvVector4Property.Create(@fSelectedRegion);
+
+ fSelectedBrush:=0;
 
  fModifyHeightMapActive:=false;
 
@@ -2501,6 +2872,8 @@ begin
 
  FreeAndNil(fPhysicsMeshIndices);
 
+ FreeAndNil(fPhysicsMeshSlopes);
+
 {fHeightMapData:=nil;
 
  fNormalMapData:=nil;//}
@@ -2548,6 +2921,8 @@ begin
  FreeAndNil(fPhysicsMeshVertexBuffer);
 
  FreeAndNil(fPhysicsMeshIndexBuffer);
+
+ FreeAndNil(fPhysicsMeshSlopeBuffer);
 
  FreeAndNil(fRayIntersectionResultBuffer);
 
@@ -2966,7 +3341,7 @@ procedure TpvScene3DPlanet.TData.Download(const aQueue:TpvVulkanQueue;
                                           const aCommandBuffer:TpvVulkanCommandBuffer;
                                           const aFence:TpvVulkanFence;
                                           const aTransferHeightMap:Boolean;
-                                          const aTransferGrass:Boolean);                                          
+                                          const aTransferGrass:Boolean);
 var CountImageMemoryBarriers,CountBufferMemoryBarriers:TpvSizeInt;
     ImageSubresourceRange:TVkImageSubresourceRange;
     ImageMemoryBarriers:array[0..5] of TVkImageMemoryBarrier;
@@ -3639,6 +4014,7 @@ end;
 procedure TpvScene3DPlanet.TData.Assign(const aData:TData);
 begin
  fSelectedRegion:=aData.fSelectedRegion;
+ fSelectedBrush:=aData.fSelectedBrush;
  fWireframeActive:=aData.fWireframeActive;
  fDisplacementMappingActive:=aData.fDisplacementMappingActive;
  fParallaxMappingActive:=aData.fParallaxMappingActive;
@@ -6318,12 +6694,20 @@ begin
                                   TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),
                                   [],
                                   0);
+  fDescriptorSetLayout.AddBinding(2,
+                                  TVkDescriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER),
+                                  1,
+                                  TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),
+                                  [],
+                                  0);
   fDescriptorSetLayout.Initialize;
+  fPlanet.fVulkanDevice.DebugUtils.SetObjectName(fDescriptorSetLayout.Handle,VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT,'TpvScene3DPlanet.THeightMapModification.fDescriptorSetLayout');
 
   fPipelineLayout:=TpvVulkanPipelineLayout.Create(fVulkanDevice);
   fPipelineLayout.AddPushConstantRange(TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),0,SizeOf(TPushConstants));
   fPipelineLayout.AddDescriptorSetLayout(fDescriptorSetLayout);
   fPipelineLayout.Initialize;
+  fPlanet.fVulkanDevice.DebugUtils.SetObjectName(fPipelineLayout.Handle,VK_OBJECT_TYPE_PIPELINE_LAYOUT,'TpvScene3DPlanet.THeightMapModification.fPipelineLayout');
 
   fDescriptorPool:=TpvVulkanDescriptorPool.Create(fVulkanDevice,
                                                   TVkDescriptorPoolCreateFlags(VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT),
@@ -6331,6 +6715,7 @@ begin
   fDescriptorPool.AddDescriptorPoolSize(TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE),1);
   fDescriptorPool.AddDescriptorPoolSize(TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),1);
   fDescriptorPool.Initialize;
+  fPlanet.fVulkanDevice.DebugUtils.SetObjectName(fDescriptorPool.Handle,VK_OBJECT_TYPE_DESCRIPTOR_POOL,'TpvScene3DPlanet.THeightMapModification.fDescriptorPool');
 
   fDescriptorSet:=TpvVulkanDescriptorSet.Create(fDescriptorPool,fDescriptorSetLayout);
   fDescriptorSet.WriteToDescriptorSet(0,
@@ -6353,7 +6738,18 @@ begin
                                                                       VK_WHOLE_SIZE)],
                                       [],
                                       false);
+  fDescriptorSet.WriteToDescriptorSet(2,
+                                      0,
+                                      1,
+                                      TVkDescriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER),
+                                      [TVkDescriptorImageInfo.Create(TpvScene3D(fPlanet.fScene3D).GeneralComputeSampler.Handle,
+                                                                     fPlanet.fBrushesTexture.ImageView.Handle,
+                                                                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)],
+                                      [],
+                                      [],
+                                      false);    
   fDescriptorSet.Flush;
+  fPlanet.fVulkanDevice.DebugUtils.SetObjectName(fDescriptorSet.Handle,VK_OBJECT_TYPE_DESCRIPTOR_SET,'TpvScene3DPlanet.THeightMapModification.fDescriptorSet');
 
   fPipeline:=TpvVulkanComputePipeline.Create(fVulkanDevice,
                                              pvApplication.VulkanPipelineCache,
@@ -6362,12 +6758,14 @@ begin
                                              fPipelineLayout,
                                              nil,
                                              0);
+  fPlanet.fVulkanDevice.DebugUtils.SetObjectName(fPipeline.Handle,VK_OBJECT_TYPE_PIPELINE,'TpvScene3DPlanet.THeightMapModification.fPipeline');
 
   fPushConstants.PositionRadius:=TpvVector4.Create(0.0,0.0,0.0,0.0);
   fPushConstants.InnerRadiusValueMinMax:=TpvVector4.Create(0.0,0.0,0.0,0.0);
 
   fPushConstants.TileMapResolution:=fPlanet.fTileMapResolution;
   fPushConstants.TileMapShift:=fPlanet.fTileMapShift;
+  fPushConstants.BrushIndex:=0;
 
  end;
 
@@ -6484,6 +6882,7 @@ begin
                                                                     1.0);
 
  fPushConstants.PositionRadius:=fPlanet.fData.fSelectedRegion;
+ fPushConstants.BrushIndex:=fPlanet.fData.fSelectedBrush;
 
  aCommandBuffer.CmdPushConstants(fPipelineLayout.Handle,
                                  TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),
@@ -6567,19 +6966,29 @@ begin
                                   TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),
                                   [],
                                   0);
+  fDescriptorSetLayout.AddBinding(2,
+                                  TVkDescriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER),
+                                  1,
+                                  TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),
+                                  [],
+                                  0);                                
   fDescriptorSetLayout.Initialize;
+  fPlanet.fVulkanDevice.DebugUtils.SetObjectName(fDescriptorSetLayout.Handle,VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT,'TpvScene3DPlanet.THeightMapFlatten.fDescriptorSetLayout');
 
   fPipelineLayout:=TpvVulkanPipelineLayout.Create(fVulkanDevice);
   fPipelineLayout.AddPushConstantRange(TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),0,SizeOf(TPushConstants));
   fPipelineLayout.AddDescriptorSetLayout(fDescriptorSetLayout);
   fPipelineLayout.Initialize;
+  fPlanet.fVulkanDevice.DebugUtils.SetObjectName(fPipelineLayout.Handle,VK_OBJECT_TYPE_PIPELINE_LAYOUT,'TpvScene3DPlanet.THeightMapFlatten.fPipelineLayout');
 
   fDescriptorPool:=TpvVulkanDescriptorPool.Create(fVulkanDevice,
                                                   TVkDescriptorPoolCreateFlags(VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT),
                                                   1);
   fDescriptorPool.AddDescriptorPoolSize(TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE),1);
   fDescriptorPool.AddDescriptorPoolSize(TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),1);
+  fDescriptorPool.AddDescriptorPoolSize(TVkDescriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER),1);
   fDescriptorPool.Initialize;
+  fPlanet.fVulkanDevice.DebugUtils.SetObjectName(fDescriptorPool.Handle,VK_OBJECT_TYPE_DESCRIPTOR_POOL,'TpvScene3DPlanet.THeightMapFlatten.fDescriptorPool');
 
   fDescriptorSet:=TpvVulkanDescriptorSet.Create(fDescriptorPool,fDescriptorSetLayout);
   fDescriptorSet.WriteToDescriptorSet(0,
@@ -6602,7 +7011,18 @@ begin
                                                                       VK_WHOLE_SIZE)],
                                       [],
                                       false);
+  fDescriptorSet.WriteToDescriptorSet(2,
+                                      0,
+                                      1,
+                                      TVkDescriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER),
+                                      [TVkDescriptorImageInfo.Create(TpvScene3D(fPlanet.fScene3D).GeneralComputeSampler.Handle,
+                                                                     fPlanet.fBrushesTexture.ImageView.Handle,
+                                                                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)],
+                                      [],
+                                      [],
+                                      false);      
   fDescriptorSet.Flush;
+  fPlanet.fVulkanDevice.DebugUtils.SetObjectName(fDescriptorSet.Handle,VK_OBJECT_TYPE_DESCRIPTOR_SET,'TpvScene3DPlanet.THeightMapFlatten.fDescriptorSet');
 
   fPipeline:=TpvVulkanComputePipeline.Create(fVulkanDevice,
                                              pvApplication.VulkanPipelineCache,
@@ -6611,11 +7031,13 @@ begin
                                              fPipelineLayout,
                                              nil,
                                              0);
+  fPlanet.fVulkanDevice.DebugUtils.SetObjectName(fPipeline.Handle,VK_OBJECT_TYPE_PIPELINE,'TpvScene3DPlanet.THeightMapFlatten.fPipeline');
 
   fPushConstants.Vector:=TpvVector4.Create(0.0,1.0,0.0,0.0);
 
   fPushConstants.TileMapResolution:=fPlanet.fTileMapResolution;
   fPushConstants.TileMapShift:=fPlanet.fTileMapShift;
+  fPushConstants.BrushIndex:=0;
 
  end;
 
@@ -8698,6 +9120,331 @@ begin
  fPlanet.fVulkanDevice.DebugUtils.CmdBufLabelEnd(aCommandBuffer);
 
 end;
+
+{ TpvScene3DPlanet.TMeshSlopeGeneration }
+
+constructor TpvScene3DPlanet.TMeshSlopeGeneration.Create(const aPlanet:TpvScene3DPlanet;const aPhysics:Boolean);
+var Stream:TStream;
+begin
+
+ inherited Create;
+
+ fPlanet:=aPlanet;
+
+ fVulkanDevice:=fPlanet.fVulkanDevice;
+
+ fPhysics:=aPhysics;
+
+ if assigned(fVulkanDevice) then begin
+
+  Stream:=pvScene3DShaderVirtualFileSystem.GetFile('planet_tiled_mesh_slope_generation_comp.spv');
+  try
+   fComputeShaderModule:=TpvVulkanShaderModule.Create(fVulkanDevice,Stream);
+  finally
+   FreeAndNil(Stream);
+  end;
+
+  if aPhysics then begin
+   fVulkanDevice.DebugUtils.SetObjectName(fComputeShaderModule.Handle,VK_OBJECT_TYPE_SHADER_MODULE,'TpvScene3DPlanet.TPhysicsMeshSlopeGeneration.fComputeShaderModule');
+  end else begin
+   fVulkanDevice.DebugUtils.SetObjectName(fComputeShaderModule.Handle,VK_OBJECT_TYPE_SHADER_MODULE,'TpvScene3DPlanet.TVisualMeshSlopeGeneration.fComputeShaderModule');
+  end;
+
+  fComputeShaderStage:=TpvVulkanPipelineShaderStage.Create(VK_SHADER_STAGE_COMPUTE_BIT,fComputeShaderModule,'main');
+
+  fDescriptorSetLayout:=TpvVulkanDescriptorSetLayout.Create(fVulkanDevice);
+  fDescriptorSetLayout.AddBinding(0, // Vertices
+                                  TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
+                                  1,
+                                  TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),
+                                  [],
+                                  0);
+  fDescriptorSetLayout.AddBinding(1, // Slopes
+                                  TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
+                                  1,
+                                  TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),
+                                  [],
+                                  0);
+  fDescriptorSetLayout.AddBinding(2, // QueuedTiles
+                                  TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
+                                  1,
+                                  TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),
+                                  [],
+                                  0);
+  fDescriptorSetLayout.Initialize;
+  if aPhysics then begin
+   fVulkanDevice.DebugUtils.SetObjectName(fDescriptorSetLayout.Handle,VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT,'TpvScene3DPlanet.TPhysicsMeshSlopeGeneration.fDescriptorSetLayout'); 
+  end else begin
+   fVulkanDevice.DebugUtils.SetObjectName(fDescriptorSetLayout.Handle,VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT,'TpvScene3DPlanet.TVisualMeshSlopeGeneration.fDescriptorSetLayout');
+  end;
+
+  fPipelineLayout:=TpvVulkanPipelineLayout.Create(fVulkanDevice);
+  fPipelineLayout.AddPushConstantRange(TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),0,SizeOf(TPushConstants));
+  fPipelineLayout.AddDescriptorSetLayout(fDescriptorSetLayout);
+  fPipelineLayout.Initialize;
+  if aPhysics then begin
+   fVulkanDevice.DebugUtils.SetObjectName(fPipelineLayout.Handle,VK_OBJECT_TYPE_PIPELINE_LAYOUT,'TpvScene3DPlanet.TPhysicsMeshSlopeGeneration.fPipelineLayout');
+  end else begin
+   fVulkanDevice.DebugUtils.SetObjectName(fPipelineLayout.Handle,VK_OBJECT_TYPE_PIPELINE_LAYOUT,'TpvScene3DPlanet.TVisualMeshSlopeGeneration.fPipelineLayout');
+  end;
+
+  fDescriptorPool:=TpvVulkanDescriptorPool.Create(fVulkanDevice,
+                                                  TVkDescriptorPoolCreateFlags(VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT),
+                                                  1);
+  fDescriptorPool.AddDescriptorPoolSize(TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),2);
+  fDescriptorPool.Initialize;
+  if aPhysics then begin
+   fVulkanDevice.DebugUtils.SetObjectName(fDescriptorPool.Handle,VK_OBJECT_TYPE_DESCRIPTOR_POOL,'TpvScene3DPlanet.TPhysicsMeshSlopeGeneration.fDescriptorPool');
+  end else begin
+   fVulkanDevice.DebugUtils.SetObjectName(fDescriptorPool.Handle,VK_OBJECT_TYPE_DESCRIPTOR_POOL,'TpvScene3DPlanet.TVisualMeshSlopeGeneration.fDescriptorPool');
+  end;
+
+  fDescriptorSet:=TpvVulkanDescriptorSet.Create(fDescriptorPool,fDescriptorSetLayout);
+  if aPhysics then begin
+   fDescriptorSet.WriteToDescriptorSet(0,
+                                       0,
+                                       1,
+                                       TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
+                                       [],
+                                       [TVkDescriptorBufferInfo.Create(fPlanet.fData.fPhysicsMeshVertexBuffer.Handle,
+                                                                       0,
+                                                                       VK_WHOLE_SIZE)],
+                                       [],
+                                       false);
+  end else begin
+   fDescriptorSet.WriteToDescriptorSet(0,
+                                       0,
+                                       1,
+                                       TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
+                                       [],
+                                       [TVkDescriptorBufferInfo.Create(fPlanet.fData.fVisualMeshVertexBuffers[fPlanet.fData.fVisualMeshVertexBufferUpdateIndex].Handle,
+                                                                       0,
+                                                                       VK_WHOLE_SIZE)],
+                                       [],
+                                       false);
+  end;
+  if aPhysics then begin
+   fDescriptorSet.WriteToDescriptorSet(1,
+                                       0,
+                                       1,
+                                       TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
+                                       [],
+                                       [TVkDescriptorBufferInfo.Create(fPlanet.fData.fPhysicsMeshSlopeBuffer.Handle,
+                                                                       0,
+                                                                       VK_WHOLE_SIZE)],
+                                       [],
+                                       false);
+  end else begin
+   fDescriptorSet.WriteToDescriptorSet(1,
+                                       0,
+                                       1,
+                                       TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
+                                       [],
+                                       [TVkDescriptorBufferInfo.Create(fPlanet.fData.fVisualMeshSlopeBuffers[fPlanet.fData.fVisualMeshVertexBufferUpdateIndex].Handle,
+                                                                       0,
+                                                                       VK_WHOLE_SIZE)],
+                                       [],
+                                       false);
+  end;
+  fDescriptorSet.WriteToDescriptorSet(2,
+                                      0,
+                                      1,
+                                      TVkDescriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER),
+                                      [],
+                                      [TVkDescriptorBufferInfo.Create(fPlanet.fData.fTileDirtyQueueBuffer.Handle,
+                                                                      0,
+                                                                      VK_WHOLE_SIZE)],
+                                      [],
+                                      false); 
+  fDescriptorSet.Flush;
+  if aPhysics then begin
+   fVulkanDevice.DebugUtils.SetObjectName(fDescriptorSet.Handle,VK_OBJECT_TYPE_DESCRIPTOR_SET,'TpvScene3DPlanet.TPhysicsMeshSlopeGeneration.fDescriptorSet');
+  end else begin
+   fVulkanDevice.DebugUtils.SetObjectName(fDescriptorSet.Handle,VK_OBJECT_TYPE_DESCRIPTOR_SET,'TpvScene3DPlanet.TVisualMeshSlopeGeneration.fDescriptorSet');
+  end;
+
+  fPipeline:=TpvVulkanComputePipeline.Create(fVulkanDevice,
+                                             pvApplication.VulkanPipelineCache,
+                                             TVkPipelineCreateFlags(0),
+                                             fComputeShaderStage,
+                                             fPipelineLayout,
+                                             nil,
+                                             0);
+  if aPhysics then begin
+   fVulkanDevice.DebugUtils.SetObjectName(fPipeline.Handle,VK_OBJECT_TYPE_PIPELINE,'TpvScene3DPlanet.TPhysicsMeshSlopeGeneration.fPipeline');
+  end else begin
+   fVulkanDevice.DebugUtils.SetObjectName(fPipeline.Handle,VK_OBJECT_TYPE_PIPELINE,'TpvScene3DPlanet.TVisualMeshSlopeGeneration.fPipeline');
+  end;
+
+  fPushConstants.TileMapResolution:=fPlanet.fTileMapResolution;
+  if aPhysics then begin
+   fPushConstants.TileResolution:=fPlanet.fPhysicsTileResolution;
+  end else begin
+   fPushConstants.TileResolution:=fPlanet.fVisualTileResolution;
+  end;
+
+ end;
+
+end;
+
+destructor TpvScene3DPlanet.TMeshSlopeGeneration.Destroy;
+begin
+
+ FreeAndNil(fPipeline);
+
+ FreeAndNil(fDescriptorSet);
+
+ FreeAndNil(fDescriptorPool);
+
+ FreeAndNil(fPipelineLayout);
+
+ FreeAndNil(fDescriptorSetLayout);
+
+ FreeAndNil(fComputeShaderStage);
+
+ FreeAndNil(fComputeShaderModule);
+
+ inherited Destroy;
+
+end;
+
+procedure TpvScene3DPlanet.TMeshSlopeGeneration.Execute(const aCommandBuffer:TpvVulkanCommandBuffer);
+var BufferMemoryBarriers:array[0..2] of TVkBufferMemoryBarrier;
+begin
+
+ if fPhysics then begin
+  fPlanet.fVulkanDevice.DebugUtils.CmdBufLabelBegin(aCommandBuffer,'Planet PhysicsMeshSlopeGeneration',[0.5,0.75,0.75,1.0]);
+ end else begin
+  fPlanet.fVulkanDevice.DebugUtils.CmdBufLabelBegin(aCommandBuffer,'Planet VisualMeshSlopeGeneration',[0.75,0.5,0.75,1.0]);
+ end;
+
+ if fPhysics then begin
+
+  BufferMemoryBarriers[0]:=TVkBufferMemoryBarrier.Create(TVkAccessFlags(VK_ACCESS_SHADER_READ_BIT) or TVkAccessFlags(VK_ACCESS_SHADER_WRITE_BIT),
+                                                         TVkAccessFlags(VK_ACCESS_SHADER_READ_BIT) or TVkAccessFlags(VK_ACCESS_SHADER_WRITE_BIT),
+                                                         VK_QUEUE_FAMILY_IGNORED,
+                                                         VK_QUEUE_FAMILY_IGNORED,
+                                                         fPlanet.fData.fPhysicsMeshVertexBuffer.Handle,
+                                                         0,
+                                                         VK_WHOLE_SIZE);
+
+  BufferMemoryBarriers[1]:=TVkBufferMemoryBarrier.Create(TVkAccessFlags(VK_ACCESS_SHADER_READ_BIT) or TVkAccessFlags(VK_ACCESS_SHADER_WRITE_BIT),
+                                                         TVkAccessFlags(VK_ACCESS_SHADER_READ_BIT) or TVkAccessFlags(VK_ACCESS_SHADER_WRITE_BIT),
+                                                         VK_QUEUE_FAMILY_IGNORED,
+                                                         VK_QUEUE_FAMILY_IGNORED,
+                                                         fPlanet.fData.fPhysicsMeshSlopeBuffer.Handle,
+                                                         0,
+                                                         VK_WHOLE_SIZE);      
+
+ end else begin
+
+  BufferMemoryBarriers[0]:=TVkBufferMemoryBarrier.Create(TVkAccessFlags(VK_ACCESS_SHADER_READ_BIT) or TVkAccessFlags(VK_ACCESS_SHADER_WRITE_BIT),
+                                                         TVkAccessFlags(VK_ACCESS_TRANSFER_READ_BIT),
+                                                         VK_QUEUE_FAMILY_IGNORED,
+                                                         VK_QUEUE_FAMILY_IGNORED,
+                                                         fPlanet.fData.fVisualMeshSlopeBuffers[(fPlanet.fData.fVisualMeshVertexBufferUpdateIndex+1) and 1].Handle,
+                                                         0,
+                                                         VK_WHOLE_SIZE);
+
+  BufferMemoryBarriers[1]:=TVkBufferMemoryBarrier.Create(TVkAccessFlags(VK_ACCESS_SHADER_READ_BIT) or TVkAccessFlags(VK_ACCESS_SHADER_WRITE_BIT),
+                                                         TVkAccessFlags(VK_ACCESS_TRANSFER_WRITE_BIT),
+                                                         VK_QUEUE_FAMILY_IGNORED,
+                                                         VK_QUEUE_FAMILY_IGNORED,
+                                                         fPlanet.fData.fVisualMeshSlopeBuffers[fPlanet.fData.fVisualMeshVertexBufferUpdateIndex].Handle,
+                                                         0,
+                                                         VK_WHOLE_SIZE);
+
+ end;
+
+ BufferMemoryBarriers[2]:=TVkBufferMemoryBarrier.Create(TVkAccessFlags(VK_ACCESS_SHADER_READ_BIT) or TVkAccessFlags(VK_ACCESS_SHADER_WRITE_BIT),
+                                                        TVkAccessFlags(VK_ACCESS_SHADER_READ_BIT) or TVkAccessFlags(VK_ACCESS_SHADER_WRITE_BIT),
+                                                        VK_QUEUE_FAMILY_IGNORED,
+                                                        VK_QUEUE_FAMILY_IGNORED,
+                                                        fPlanet.fData.fTileDirtyQueueBuffer.Handle,
+                                                        0,
+                                                        VK_WHOLE_SIZE);
+
+ aCommandBuffer.CmdPipelineBarrier(TVkPipelineStageFlags(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT),
+                                   TVkPipelineStageFlags(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT),
+                                   0,
+                                   0,nil,
+                                   3,@BufferMemoryBarriers[0],
+                                   0,nil);
+
+ aCommandBuffer.CmdBindPipeline(VK_PIPELINE_BIND_POINT_COMPUTE,fPipeline.Handle);
+
+ aCommandBuffer.CmdBindDescriptorSets(VK_PIPELINE_BIND_POINT_COMPUTE,
+                                      fPipelineLayout.Handle,
+                                      0,
+                                      1,
+                                      @fDescriptorSet.Handle,
+                                      0,
+                                      nil);
+
+ aCommandBuffer.CmdPushConstants(fPipelineLayout.Handle,
+                                 TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),
+                                 0,
+                                 SizeOf(TPushConstants),
+                                 @fPushConstants);   
+
+ if fVulkanDevice.PhysicalDevice.RenderDocDetected then begin
+
+  if fPlanet.fData.fCountDirtyTiles>0 then begin
+
+   if fPhysics then begin
+    aCommandBuffer.CmdDispatch(((fPlanet.fPhysicsTileResolution*fPlanet.fPhysicsTileResolution)+255) shr 8,
+                               fPlanet.fData.fCountDirtyTiles,
+                               1);
+   end else begin
+    aCommandBuffer.CmdDispatch(((fPlanet.fVisualTileResolution*fPlanet.fVisualTileResolution)+255) shr 8,
+                               fPlanet.fData.fCountDirtyTiles,
+                               1);
+   end;
+
+  end;
+
+ end else begin
+
+  if fPhysics then begin
+   aCommandBuffer.CmdDispatchIndirect(fPlanet.fData.fTileDirtyQueueBuffer.Handle,SizeOf(TVkDispatchIndirectCommand));
+  end else begin
+   aCommandBuffer.CmdDispatchIndirect(fPlanet.fData.fTileDirtyQueueBuffer.Handle,0);
+  end;
+
+ end;
+
+ if fPhysics then begin
+
+  BufferMemoryBarriers[0]:=TVkBufferMemoryBarrier.Create(TVkAccessFlags(VK_ACCESS_SHADER_READ_BIT) or TVkAccessFlags(VK_ACCESS_SHADER_WRITE_BIT),
+                                                         TVkAccessFlags(VK_ACCESS_SHADER_READ_BIT) or TVkAccessFlags(VK_ACCESS_SHADER_WRITE_BIT) or TVkAccessFlags(VK_ACCESS_HOST_READ_BIT) or TVkAccessFlags(VK_ACCESS_TRANSFER_READ_BIT),
+                                                         VK_QUEUE_FAMILY_IGNORED,
+                                                         VK_QUEUE_FAMILY_IGNORED,
+                                                         fPlanet.fData.fPhysicsMeshSlopeBuffer.Handle,
+                                                         0,
+                                                         VK_WHOLE_SIZE);
+
+ end else begin
+
+  BufferMemoryBarriers[0]:=TVkBufferMemoryBarrier.Create(TVkAccessFlags(VK_ACCESS_SHADER_READ_BIT) or TVkAccessFlags(VK_ACCESS_SHADER_WRITE_BIT),
+                                                         TVkAccessFlags(VK_ACCESS_SHADER_READ_BIT) or TVkAccessFlags(VK_ACCESS_SHADER_WRITE_BIT),
+                                                         VK_QUEUE_FAMILY_IGNORED,
+                                                         VK_QUEUE_FAMILY_IGNORED,
+                                                         fPlanet.fData.fVisualMeshSlopeBuffers[fPlanet.fData.fVisualMeshVertexBufferUpdateIndex].Handle,
+                                                         0,
+                                                         VK_WHOLE_SIZE);
+
+ end;
+
+ aCommandBuffer.CmdPipelineBarrier(TVkPipelineStageFlags(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT),
+                                   TVkPipelineStageFlags(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT) or TVkPipelineStageFlags(VK_PIPELINE_STAGE_HOST_BIT) or TVkPipelineStageFlags(VK_PIPELINE_STAGE_TRANSFER_BIT),
+                                   0,
+                                   0,nil,
+                                   1,@BufferMemoryBarriers[0],
+                                   0,nil);
+
+ fPlanet.fVulkanDevice.DebugUtils.CmdBufLabelEnd(aCommandBuffer);
+
+end;  
 
 { TpvScene3DPlanet.TMeshDistanceGeneration }
 
@@ -13317,11 +14064,13 @@ end;
 { TpvScene3DPlanet }
 
 constructor TpvScene3DPlanet.Create(const aScene3D:TObject;
+                                    const aBrushes:TpvScene3DPlanet.TBrushes;
                                     const aHeightMapResolution:TpvInt32;
                                     const aVisualResolution:TpvSizeInt;
                                     const aPhysicsResolution:TpvSizeInt;
                                     const aBottomRadius:TpvFloat;
-                                    const aTopRadius:TpvFloat);
+                                    const aTopRadius:TpvFloat;
+                                    const aGenerateLODIndices:Boolean);
 var InFlightFrameIndex,Index,Resolution:TpvSizeInt;
 //  ta,tb:TpvHighResolutionTime;
     TileLODLevels:TTileLODLevels;
@@ -13334,6 +14083,8 @@ begin
  fVulkanDevice:=TpvScene3D(fScene3D).VulkanDevice;
 
  fAtmosphere:=nil;
+
+ fBrushes:=aBrushes;
 
  fHeightMapResolution:=RoundUpToPowerOfTwo(Min(Max(aHeightMapResolution,128),8192));
 
@@ -13355,6 +14106,8 @@ begin
 
  fPhysicsResolution:=fTileMapResolution*fPhysicsTileResolution;
 
+ fPhysicsHeightMapResolution:=RoundUpToPowerOfTwo(Min(Max(fPhysicsResolution,128),8192));
+
  fGrassInvocationVariants:=Max(1,fHeightMapResolution div fVisualResolution);
  fGrassInvocationVariants:=fGrassInvocationVariants*fGrassInvocationVariants;
 
@@ -13365,6 +14118,8 @@ begin
  fMaxGrassVertices:=Max(65536,(512 shl 20) div SizeOf(TpvScene3DPlanet.TGrassVertex));
 
  fMaxGrassIndices:=Max(65536,(256 shl 20) div SizeOf(TpvUInt32));
+
+ fGenerateLODIndices:=aGenerateLODIndices;
 
  fTiledVisualMeshIndices:=TMeshIndices.Create;
 
@@ -13509,6 +14264,42 @@ begin
 
  end;
 
+ if assigned(fVulkanDevice) then begin
+
+  fBrushesTexture:=TpvVulkanTexture.CreateFromMemory(fVulkanDevice,
+                                                     fVulkanUniversalQueue,
+                                                     fVulkanUniversalCommandBuffer,
+                                                     fVulkanUniversalFence,
+                                                     fVulkanUniversalQueue,
+                                                     fVulkanUniversalCommandBuffer,
+                                                     fVulkanUniversalFence,
+                                                     VK_FORMAT_R8_UNORM,
+                                                     VK_SAMPLE_COUNT_1_BIT,
+                                                     256,
+                                                     256,
+                                                     0,
+                                                     256,
+                                                     1,
+                                                     1,
+                                                     [TpvVulkanTextureUsageFlag.Sampled,TpvVulkanTextureUsageFlag.TransferDst],
+                                                     @fBrushes,
+                                                     SizeOf(TpvScene3DPlanet.TBrushes),
+                                                     false,
+                                                     false,
+                                                     0,
+                                                     true,
+                                                     false,
+                                                     false,
+                                                     0);
+  fVulkanDevice.DebugUtils.SetObjectName(fBrushesTexture.Image.Handle,VK_OBJECT_TYPE_IMAGE,'TpvScene3DPlanet.fBrushesTexture.Image');
+  fVulkanDevice.DebugUtils.SetObjectName(fBrushesTexture.ImageView.Handle,VK_OBJECT_TYPE_IMAGE_VIEW,'TpvScene3DPlanet.fBrushesTexture.ImageView');
+
+ end else begin
+
+  fBrushesTexture:=nil;
+
+ end;
+
  fData:=TData.Create(self,-1);
 
  fInFlightFrameDataList:=TInFlightFrameDataList.Create(true);
@@ -13551,6 +14342,8 @@ begin
  fVisualMeshVertexGeneration:=TMeshVertexGeneration.Create(self,false);
 
  fPhysicsMeshVertexGeneration:=TMeshVertexGeneration.Create(self,true);
+
+ fPhysicsMeshSlopeGeneration:=TMeshSlopeGeneration.Create(self,true);
 
  fVisualMeshDistanceGeneration:=TMeshDistanceGeneration.Create(self);
 
@@ -13717,6 +14510,8 @@ destructor TpvScene3DPlanet.Destroy;
 var InFlightFrameIndex,Index:TpvSizeInt;
 begin
 
+ FreeAndNil(fBrushesTexture);
+ 
  if assigned(fRaytracingTiles) then begin
   try
    if assigned(pvApplication) then begin
@@ -13794,6 +14589,8 @@ begin
  FreeAndNil(fVulkanMemoryStagingQueue);
 
  FreeAndNil(fPhysicsMeshVertexGeneration);
+
+ FreeAndNil(fPhysicsMeshSlopeGeneration);
 
  FreeAndNil(fVisualMeshVertexGeneration);
 
@@ -13980,7 +14777,11 @@ begin
 
  aCountMeshIndices:=0;
 
- aCountMeshLODLevels:=Max(1,IntLog2(aTileMapResolution));
+ if fGenerateLODIndices then begin
+  aCountMeshLODLevels:=Max(1,IntLog2(aTileMapResolution));
+ end else begin
+  aCountMeshLODLevels:=1;
+ end;
 
  aMeshLODOffsets:=nil;
  SetLength(aMeshLODOffsets,aCountMeshLODLevels);
@@ -14854,7 +15655,7 @@ begin
 
 end;
 
-procedure TpvScene3DPlanet.Flatten(const aVector:TpvVector3;const aInnerRadius,aOuterRadius,aTargetHeight:TpvFloat);
+procedure TpvScene3DPlanet.Flatten(const aVector:TpvVector3;const aInnerRadius,aOuterRadius,aTargetHeight:TpvFloat;const aBrushIndex:TpvUInt32);
 begin
 
  if assigned(fVulkanDevice) then begin
@@ -14862,13 +15663,15 @@ begin
   BeginUpdate;
   try
 
-   fHeightMapFlatten.fPushConstants.Vector.xyz:=aVector;
+   fHeightMapFlatten.fPushConstants.Vector:=TpvVector4.InlineableCreate(aVector,aOuterRadius);
 
    fHeightMapFlatten.fPushConstants.InnerRadius:=aInnerRadius;
 
    fHeightMapFlatten.fPushConstants.OuterRadius:=aOuterRadius;
 
    fHeightMapFlatten.fPushConstants.TargetHeight:=aTargetHeight;
+
+   fHeightMapFlatten.fPushConstants.BrushIndex:=aBrushIndex;
 
    fHeightMapFlatten.Execute(fVulkanComputeCommandBuffer);
 
@@ -14932,10 +15735,10 @@ procedure TpvScene3DPlanet.Update(const aInFlightFrameIndex:TpvSizeInt);
 var QueueTileIndex:TpvSizeInt;
     TileIndex:TpvUInt32;
     Source:Pointer;
-    UpdateRenderIndex,UpdateWaterVisibility:Boolean;
+    UpdateRenderIndex,UpdateWaterVisibility,
+    UpdatedHeightMap,UpdatedGrass:Boolean;
     RaytracingTile:TRaytracingTile;
     CurrentRaytracingTileQueue:TRaytracingTiles;
-    UpdatedHeightMap,UpdatedGrass:Boolean;
 begin
 
  fData.fCountDirtyTiles:=0;
@@ -14956,7 +15759,7 @@ begin
    try
 
     if fData.fModifyGrassMapActive then begin
-     fGrassMapModification.Execute(fVulkanComputeCommandBuffer);
+     fGrassMapModification.Execute(fVulkanComputeCommandBuffer);     
     end;
 
    finally
@@ -15025,6 +15828,8 @@ begin
      fVisualMeshDistanceGeneration.Execute(fVulkanComputeCommandBuffer);
 
      fPhysicsMeshVertexGeneration.Execute(fVulkanComputeCommandBuffer);
+
+     fPhysicsMeshSlopeGeneration.Execute(fVulkanComputeCommandBuffer);
 
      fData.fVisualMeshVertexBufferNextRenderIndex:=fData.fVisualMeshVertexBufferUpdateIndex and 1;
 
@@ -15106,6 +15911,14 @@ begin
                                           fData.fPhysicsMeshVertices.ItemArray[0],
                                           fTileMapResolution*fTileMapResolution*fPhysicsTileResolution*fPhysicsTileResolution*SizeOf(TMeshVertex));
 
+     fVulkanDevice.MemoryStaging.Download(fVulkanComputeQueue,
+                                          fVulkanComputeCommandBuffer,
+                                          fVulkanComputeFence,
+                                          fData.fPhysicsMeshSlopeBuffer,
+                                          0,
+                                          fData.fPhysicsMeshSlopes.ItemArray[0],
+                                          fTileMapResolution*fTileMapResolution*fPhysicsTileResolution*fPhysicsTileResolution*SizeOf(TMeshSlope));
+
     end else begin
 
      if (TpvVulkanBufferFlag.PersistentMapped in fData.fPhysicsMeshVertexBuffer.Flags) and
@@ -15128,6 +15941,23 @@ begin
        raise EpvVulkanException.Create('Vulkan buffer memory block map failed');
       end;
 
+      Source:=fData.fPhysicsMeshSlopeBuffer.Memory.MapMemory;
+      if assigned(Source) then begin
+       try
+        fData.fPhysicsMeshSlopeBuffer.Flush(Source,0,fData.fPhysicsMeshSlopeBuffer.Size);
+        for QueueTileIndex:=0 to TpvSizeInt(fData.fCountDirtyTiles)-1 do begin
+         TileIndex:=fData.fTileDirtyQueueItems.ItemArray[QueueTileIndex];
+         Move(Pointer(TpvPtrUInt(TpvPtrUInt(Source)+TpvPtrUInt(TileIndex*fPhysicsTileResolution*fPhysicsTileResolution*SizeOf(TMeshSlope))))^,
+              fData.fPhysicsMeshSlopes.ItemArray[TileIndex*fPhysicsTileResolution*fPhysicsTileResolution],
+              fPhysicsTileResolution*fPhysicsTileResolution*SizeOf(TMeshSlope));
+        end;
+       finally
+        fData.fPhysicsMeshSlopeBuffer.Memory.UnmapMemory;
+       end;
+      end else begin
+       raise EpvVulkanException.Create('Vulkan buffer memory block map failed');
+      end;
+
      end else begin
 
       fVulkanMemoryStagingQueue.Clear;
@@ -15138,6 +15968,10 @@ begin
                                                   TileIndex*fPhysicsTileResolution*fPhysicsTileResolution*SizeOf(TMeshVertex),
                                                   fData.fPhysicsMeshVertices.ItemArray[TileIndex*fPhysicsTileResolution*fPhysicsTileResolution],
                                                   fPhysicsTileResolution*fPhysicsTileResolution*SizeOf(TMeshVertex));
+        fVulkanMemoryStagingQueue.EnqueueDownload(fData.fPhysicsMeshSlopeBuffer,
+                                                  TileIndex*fPhysicsTileResolution*fPhysicsTileResolution*SizeOf(TMeshSlope),
+                                                  fData.fPhysicsMeshSlopes.ItemArray[TileIndex*fPhysicsTileResolution*fPhysicsTileResolution],
+                                                  fPhysicsTileResolution*fPhysicsTileResolution*SizeOf(TMeshSlope));
        end;
       finally
        fVulkanDevice.MemoryStaging.ProcessQueue(fVulkanComputeQueue,
@@ -15504,6 +16338,42 @@ begin
 
 end;
 
+procedure TpvScene3DPlanet.ExportPhysicsMeshToBIN(const aStream:TStream);
+var CountVertices,CountIndices,IndexBuffer:TpvUInt32;
+    Index:TpvSizeInt;
+    Vertex:TpvScene3DPlanet.PMeshVertex;
+begin
+
+ CountVertices:=fData.fPhysicsMeshVertices.Count;
+ aStream.WriteBuffer(CountVertices,SizeOf(TpvUInt32));
+
+ CountIndices:=fData.fPlanet.PhysicsMeshLODCounts[0];
+ aStream.WriteBuffer(CountIndices,SizeOf(TpvUInt32));
+
+ for Index:=0 to fData.fPhysicsMeshVertices.Count-1 do begin
+  Vertex:=@fData.fPhysicsMeshVertices.ItemArray[Index];
+  aStream.WriteBuffer(Vertex^.Position,SizeOf(TpvVector3));
+  aStream.WriteBuffer(Vertex^.OctahedralEncodedNormal,SizeOf(TpvInt16Vector2));
+ end;
+
+ for Index:=0 to fData.fPhysicsMeshIndices.Count-1 do begin
+  IndexBuffer:=fTiledPhysicsMeshIndices.ItemArray[fData.fPlanet.PhysicsMeshLODOffsets[0]+Index];
+  aStream.WriteBuffer(IndexBuffer,SizeOf(TpvUInt32));
+ end;
+ 
+end;
+
+procedure TpvScene3DPlanet.ExportPhysicsMeshToBIN(const aFileName:TpvUTF8String);
+var FileStream:TFileStream;
+begin
+ FileStream:=TFileStream.Create(aFileName,fmCreate);
+ try
+  ExportPhysicsMeshToBIN(FileStream);
+ finally
+  FreeAndNil(FileStream);
+ end;
+end;
+
 procedure TpvScene3DPlanet.ExportPhysicsMeshToOBJ(const aStream:TStream);
  procedure WriteLine(const aString:TpvUTF8String);
  const NewLine:array[0..1] of AnsiChar=#13#10;
@@ -15526,10 +16396,10 @@ begin
   WriteLine('vn '+ConvertDoubleToString(Normal.x)+' '+ConvertDoubleToString(Normal.y)+' '+ConvertDoubleToString(Normal.z));
  end;
  Index:=0;
- while (Index+2)<fData.fPhysicsMeshIndices.Count do begin
-  WriteLine('f '+IntToStr(fData.fPhysicsMeshIndices.ItemArray[Index+0]+1)+'//'+IntToStr(fData.fPhysicsMeshIndices.ItemArray[Index+0]+1)+' '+
-                 IntToStr(fData.fPhysicsMeshIndices.ItemArray[Index+1]+1)+'//'+IntToStr(fData.fPhysicsMeshIndices.ItemArray[Index+1]+1)+' '+
-                 IntToStr(fData.fPhysicsMeshIndices.ItemArray[Index+2]+1)+'//'+IntToStr(fData.fPhysicsMeshIndices.ItemArray[Index+2]+1));
+ while (Index+2)<fData.fPlanet.PhysicsMeshLODCounts[0] do begin
+  WriteLine('f '+IntToStr(fTiledPhysicsMeshIndices.ItemArray[fData.fPlanet.PhysicsMeshLODOffsets[0]+Index+0]+1)+'//'+IntToStr(fTiledPhysicsMeshIndices.ItemArray[fData.fPlanet.PhysicsMeshLODOffsets[0]+Index+0]+1)+' '+
+                 IntToStr(fTiledPhysicsMeshIndices.ItemArray[fData.fPlanet.PhysicsMeshLODOffsets[0]+Index+1]+1)+'//'+IntToStr(fTiledPhysicsMeshIndices.ItemArray[fData.fPlanet.PhysicsMeshLODOffsets[0]+Index+1]+1)+' '+
+                 IntToStr(fTiledPhysicsMeshIndices.ItemArray[fData.fPlanet.PhysicsMeshLODOffsets[0]+Index+2]+1)+'//'+IntToStr(fTiledPhysicsMeshIndices.ItemArray[fData.fPlanet.PhysicsMeshLODOffsets[0]+Index+2]+1));
   inc(Index,3);
  end;
 end;
@@ -15564,6 +16434,28 @@ begin
               ((TileY*fPhysicsTileResolution)+TileX);
 
  result:=@fData.fPhysicsMeshVertices.ItemArray[VertexIndex];
+
+end;
+
+function TpvScene3DPlanet.GetPhysicsSlope(const aX,aY:TpvInt32):TpvScene3DPlanet.TMeshSlope;
+var TileIndex,VertexIndex:TpvSizeInt;
+    GlobalX,GlobalY,TileMapX,TileMapY,TileX,TileY:TpvInt32;
+begin
+
+ WrapOctahedralTexelCoordinatesEx(aX,aY,fPhysicsResolution,fPhysicsResolution,GlobalX,GlobalY);
+
+ TileMapX:=GlobalX div fPhysicsTileResolution;
+ TileMapY:=GlobalY div fPhysicsTileResolution;
+
+ TileX:=GlobalX-(TileMapX*fPhysicsTileResolution);
+ TileY:=GlobalY-(TileMapY*fPhysicsTileResolution);
+
+ TileIndex:=(TileMapY*fTileMapResolution)+TileMapX;
+
+ VertexIndex:=(TileIndex*fPhysicsTileResolution*fPhysicsTileResolution)+
+              ((TileY*fPhysicsTileResolution)+TileX);
+
+ result:=fData.fPhysicsMeshSlopes.ItemArray[VertexIndex];
 
 end;
 
@@ -15860,6 +16752,37 @@ function TpvScene3DPlanet.GetUV(const aPosition:TpvVector3):TpvVector2;
 begin
  result:=WrapOctahedralCoordinates(OctEqualAreaUnsignedEncode(aPosition.Normalize));
 end;  
+
+function TpvScene3DPlanet.GetSlope(const aUV:TpvVector2):TpvFloat;
+var x,y,fx,fxi,fy:TpvDouble;
+    ix,iy:TpvInt32;
+    v0,v1,v2,v3:TpvScene3DPlanet.TMeshSlope;
+begin
+
+ x:=aUV.x*fPhysicsResolution;
+ y:=aUV.y*fPhysicsResolution;
+
+ ix:=Floor(x);
+ iy:=Floor(y);
+
+ fx:=x-ix;
+ fy:=y-iy;
+
+ v0:=GetPhysicsSlope(ix,iy);
+ v1:=GetPhysicsSlope(ix+1,iy);
+ v2:=GetPhysicsSlope(ix,iy+1);
+ v3:=GetPhysicsSlope(ix+1,iy+1);
+
+ fxi:=1.0-fx;
+
+ result:=(((v0*fxi)+(v1*fx))*(1.0-fy))+(((v2*fxi)+(v3*fx))*fy);
+
+end;
+
+function TpvScene3DPlanet.GetSlope(const aNormal:TpvVector3):TpvFloat;
+begin
+ result:=GetSlope(OctEqualAreaUnsignedEncode(aNormal));
+end;
 
 { TpvScene3DPlanets }
 

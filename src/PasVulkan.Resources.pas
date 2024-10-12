@@ -122,7 +122,7 @@ type EpvResource=class(Exception);
 
      TpvMetaResourceClass=class of TpvMetaResource;
 
-     TpvMetaResource=class(TpvPooledObject)
+     TpvMetaResource=class //(TpvPooledObject)
       private
       protected
        fUUID:TpvUUID;
@@ -643,7 +643,9 @@ begin
  if not assigned(fMetaResource) then begin
   fMetaResource:=GetMetaResourceClass.CreateTemporary;
  end;
- TPasMPInterlocked.Write(TObject(fMetaResource.fResource),TObject(self));
+ if assigned(fMetaResource) then begin
+  TPasMPInterlocked.Write(TObject(fMetaResource.fResource),TObject(self));
+ end;
 
  OldReferenceCounter:=fReferenceCounter;
  try
@@ -900,7 +902,7 @@ begin
  if pvApplication.Assets.ExistAsset(String(SanitizedFileName)) then begin
   result:=pvApplication.Assets.GetAssetStream(String(SanitizedFileName));
   fIsAsset:=true;
-  fAssetBasePath:=ExtractFilePath(SanitizedFileName);
+  fAssetBasePath:=PasVulkan.Utils.ExtractFilePath(SanitizedFileName);
  end else begin
   if FileExists(String(SanitizedFileName)) then begin
    result:=TFileStream.Create(String(SanitizedFileName),fmOpenRead);

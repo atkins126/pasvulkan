@@ -368,11 +368,19 @@ type EpvScene3D=class(Exception);
             end;
             PMeshComputeStagePushConstants=^TMeshComputeStagePushConstants;
             TMeshStagePushConstants=record
+
              ViewBaseIndex:UInt32;
              CountViews:UInt32;
              CountAllViews:UInt32;
              FrameIndex:UInt32;
+
              Jitter:TpvVector4;
+
+             TimeSeconds:TpvUInt32;
+             TimeFractionalSecond:TpvFloat;
+             Width:TpvUInt32;
+             Height:TpvUInt32;
+
             end;
             PMeshStagePushConstants=^TMeshStagePushConstants;
             { TVertex }
@@ -828,6 +836,7 @@ type EpvScene3D=class(Exception);
               procedure LoadFromStream(const aStream:TStream);
               procedure SaveToStream(const aStream:TStream);
               procedure AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceImage:TPasGLTF.TImage);
+              procedure DumpMemoryUsage(const aStringList:TStringList;var aTotalSizeVRAM,aTotalSizeRAM:TpvUInt64);
              published
               property Kind:TKind read fKind write fKind;
               property ResourceDataStream:TMemoryStream read fResourceDataStream write fResourceDataStream;
@@ -918,6 +927,9 @@ type EpvScene3D=class(Exception);
               property Sampler:TSampler read fSampler write fSampler;
             end;
             TTextures=TpvObjectGenericList<TTexture>;
+
+            { TMaterial }
+
             TMaterial=class(TBaseObject)
              public
               type TAlphaMode=
@@ -1036,6 +1048,25 @@ type EpvScene3D=class(Exception);
                     Active:boolean;
                     Dispersion:TpvFloat;
                    end;
+                   THologram=record
+                    Active:boolean;
+                    Direction:TpvVector3;
+                    FlickerSpeed:TpvFloat;
+                    FlickerMin:TpvFloat;
+                    FlickerMax:TpvFloat;
+                    MainColorFactor:TpvVector4;
+                    RimColorFactor:TpvVector4;
+                    RimPower:TpvFloat;
+                    RimThreshold:TpvFloat;
+                    ScanTiling:TpvFloat;
+                    ScanSpeed:TpvFloat;
+                    ScanMin:TpvFloat;
+                    ScanMax:TpvFloat;
+                    GlowTiling:TpvFloat;
+                    GlowSpeed:TpvFloat;
+                    GlowMin:TpvFloat;
+                    GlowMax:TpvFloat;
+                   end;
                    TShaderData=packed record
                     case boolean of
                      false:(
@@ -1058,6 +1089,38 @@ type EpvScene3D=class(Exception);
                        Unused1:TpvUInt32;
                        Unused2:TpvUInt32;
                       // uvec4 Dispersion End
+                      // uvec4 Hologram Blocks begin
+                       HologramDirectionX:TpvUInt16; // b0.x
+                       HologramDirectionY:TpvUInt16; // b0.y
+                       HologramDirectionZ:TpvUInt16; // b0.z
+                       HologramFlickerSpeed:TpvUInt16; // b0.w
+
+                       HologramFlickerMin:TpvUInt16; // b1.x
+                       HologramFlickerMax:TpvUInt16; // b1.y
+                       HologramMainColorFactorR:TpvUInt16; // b1.z
+                       HologramMainColorFactorG:TpvUInt16; // b1.w
+
+                       HologramMainColorFactorB:TpvUInt16; // b2.x
+                       HologramMainColorFactorA:TpvUInt16; // b2.y
+                       HologramRimColorFactorR:TpvUInt16; // b2.z
+                       HologramRimColorFactorG:TpvUInt16; // b2.w
+
+                       HologramRimColorFactorB:TpvUInt16; // b3.x
+                       HologramRimColorFactorA:TpvUInt16; // b3.y
+                       HologramRimPower:TpvUInt16; // b3.z
+                       HologramRimThreshold:TpvUInt16; // b3.w
+
+                       HologramScanTiling:TpvUInt16; // b4.x
+                       HologramScanSpeed:TpvUInt16; // b4.y
+                       HologramScanMin:TpvUInt16; // b4.z
+                       HologramScanMax:TpvUInt16; // b4.w
+
+                       HologramGlowTiling:TpvUInt16; // b5.x
+                       HologramGlowSpeed:TpvUInt16; // b5.y
+                       HologramGlowMin:TpvUInt16; // b5.z
+                       HologramGlowMax:TpvUInt16; // b5.w
+
+                      // uvec4 Hologram Blocks end
                       // uvec4 AlphaCutOffFlags begin
                        AlphaCutOff:TpvFloat; // for with uintBitsToFloat on GLSL code side
                        Flags:TpvUInt32;
@@ -1098,6 +1161,7 @@ type EpvScene3D=class(Exception);
                      Volume:TVolume;
                      Anisotropy:TAnisotropy;
                      Dispersion:TDispersion;
+                     Hologram:THologram;
                      AnimatedTextureMask:TpvUInt64;
                      function GetTextureTransform(const aTextureIndex:TpvScene3D.TTextureIndex):TpvScene3D.TMaterial.TTextureReference.PTransform;
                    end;
@@ -1186,6 +1250,25 @@ type EpvScene3D=class(Exception);
                       Active:false;
                       Dispersion:0.0;
                      );
+                     Hologram:(
+                      Active:false;
+                      Direction:(x:0.0;y:0.0;z:0.0);
+                      FlickerSpeed:0.0;
+                      FlickerMin:0.0;
+                      FlickerMax:0.0;
+                      MainColorFactor:(x:1.0;y:1.0;z:1.0;w:1.0);
+                      RimColorFactor:(x:1.0;y:1.0;z:1.0;w:1.0);
+                      RimPower:1.0;
+                      RimThreshold:1.0;
+                      ScanTiling:1.0;
+                      ScanSpeed:1.0;
+                      ScanMin:0.0;
+                      ScanMax:1.0;
+                      GlowTiling:1.0;
+                      GlowSpeed:1.0;
+                      GlowMin:0.0;
+                      GlowMax:1.0;
+                     );
                      AnimatedTextureMask:0;
                     );
                    DefaultShaderData:TShaderData=
@@ -1205,6 +1288,30 @@ type EpvScene3D=class(Exception);
                      Unused0:0;
                      Unused1:0;
                      Unused2:0;
+                     HologramDirectionX:0;
+                     HologramDirectionY:0;
+                     HologramDirectionZ:0;
+                     HologramFlickerSpeed:0;
+                     HologramFlickerMin:0;
+                     HologramFlickerMax:0;
+                     HologramMainColorFactorR:0;
+                     HologramMainColorFactorG:0;
+                     HologramMainColorFactorB:0;
+                     HologramMainColorFactorA:0;
+                     HologramRimColorFactorR:0;
+                     HologramRimColorFactorG:0;
+                     HologramRimColorFactorB:0;
+                     HologramRimColorFactorA:0;
+                     HologramRimPower:0;
+                     HologramRimThreshold:0;
+                     HologramScanTiling:0;
+                     HologramScanSpeed:0;
+                     HologramScanMin:0;
+                     HologramScanMax:0;
+                     HologramGlowTiling:0;
+                     HologramGlowSpeed:0;
+                     HologramGlowMin:0;                     
+                     HologramGlowMax:0;
                      AlphaCutOff:1.0;
                      Flags:0;
                      Textures0:0;
@@ -1256,6 +1363,7 @@ type EpvScene3D=class(Exception);
               procedure PrepareSaveToStream(const aImages,aSamplers,aTextures,aMaterials:TpvObjectList);
               procedure SaveToStream(const aStream:TStream;const aImages,aSamplers,aTextures:TpvObjectList);
               procedure AssignFromGLTF(const aSourceDocument:TPasGLTF.TDocument;const aSourceMaterial:TPasGLTF.TMaterial;const aTextureMap:TTextures);
+              procedure LoadHologramFromJSON(const aJSONItem:TPasJSONItem);
               procedure FillShaderData;
              public
               property Data:PData read fDataPointer;
@@ -1746,6 +1854,24 @@ type EpvScene3D=class(Exception);
                                    PointerMaterialPBRAnisotropyStrength,
                                    PointerMaterialPBRAnisotropyRotation,
                                    PointerMaterialPBRDispersion,
+                                   PointerMaterialHologramDirection,        
+                                   PointerMaterialHologramFlickerSpeed,
+                                   PointerMaterialHologramFlickerMin,
+                                   PointerMaterialHologramFlickerMax,
+                                   PointerMaterialHologramMainColor,
+                                   PointerMaterialHologramMainAlpha,
+                                   PointerMaterialHologramRimColor,
+                                   PointerMaterialHologramRimAlpha,
+                                   PointerMaterialHologramRimPower,
+                                   PointerMaterialHologramRimThreshold,
+                                   PointerMaterialHologramScanTiling,
+                                   PointerMaterialHologramScanSpeed,
+                                   PointerMaterialHologramScanMin,
+                                   PointerMaterialHologramScanMax,
+                                   PointerMaterialHologramGlowTiling,
+                                   PointerMaterialHologramGlowSpeed,
+                                   PointerMaterialHologramGlowMin,
+                                   PointerMaterialHologramGlowMax,
                                    PointerTextureOffset,
                                    PointerTextureRotation,
                                    PointerTextureScale
@@ -1785,6 +1911,24 @@ type EpvScene3D=class(Exception);
                                     TTarget.PointerMaterialPBRAnisotropyStrength,
                                     TTarget.PointerMaterialPBRAnisotropyRotation,
                                     TTarget.PointerMaterialPBRDispersion,
+                                    TTarget.PointerMaterialHologramDirection,
+                                    TTarget.PointerMaterialHologramFlickerSpeed,
+                                    TTarget.PointerMaterialHologramFlickerMin,
+                                    TTarget.PointerMaterialHologramFlickerMax,
+                                    TTarget.PointerMaterialHologramMainColor,
+                                    TTarget.PointerMaterialHologramMainAlpha,
+                                    TTarget.PointerMaterialHologramRimColor,
+                                    TTarget.PointerMaterialHologramRimAlpha,
+                                    TTarget.PointerMaterialHologramRimPower,
+                                    TTarget.PointerMaterialHologramRimThreshold,
+                                    TTarget.PointerMaterialHologramScanTiling,
+                                    TTarget.PointerMaterialHologramScanSpeed,
+                                    TTarget.PointerMaterialHologramScanMin,
+                                    TTarget.PointerMaterialHologramScanMax,
+                                    TTarget.PointerMaterialHologramGlowTiling,
+                                    TTarget.PointerMaterialHologramGlowSpeed,
+                                    TTarget.PointerMaterialHologramGlowMin,
+                                    TTarget.PointerMaterialHologramGlowMax,
                                     TTarget.PointerTextureOffset,
                                     TTarget.PointerTextureRotation,
                                     TTarget.PointerTextureScale
@@ -2199,6 +2343,33 @@ type EpvScene3D=class(Exception);
                             property Complete:LongBool read fComplete write fComplete;
                           end;
                           TAnimations=array of TpvScene3D.TGroup.TInstance.TAnimation;
+                          { TAnimationState }
+                          TAnimationState=record
+                           public
+                            type TAnimationStateFlag=
+                                  (
+                                   Additive,
+                                   Complete,
+                                   Relative,
+                                   Wrapping,
+                                   Clamping
+                                  );
+                                 PAnimationStateFlag=^TAnimationStateFlag;
+                                 TAnimationStateFlags=set of TAnimationStateFlag;
+                           private
+                            fFactor:TpvFloat;
+                            fTime:TpvDouble;
+                            fShadowTime:TpvDouble;
+                            fFlags:TpvScene3D.TGroup.TInstance.TAnimationState.TAnimationStateFlags;
+                           public
+                            property Factor:TpvFloat read fFactor write fFactor;
+                            property Time:TpvDouble read fTime write fTime;
+                            property ShadowTime:TpvDouble read fShadowTime write fShadowTime;
+                            property Flags:TAnimationStateFlags read fFlags write fFlags;
+                          end;
+                          PAnimationState=^TAnimationState;
+                          TAnimationStates=array of TAnimationState;
+                          TPAnimationStates=array of PAnimationState;
                           { TNode }
                           TNode=class
                            public
@@ -2430,6 +2601,24 @@ type EpvScene3D=class(Exception);
                                    DefaultMaterialPBRAnisotropyStrength,
                                    DefaultMaterialPBRAnisotropyRotation,
                                    DefaultMaterialPBRDispersion,
+                                   DefaultMaterialHologramDirection,
+                                   DefaultMaterialHologramFlickerSpeed,
+                                   DefaultMaterialHologramFlickerMin,
+                                   DefaultMaterialHologramFlickerMax,
+                                   DefaultMaterialHologramMainColor,
+                                   DefaultMaterialHologramMainAlpha,
+                                   DefaultMaterialHologramRimColor,
+                                   DefaultMaterialHologramRimAlpha,
+                                   DefaultMaterialHologramRimPower,
+                                   DefaultMaterialHologramRimThreshold,
+                                   DefaultMaterialHologramScanTiling,
+                                   DefaultMaterialHologramScanSpeed,
+                                   DefaultMaterialHologramScanMin,
+                                   DefaultMaterialHologramScanMax,
+                                   DefaultMaterialHologramGlowTiling,
+                                   DefaultMaterialHologramGlowSpeed,
+                                   DefaultMaterialHologramGlowMin,
+                                   DefaultMaterialHologramGlowMax,
                                    DefaultTextureOffset,
                                    DefaultTextureRotation,
                                    DefaultTextureScale,
@@ -2459,6 +2648,24 @@ type EpvScene3D=class(Exception);
                                    MaterialPBRAnisotropyStrength,
                                    MaterialPBRAnisotropyRotation,
                                    MaterialPBRDispersion,
+                                   MaterialHologramDirection,
+                                   MaterialHologramFlickerSpeed,
+                                   MaterialHologramFlickerMin,
+                                   MaterialHologramFlickerMax,
+                                   MaterialHologramMainColor,
+                                   MaterialHologramMainAlpha,
+                                   MaterialHologramRimColor,
+                                   MaterialHologramRimAlpha,
+                                   MaterialHologramRimPower,
+                                   MaterialHologramRimThreshold,
+                                   MaterialHologramScanTiling,
+                                   MaterialHologramScanSpeed,
+                                   MaterialHologramScanMin,
+                                   MaterialHologramScanMax,
+                                   MaterialHologramGlowTiling,
+                                   MaterialHologramGlowSpeed,
+                                   MaterialHologramGlowMin,
+                                   MaterialHologramGlowMax,
                                    TextureOffset,
                                    TextureRotation,
                                    TextureScale
@@ -2496,6 +2703,24 @@ type EpvScene3D=class(Exception);
                                      MaterialPBRAnisotropyStrength:TpvFloat;
                                      MaterialPBRAnisotropyRotation:TpvFloat;
                                      MaterialPBRDispersion:TpvFloat;
+                                     MaterialHologramDirection:TpvVector3;
+                                     MaterialHologramFlickerSpeed:TpvFloat;
+                                     MaterialHologramFlickerMin:TpvFloat;
+                                     MaterialHologramFlickerMax:TpvFloat;
+                                     MaterialHologramMainColor:TpvVector3;
+                                     MaterialHologramMainAlpha:TpvFloat;
+                                     MaterialHologramRimColor:TpvVector3;
+                                     MaterialHologramRimAlpha:TpvFloat;
+                                     MaterialHologramRimPower:TpvFloat;
+                                     MaterialHologramRimThreshold:TpvFloat;
+                                     MaterialHologramScanTiling:TpvFloat;
+                                     MaterialHologramScanSpeed:TpvFloat;
+                                     MaterialHologramScanMin:TpvFloat;
+                                     MaterialHologramScanMax:TpvFloat;
+                                     MaterialHologramGlowTiling:TpvFloat;
+                                     MaterialHologramGlowSpeed:TpvFloat;
+                                     MaterialHologramGlowMin:TpvFloat;
+                                     MaterialHologramGlowMax:TpvFloat;
                                     );
                                     0:(
                                      TextureOffset:TpvVector2;
@@ -2626,6 +2851,10 @@ type EpvScene3D=class(Exception);
                      fDuplicatedMaterials:TpvScene3D.TMaterials;
                      fMaterials:TpvScene3D.TGroup.TInstance.TMaterials;
                      fAnimations:TpvScene3D.TGroup.TInstance.TAnimations;
+                     fLastAnimationStates:TpvScene3D.TGroup.TInstance.TAnimationStates;
+                     fAnimationStates:TpvScene3D.TGroup.TInstance.TAnimationStates;
+                     fPointerAnimationStates:TpvScene3D.TGroup.TInstance.TPAnimationStates;
+                     fUseAnimationStates:boolean;
                      fNodes:TpvScene3D.TGroup.TInstance.TNodes;
                      fSkins:TpvScene3D.TGroup.TInstance.TSkins;
                      fScenes:TpvScene3D.TGroup.TInstance.TScenes;
@@ -2646,7 +2875,7 @@ type EpvScene3D=class(Exception);
                      fPreparedMeshContentGeneration:TpvUInt64;
                      fFramePreparedMeshContentGenerations:array[0..MaxInFlightFrames-1] of TpvUInt64;
                      fFrameUploadedMeshContentGenerations:array[0..MaxInFlightFrames-1] of TpvUInt64;
-                     fVisitedState:array[-1..MaxInFlightFrames-1] of TpvUInt32;
+                     fVisitedState:array[-1..MaxInFlightFrames-1] of TPasMPInt32;
                      fModelMatrix:TpvMatrix4x4;
 //                   fModelMatrices:array[-1..MaxInFlightFrames-1] of TpvMatrix4x4;
                      fNodeMatrices:TNodeMatrices;
@@ -2690,7 +2919,8 @@ type EpvScene3D=class(Exception);
                      fVulkanMorphTargetVertexWeightsBufferCount:TpvInt64;
                      fCacheVerticesNodeDirtyBitmap:array of TpvUInt32;
                      fRaytracingMask:TpvUInt8;
-                     function GetAutomation(const aIndex:TPasGLTFSizeInt):TpvScene3D.TGroup.TInstance.TAnimation;
+                     function GetAnimation(const aIndex:TPasGLTFSizeInt):TpvScene3D.TGroup.TInstance.TAnimation;
+                     function GetAnimationState(const aIndex:TPasGLTFSizeInt):TpvScene3D.TGroup.TInstance.PAnimationState;
                      procedure SetScene(const aScene:TpvSizeInt);
                      function GetScene:TpvScene3D.TGroup.TScene;
                      procedure SetModelMatrix(const aModelMatrix:TpvMatrix4x4);
@@ -2772,6 +3002,9 @@ type EpvScene3D=class(Exception);
                      procedure SetDirty;
                      function GetOrder:TpvInt64;
                      function CreateRenderInstance:TpvScene3D.TGroup.TInstance.TRenderInstance;
+                    public
+                     procedure StoreAnimationStates;
+                     procedure InterpolateAnimationStates(const aAlpha:TpvDouble);
                     published
                      property Group:TGroup read fGroup write fGroup;
                      property Active:boolean read fActive write fActive;
@@ -2793,7 +3026,10 @@ type EpvScene3D=class(Exception);
                      property BoundingBox:TpvAABB read fBoundingBox;
                      property BoundingSpheres:TBoundingSpheres read fBoundingSpheres;
                     public
-                     property Automations[const aIndex:TPasGLTFSizeInt]:TpvScene3D.TGroup.TInstance.TAnimation read GetAutomation;
+                     property Animations[const aIndex:TPasGLTFSizeInt]:TpvScene3D.TGroup.TInstance.TAnimation read GetAnimation;
+                    public
+                     property AnimationStates[const aIndex:TPasGLTFSizeInt]:TpvScene3D.TGroup.TInstance.PAnimationState read GetAnimationState;
+                     property UseAnimationStates:boolean read fUseAnimationStates write fUseAnimationStates;
                     published
                      property OnNodeMatrixPre:TOnNodeMatrix read fOnNodeMatrixPre write fOnNodeMatrixPre;
                      property OnNodeMatrixPost:TOnNodeMatrix read fOnNodeMatrixPost write fOnNodeMatrixPost;
@@ -2916,6 +3152,9 @@ type EpvScene3D=class(Exception);
               procedure Update(const aInFlightFrameIndex:TpvSizeInt);
               procedure PrepareFrame(const aInFlightFrameIndex:TpvSizeInt);
               procedure UploadFrame(const aInFlightFrameIndex:TpvSizeInt);
+             public 
+              procedure StoreAnimationStates;
+              procedure InterpolateAnimationStates(const aAlpha:TpvDouble);
              public
               procedure CleanUp;
               procedure Finish;
@@ -2998,6 +3237,11 @@ type EpvScene3D=class(Exception);
               property RaytracingMask:TpvUInt8 read fRaytracingMask write fRaytracingMask;
             end;
             TGroups=TpvObjectGenericList<TpvScene3D.TGroup>;
+            { THeadlessGroup }
+            THeadlessGroup=class(TGroup)
+             public
+              constructor Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource=nil;const aMetaResource:TpvMetaResource=nil;const aParallelLoadable:TpvResource.TParallelLoadable=TpvResource.TParallelLoadable.None); override;
+            end;
             TImageIDHashMap=TpvHashMap<TID,TImage>;
             TSamplerIDHashMap=TpvHashMap<TID,TSampler>;
             TTextureIDHashMap=TpvHashMap<TID,TTexture>;
@@ -3011,6 +3255,7 @@ type EpvScene3D=class(Exception);
             TSamplerHashMap=TpvHashMap<TSampler.THashData,TSampler>;
             TTextureHashMap=TpvHashMap<TTexture.THashData,TTexture>;
             TMaterialHashMap=TpvHashMap<TMaterial.THashData,TMaterial>;
+            TMaterialExistHashMap=TpvHashMap<TMaterial,Boolean>;
             TBufferMemoryBarriers=TpvDynamicArray<TVkBufferMemoryBarrier>;
             TInFlightFrameBufferMemoryBarriers=array[0..MaxInFlightFrames-1] of TBufferMemoryBarriers;
             TMaterialBufferData=array[0..65535] of TMaterial.TShaderData;
@@ -3166,6 +3411,7 @@ type EpvScene3D=class(Exception);
             PDeltaTime=^TDeltaTime;
             TDeltaTimes=array[0..MaxInFlightFrames-1] of TDeltaTime;
             PDeltaTimes=^TDeltaTimes;
+            TParallelGroupInstanceUpdateQueue=TpvDynamicQueue<TpvScene3D.TGroup.TInstance>;
       public
        const DoubleSidedFaceCullingModes:array[TDoubleSided,TFrontFacesInversed] of TFaceCullingMode=
               (
@@ -3173,7 +3419,7 @@ type EpvScene3D=class(Exception);
                (TFaceCullingMode.None,TFaceCullingMode.None)
               );
              PVMFSignature:TPVMFSignature=('P','V','M','F');
-             PVMFVersion=TpVUInt32($00000001);
+             PVMFVersion=TpVUInt32($00000003);
       private
        fLock:TPasMPSpinLock;
        fLoadLock:TPasMPSpinLock;
@@ -3248,6 +3494,9 @@ type EpvScene3D=class(Exception);
        fVulkanMaterialDataBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
        fVulkanMaterialUniformBuffers:array[0..MaxInFlightFrames-1] of TpvVulkanBuffer;
        fTechniques:TpvTechniques;
+       fParallelGroupInstanceUpdateQueue:TParallelGroupInstanceUpdateQueue;
+       fParallelGroupInstanceUpdateQueueLock:TPasMPSlimReaderWriterLock;
+       fParallelGroupInstanceUpdateInFlightFrameIndex:TpvSizeInt;
        fCullObjectIDLock:TPasMPSlimReaderWriterLock;
        fCullObjectIDManager:TIDManager;
        fMaxCullObjectID:TpvUInt32;
@@ -3275,6 +3524,7 @@ type EpvScene3D=class(Exception);
        fMaterialIDToUpdateDirtyMaps:TMaterialIDDirtyMaps;
        fMaterialIDMap:TMaterialIDMap;
        fMaterialHashMap:TMaterialHashMap;
+       fMaterialExistHashMap:TMaterialExistHashMap;
        fEmptyMaterial:TpvScene3D.TMaterial;
        fMaterialDataProcessedGenerations:array[0..MaxInFlightFrames-1] of TpvUInt64;
        fMaterialDataUpdatedGenerations:array[0..MaxInFlightFrames-1] of TpvUInt64;
@@ -3293,7 +3543,9 @@ type EpvScene3D=class(Exception);
        fLightAABBTreeStates:array[-1..MaxInFlightFrames-1] of TpvBVHDynamicAABBTree.TState;
        fLightAABBTreeStateGenerations:array[-1..MaxInFlightFrames-1] of TpvUInt64;
        fLightBuffers:TpvScene3D.TLightBuffers;
+       fLightsLock:TPasMPSlimReaderWriterLock;
        fAABBTree:TpvBVHDynamicAABBTree;
+       fAABBTreeLock:TPasMPSlimReaderWriterLock;
        fAABBTreeStates:array[-1..MaxInFlightFrames-1] of TpvBVHDynamicAABBTree.TState;
        fBoundingBox:TpvAABB;
        fInFlightFrameBoundingBoxes:TInFlightFrameAABBs;
@@ -3427,6 +3679,7 @@ type EpvScene3D=class(Exception);
        fPointerToDeltaTimes:PDeltaTimes;
        fVirtualReality:TpvVirtualReality;
        fBlueNoise2DTexture:TpvVulkanTexture;
+       fPasMPInstance:TPasMP;
        fLoadGLTFTimeDurationLock:TPasMPInt32;
        fLoadGLTFTimeDuration:TpvDouble;
        procedure NewImageDescriptorGeneration;
@@ -3462,6 +3715,9 @@ type EpvScene3D=class(Exception);
                                     const aInFlightFrameIndex:TpvSizeInt);
       private
        procedure ProcessFreeQueue;
+      private
+       procedure ParallelGroupInstanceUpdateFunction;
+       procedure ParallelGroupInstanceUpdateParallelJobFunction(const Job:PPasMPJob;const ThreadIndex:TPasMPInt32);
       public
        class function DetectFileType(const aMemory:pointer;const aSize:TpvSizeInt):TpvScene3D.TFileType; overload; static;
        class function DetectFileType(const aStream:TStream):TpvScene3D.TFileType; overload; static;
@@ -3480,6 +3736,8 @@ type EpvScene3D=class(Exception);
        procedure DumpMemoryUsage(const aStringList:TStringList);
        procedure Upload;
        procedure Unload;
+       procedure StoreAnimationStates;
+       procedure InterpolateAnimationStates(const aAlpha:TpvDouble);
        procedure ResetSurface;
        procedure ResetFrame(const aInFlightFrameIndex:TpvSizeInt);
        procedure Check(const aInFlightFrameIndex:TpvSizeInt);
@@ -3688,6 +3946,7 @@ type EpvScene3D=class(Exception);
        property RaytracingActive:Boolean read fRaytracingActive;
        property AccelerationStructureInputBufferUsageFlags:TVkBufferUsageFlags read fAccelerationStructureInputBufferUsageFlags;
        property OnNodeFilter:TpvScene3D.TGroup.TInstance.TOnNodeFilter read fOnNodeFilter write fOnNodeFilter;
+       property PasMPInstance:TPasMP read fPasMPInstance write fPasMPInstance;
        property LoadGLTFTimeDuration:TpvDouble read fLoadGLTFTimeDuration;
      end;
 
@@ -3700,6 +3959,8 @@ uses PasVulkan.Scene3D.Renderer.Globals,
      PasVulkan.Scene3D.MeshCompute,
      PasVulkan.Scene3D.Tipsify,
      PasVulkan.Scene3D.Meshlets;
+
+var TotalCPUTime:TpvHighResolutionTime=0;
 
 const FlushUpdateData=false;
 
@@ -4210,6 +4471,7 @@ type { TPOCAScene3DGroup }
        function getAnimationID(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
        function getSceneID(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
        function createAnimation(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
+       function setMaterialHologram(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue; 
      end;
 
 { TPOCAScene3DGroup }
@@ -4343,6 +4605,35 @@ begin
  POCAScene3DGroupAnimation:=TPOCAScene3DGroupAnimation.Create(aContext^.Instance,aContext,nil,nil,false);
  POCAScene3DGroupAnimation.fAnimation:=Animation;
  result:=POCANewNativeObject(aContext,POCAScene3DGroupAnimation);
+end;
+
+function TPOCAScene3DGroup.setMaterialHologram(const aContext:PPOCAContext;const aThis:TPOCAValue;const aArguments:PPOCAValues;const aCountArguments:TpvInt32):TPOCAValue;
+var Index:TpvSizeInt;
+    Material:TpvScene3D.TMaterial;
+    JSONString:TpvUTF8String;
+    JSON:TPasJSONItem;
+begin
+ if aCountArguments>=2 then begin
+  Index:=trunc(POCAGetNumberValue(aContext,aArguments^[0]));
+  if (Index>=0) and (Index<fGroup.fMaterials.Count) then begin
+   Material:=fGroup.fMaterials[Index];
+  end else begin
+   Material:=nil;
+  end;
+  if assigned(Material) then begin
+   JSONString:=POCAStringDump(aContext,aArguments^[1]);
+   JSON:=TPasJSON.Parse(JSONString);
+   if assigned(JSON) then begin
+    try
+     Material.LoadHologramFromJSON(JSON);
+    finally
+     FreeAndNil(JSON);
+    end;
+    Material.FillShaderData;
+   end;
+  end;
+ end;
+ result:=POCAValueNull;
 end;
 
 { TpvScene3D.TScalarSum }
@@ -6542,6 +6833,34 @@ begin
  aSourceImage.GetResourceData(fResourceDataStream);
 end;
 
+procedure TpvScene3D.TImage.DumpMemoryUsage(const aStringList:TStringList;var aTotalSizeVRAM,aTotalSizeRAM:TpvUInt64);
+ procedure WriteLine(const s:String);
+ begin
+  aStringList.Add(s);
+ end;
+var SizeVRAM,SizeRAM,LastSizeVRAM,LastSizeRAM:TpvUInt64;
+begin
+
+ LastSizeVRAM:=aTotalSizeVRAM;
+ LastSizeRAM:=aTotalSizeRAM;
+
+ WriteLine('- Image "'+fName+'"');
+ WriteLine('');
+
+ SizeVRAM:=fTexture.RawSize;
+ SizeRAM:=0;
+ WriteLine('        Size: '+ToSize(SizeVRAM)+' on vRAM, '+ToSize(SizeRAM)+' on RAM');
+ inc(aTotalSizeVRAM,SizeVRAM);
+ inc(aTotalSizeRAM,SizeRAM);
+
+ WriteLine('  Total size: '+ToSize(aTotalSizeVRAM-LastSizeVRAM)+' on vRAM, '+ToSize(aTotalSizeRAM-LastSizeRAM)+' on RAM');
+ WriteLine('');
+
+ WriteLine('===============================================================');
+ WriteLine('');
+
+end;
+
 { TpvScene3D.TSampler }
 
 constructor TpvScene3D.TSampler.Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource;const aMetaResource:TpvMetaResource;const aParallelLoadable:TpvResource.TParallelLoadable);
@@ -7723,6 +8042,7 @@ begin
   fSceneInstance.fMaterialListLock.Acquire;
   try
    fSceneInstance.fMaterials.Add(self);
+   fSceneInstance.fMaterialExistHashMap.Add(self,true);
    fID:=fSceneInstance.fMaterialIDManager.AllocateID;
    fSceneInstance.fMaterialIDHashMap.Add(fID,self);
    if (fID>0) and (fID<$10000) then begin
@@ -7758,6 +8078,9 @@ begin
     fSceneInstance.fMaterials.Remove(self);
     if fSceneInstance.fMaterialHashMap[fData]=self then begin
      fSceneInstance.fMaterialHashMap.Delete(fData);
+    end;
+    if fSceneInstance.fMaterialExistHashMap.ExistKey(self) then begin
+     fSceneInstance.fMaterialExistHashMap.Delete(self);
     end;
     if fID>0 then begin
      if fID<$10000 then begin
@@ -8383,6 +8706,46 @@ begin
 
    end;
 
+   begin
+
+    // Hologram
+
+    fData.Hologram.Active:=StreamIO.ReadBoolean;
+
+    fData.Hologram.Direction:=StreamIO.ReadVector3;
+
+    fData.Hologram.FlickerSpeed:=StreamIO.ReadFloat;
+
+    fData.Hologram.FlickerMin:=StreamIO.ReadFloat;
+
+    fData.Hologram.FlickerMax:=StreamIO.ReadFloat;
+
+    fData.Hologram.MainColorFactor:=StreamIO.ReadVector4;
+
+    fData.Hologram.RimColorFactor:=StreamIO.ReadVector4;
+
+    fData.Hologram.RimPower:=StreamIO.ReadFloat;
+
+    fData.Hologram.RimThreshold:=StreamIO.ReadFloat;
+
+    fData.Hologram.ScanTiling:=StreamIO.ReadFloat;
+
+    fData.Hologram.ScanSpeed:=StreamIO.ReadFloat;
+
+    fData.Hologram.ScanMin:=StreamIO.ReadFloat;
+
+    fData.Hologram.ScanMax:=StreamIO.ReadFloat;
+
+    fData.Hologram.GlowTiling:=StreamIO.ReadFloat;
+
+    fData.Hologram.GlowSpeed:=StreamIO.ReadFloat;
+
+    fData.Hologram.GlowMin:=StreamIO.ReadFloat;
+
+    fData.Hologram.GlowMax:=StreamIO.ReadFloat;
+
+   end;   
+
    fData.AnimatedTextureMask:=StreamIO.ReadUInt64;
 
   finally
@@ -8669,6 +9032,46 @@ begin
    StreamIO.WriteBoolean(fData.Dispersion.Active);
 
    StreamIO.WriteFloat(fData.Dispersion.Dispersion);
+
+  end;
+
+  begin
+
+   // Hologram
+
+   StreamIO.WriteBoolean(fData.Hologram.Active);
+
+   StreamIO.WriteVector3(fData.Hologram.Direction);
+
+   StreamIO.WriteFloat(fData.Hologram.FlickerSpeed);
+
+   StreamIO.WriteFloat(fData.Hologram.FlickerMin);
+
+   StreamIO.WriteFloat(fData.Hologram.FlickerMax);
+
+   StreamIO.WriteVector4(fData.Hologram.MainColorFactor);
+
+   StreamIO.WriteVector4(fData.Hologram.RimColorFactor);
+
+   StreamIO.WriteFloat(fData.Hologram.RimPower);
+
+   StreamIO.WriteFloat(fData.Hologram.RimThreshold);
+
+   StreamIO.WriteFloat(fData.Hologram.ScanTiling);
+
+   StreamIO.WriteFloat(fData.Hologram.ScanSpeed);
+
+   StreamIO.WriteFloat(fData.Hologram.ScanMin);
+
+   StreamIO.WriteFloat(fData.Hologram.ScanMax);
+
+   StreamIO.WriteFloat(fData.Hologram.GlowTiling);
+
+   StreamIO.WriteFloat(fData.Hologram.GlowSpeed);
+
+   StreamIO.WriteFloat(fData.Hologram.GlowMin);
+
+   StreamIO.WriteFloat(fData.Hologram.GlowMax);
 
   end;
 
@@ -9133,12 +9536,76 @@ begin
    end;
   end;
 
+  begin
+   LoadHologramFromJSON(aSourceMaterial.Extensions.Properties['PASVULKAN_hologram']);
+  end;
+
  finally
   fSceneInstance.fTextureListLock.Release;
  end;
 
  FillShaderData;
 
+end;
+
+procedure TpvScene3D.TMaterial.LoadHologramFromJSON(const aJSONItem:TPasJSONItem);
+var JSONObject:TPasJSONItemObject;
+    JSONItem:TPasJSONItem;    
+begin
+ if assigned(aJSONItem) and (aJSONItem is TPasJSONItemObject) then begin
+  JSONObject:=TPasJSONItemObject(aJSONItem);
+  fData.Hologram.Active:=false;
+  fData.Hologram.Direction:=TpvVector3.Create(0.0,1.0,0.0);
+  fData.Hologram.FlickerSpeed:=10.0;
+  fData.Hologram.FlickerMin:=0.0;
+  fData.Hologram.FlickerMax:=1.0;
+  fData.Hologram.MainColorFactor:=TpvVector4.Create(1.0,1.0,1.0,1.0);
+  fData.Hologram.RimColorFactor:=TpvVector4.Create(1.0,1.0,1.0,1.0);
+  fData.Hologram.RimPower:=1.29;
+  fData.Hologram.RimThreshold:=0.0;
+  fData.Hologram.ScanTiling:=5.27;
+  fData.Hologram.ScanSpeed:=-1.66;
+  fData.Hologram.ScanMin:=1.0;
+  fData.Hologram.ScanMax:=1.0;
+  fData.Hologram.GlowTiling:=0.15;
+  fData.Hologram.GlowSpeed:=10.0;
+  fData.Hologram.GlowMin:=1.0;
+  fData.Hologram.GlowMax:=1.0;
+  fData.Hologram.Active:=TPasJSON.GetBoolean(JSONObject.Properties['active'],fData.Hologram.Active);
+  JSONItem:=JSONObject.Properties['direction'];
+  if assigned(JSONItem) and (JSONItem is TPasJSONItemArray) and (TPasJSONItemArray(JSONItem).Count=3) then begin
+   fData.Hologram.Direction.x:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[0],fData.Hologram.Direction.x);
+   fData.Hologram.Direction.y:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[1],fData.Hologram.Direction.y);
+   fData.Hologram.Direction.z:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[2],fData.Hologram.Direction.z);
+  end;
+  fData.Hologram.FlickerSpeed:=TPasJSON.GetNumber(JSONObject.Properties['flickerSpeed'],fData.Hologram.FlickerSpeed);
+  fData.Hologram.FlickerMin:=TPasJSON.GetNumber(JSONObject.Properties['flickerMin'],fData.Hologram.FlickerMin);
+  fData.Hologram.FlickerMax:=TPasJSON.GetNumber(JSONObject.Properties['flickerMax'],fData.Hologram.FlickerMax);
+  JSONItem:=JSONObject.Properties['mainColor'];
+  if assigned(JSONItem) and (JSONItem is TPasJSONItemArray) and (TPasJSONItemArray(JSONItem).Count=3) then begin
+   fData.Hologram.MainColorFactor.x:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[0],fData.Hologram.MainColorFactor.x);
+   fData.Hologram.MainColorFactor.y:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[1],fData.Hologram.MainColorFactor.y);
+   fData.Hologram.MainColorFactor.z:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[2],fData.Hologram.MainColorFactor.z);
+  end;
+  fData.Hologram.MainColorFactor.w:=TPasJSON.GetNumber(JSONObject.Properties['mainAlpha'],fData.Hologram.MainColorFactor.w);
+  JSONItem:=JSONObject.Properties['rimColor'];
+  if assigned(JSONItem) and (JSONItem is TPasJSONItemArray) and (TPasJSONItemArray(JSONItem).Count=3) then begin
+   fData.Hologram.RimColorFactor.x:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[0],fData.Hologram.RimColorFactor.x);
+   fData.Hologram.RimColorFactor.y:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[1],fData.Hologram.RimColorFactor.y);
+   fData.Hologram.RimColorFactor.z:=TPasJSON.GetNumber(TPasJSONItemArray(JSONItem).Items[2],fData.Hologram.RimColorFactor.z);
+  end;
+  fData.Hologram.RimColorFactor.w:=TPasJSON.GetNumber(JSONObject.Properties['rimAlpha'],fData.Hologram.RimColorFactor.w);
+  fData.Hologram.RimPower:=TPasJSON.GetNumber(JSONObject.Properties['rimPower'],fData.Hologram.RimPower);
+  fData.Hologram.RimThreshold:=TPasJSON.GetNumber(JSONObject.Properties['rimThreshold'],fData.Hologram.RimThreshold);
+  fData.Hologram.ScanTiling:=TPasJSON.GetNumber(JSONObject.Properties['scanTiling'],fData.Hologram.ScanTiling);
+  fData.Hologram.ScanSpeed:=TPasJSON.GetNumber(JSONObject.Properties['scanSpeed'],fData.Hologram.ScanSpeed);
+  fData.Hologram.ScanMin:=TPasJSON.GetNumber(JSONObject.Properties['scanMin'],fData.Hologram.ScanMin);
+  fData.Hologram.ScanMax:=TPasJSON.GetNumber(JSONObject.Properties['scanMax'],fData.Hologram.ScanMax);
+  fData.Hologram.GlowTiling:=TPasJSON.GetNumber(JSONObject.Properties['glowTiling'],fData.Hologram.GlowTiling);
+  fData.Hologram.GlowSpeed:=TPasJSON.GetNumber(JSONObject.Properties['glowSpeed'],fData.Hologram.GlowSpeed);
+  fData.Hologram.GlowMin:=TPasJSON.GetNumber(JSONObject.Properties['glowMin'],fData.Hologram.GlowMin);
+  fData.Hologram.GlowMax:=TPasJSON.GetNumber(JSONObject.Properties['glowMax'],fData.Hologram.GlowMax);
+ end; 
 end;
 
 procedure TpvScene3D.TMaterial.FillShaderData;
@@ -9367,6 +9834,34 @@ begin
  if fData.Dispersion.Active then begin
   fShaderData.Flags:=fShaderData.Flags or (1 shl 14);
   fShaderData.Dispersion:=fData.Dispersion.Dispersion;
+ end;
+
+ if fData.Hologram.Active then begin
+  fShaderData.Flags:=fShaderData.Flags or (1 shl 15);
+  PpvHalfFloat(pointer(@fShaderData.HologramDirectionX))^:=fData.Hologram.Direction.x;
+  PpvHalfFloat(pointer(@fShaderData.HologramDirectionY))^:=fData.Hologram.Direction.y;
+  PpvHalfFloat(pointer(@fShaderData.HologramDirectionZ))^:=fData.Hologram.Direction.z;
+  PpvHalfFloat(pointer(@fShaderData.HologramFlickerSpeed))^:=fData.Hologram.FlickerSpeed;
+  PpvHalfFloat(pointer(@fShaderData.HologramFlickerMin))^:=fData.Hologram.FlickerMin;
+  PpvHalfFloat(pointer(@fShaderData.HologramFlickerMax))^:=fData.Hologram.FlickerMax;
+  PpvHalfFloat(pointer(@fShaderData.HologramMainColorFactorR))^:=fData.Hologram.MainColorFactor.x;
+  PpvHalfFloat(pointer(@fShaderData.HologramMainColorFactorG))^:=fData.Hologram.MainColorFactor.y;
+  PpvHalfFloat(pointer(@fShaderData.HologramMainColorFactorB))^:=fData.Hologram.MainColorFactor.z;
+  PpvHalfFloat(pointer(@fShaderData.HologramMainColorFactorA))^:=fData.Hologram.MainColorFactor.w;
+  PpvHalfFloat(pointer(@fShaderData.HologramRimColorFactorR))^:=fData.Hologram.RimColorFactor.x;
+  PpvHalfFloat(pointer(@fShaderData.HologramRimColorFactorG))^:=fData.Hologram.RimColorFactor.y;
+  PpvHalfFloat(pointer(@fShaderData.HologramRimColorFactorB))^:=fData.Hologram.RimColorFactor.z;
+  PpvHalfFloat(pointer(@fShaderData.HologramRimColorFactorA))^:=fData.Hologram.RimColorFactor.w;
+  PpvHalfFloat(pointer(@fShaderData.HologramRimPower))^:=fData.Hologram.RimPower;
+  PpvHalfFloat(pointer(@fShaderData.HologramRimThreshold))^:=fData.Hologram.RimThreshold;
+  PpvHalfFloat(pointer(@fShaderData.HologramScanTiling))^:=fData.Hologram.ScanTiling;
+  PpvHalfFloat(pointer(@fShaderData.HologramScanSpeed))^:=fData.Hologram.ScanSpeed;
+  PpvHalfFloat(pointer(@fShaderData.HologramScanMin))^:=fData.Hologram.ScanMin;
+  PpvHalfFloat(pointer(@fShaderData.HologramScanMax))^:=fData.Hologram.ScanMax;
+  PpvHalfFloat(pointer(@fShaderData.HologramGlowTiling))^:=fData.Hologram.GlowTiling;
+  PpvHalfFloat(pointer(@fShaderData.HologramGlowSpeed))^:=fData.Hologram.GlowSpeed;
+  PpvHalfFloat(pointer(@fShaderData.HologramGlowMin))^:=fData.Hologram.GlowMin;
+  PpvHalfFloat(pointer(@fShaderData.HologramGlowMax))^:=fData.Hologram.GlowMax;
  end;
 
  TPasMPInterlocked.Increment(fGeneration);
@@ -11341,6 +11836,46 @@ begin
            fTarget:=TAnimation.TChannel.TTarget.PointerMaterialPBRDispersion;
           end;
          end;
+        end else if TargetPointerStrings[3]='PASVULKAN_hologram' then begin
+         if length(TargetPointerStrings)>4 then begin
+          if TargetPointerStrings[4]='direction' then begin
+           fTarget:=TAnimation.TChannel.TTarget.PointerMaterialHologramDirection;
+          end else if TargetPointerStrings[4]='flickerSpeed' then begin
+           fTarget:=TAnimation.TChannel.TTarget.PointerMaterialHologramFlickerSpeed;
+          end else if TargetPointerStrings[4]='flickerMin' then begin
+           fTarget:=TAnimation.TChannel.TTarget.PointerMaterialHologramFlickerMin; 
+          end else if TargetPointerStrings[4]='flickerMax' then begin
+           fTarget:=TAnimation.TChannel.TTarget.PointerMaterialHologramFlickerMax;
+          end else if TargetPointerStrings[4]='mainColor' then begin
+           fTarget:=TAnimation.TChannel.TTarget.PointerMaterialHologramMainColor;
+          end else if TargetPointerStrings[4]='mainAlpha' then begin
+           fTarget:=TAnimation.TChannel.TTarget.PointerMaterialHologramMainAlpha;
+          end else if TargetPointerStrings[4]='rimColor' then begin
+           fTarget:=TAnimation.TChannel.TTarget.PointerMaterialHologramRimColor;
+          end else if TargetPointerStrings[4]='rimAlpha' then begin
+           fTarget:=TAnimation.TChannel.TTarget.PointerMaterialHologramRimAlpha; 
+          end else if TargetPointerStrings[4]='rimPower' then begin
+           fTarget:=TAnimation.TChannel.TTarget.PointerMaterialHologramRimPower;
+          end else if TargetPointerStrings[4]='rimThreshold' then begin
+           fTarget:=TAnimation.TChannel.TTarget.PointerMaterialHologramRimThreshold;
+          end else if TargetPointerStrings[4]='scanTiling' then begin
+           fTarget:=TAnimation.TChannel.TTarget.PointerMaterialHologramScanTiling;
+          end else if TargetPointerStrings[4]='scanSpeed' then begin
+           fTarget:=TAnimation.TChannel.TTarget.PointerMaterialHologramScanSpeed;
+          end else if TargetPointerStrings[4]='scanMin' then begin
+           fTarget:=TAnimation.TChannel.TTarget.PointerMaterialHologramScanMin;
+          end else if TargetPointerStrings[4]='scanMax' then begin
+           fTarget:=TAnimation.TChannel.TTarget.PointerMaterialHologramScanMax;
+          end else if TargetPointerStrings[4]='glowTiling' then begin
+           fTarget:=TAnimation.TChannel.TTarget.PointerMaterialHologramGlowTiling;
+          end else if TargetPointerStrings[4]='glowSpeed' then begin
+           fTarget:=TAnimation.TChannel.TTarget.PointerMaterialHologramGlowSpeed;
+          end else if TargetPointerStrings[4]='glowMin' then begin
+           fTarget:=TAnimation.TChannel.TTarget.PointerMaterialHologramGlowMin;
+          end else if TargetPointerStrings[4]='glowMax' then begin
+           fTarget:=TAnimation.TChannel.TTarget.PointerMaterialHologramGlowMax;
+          end;
+         end;
         end;
        end;
       end;
@@ -11780,6 +12315,9 @@ begin
     TAnimation.TChannel.TTarget.PointerMaterialPBRVolumeAttenuationColor,
     TAnimation.TChannel.TTarget.PointerMaterialPBRSheenColorFactor,
     TAnimation.TChannel.TTarget.PointerMaterialPBRSpecularColorFactor,
+    TAnimation.TChannel.TTarget.PointerMaterialHologramDirection,
+    TAnimation.TChannel.TTarget.PointerMaterialHologramMainColor,
+    TAnimation.TChannel.TTarget.PointerMaterialHologramRimColor,
     TAnimation.TChannel.TTarget.PointerPunctualLightColor:begin
      OutputVector3Array:=aSourceDocument.Accessors[SourceAnimationSampler.Output].DecodeAsVector3Array(false);
      try
@@ -11843,7 +12381,22 @@ begin
     TAnimation.TChannel.TTarget.PointerPunctualLightSpotOuterConeAngle,
     TAnimation.TChannel.TTarget.PointerMaterialPBRAnisotropyStrength,
     TAnimation.TChannel.TTarget.PointerMaterialPBRAnisotropyRotation,
-    TAnimation.TChannel.TTarget.PointerMaterialPBRDispersion:begin
+    TAnimation.TChannel.TTarget.PointerMaterialPBRDispersion,
+    TAnimation.TChannel.TTarget.PointerMaterialHologramFlickerSpeed,
+    TAnimation.TChannel.TTarget.PointerMaterialHologramFlickerMin,
+    TAnimation.TChannel.TTarget.PointerMaterialHologramFlickerMax,
+    TAnimation.TChannel.TTarget.PointerMaterialHologramMainAlpha,
+    TAnimation.TChannel.TTarget.PointerMaterialHologramRimAlpha,
+    TAnimation.TChannel.TTarget.PointerMaterialHologramRimPower,
+    TAnimation.TChannel.TTarget.PointerMaterialHologramRimThreshold,
+    TAnimation.TChannel.TTarget.PointerMaterialHologramScanTiling,
+    TAnimation.TChannel.TTarget.PointerMaterialHologramScanSpeed,
+    TAnimation.TChannel.TTarget.PointerMaterialHologramScanMin,
+    TAnimation.TChannel.TTarget.PointerMaterialHologramScanMax,
+    TAnimation.TChannel.TTarget.PointerMaterialHologramGlowTiling,
+    TAnimation.TChannel.TTarget.PointerMaterialHologramGlowSpeed,
+    TAnimation.TChannel.TTarget.PointerMaterialHologramGlowMin,
+    TAnimation.TChannel.TTarget.PointerMaterialHologramGlowMax:begin
      OutputScalarArray:=aSourceDocument.Accessors[SourceAnimationSampler.Output].DecodeAsFloatArray(false);
      try
       SetLength(DestinationAnimationChannel.fOutputScalarArray,length(OutputScalarArray));
@@ -15523,7 +16076,7 @@ begin
 
  WriteLine('- Group "'+fName+'"');
  WriteLine('');
- 
+
  SizeVRAM:=0;
  SizeRAM:=fVertices.Count*SizeOf(TVertex);
  WriteLine('                              Vertices: '+IntToStr(fVertices.Count)+' ('+ToSize(SizeVRAM)+' on vRAM, '+ToSize(SizeRAM)+' on RAM)');
@@ -15958,6 +16511,24 @@ begin
          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRAnisotropyStrength,
          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRAnisotropyRotation,
          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRDispersion,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramDirection,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramFlickerSpeed,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramFlickerMin,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramFlickerMax,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramMainColor,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramMainAlpha,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramRimColor,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramRimAlpha,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramRimPower,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramRimThreshold,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramScanTiling,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramScanSpeed,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramScanMin,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramScanMax,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramGlowTiling,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramGlowSpeed,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramGlowMin,
+         TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramGlowMax,
          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureOffset,
          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureRotation,
          TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureScale:begin
@@ -16695,7 +17266,7 @@ end;
 function TpvScene3D.TGroup.AssetGetURI(const aURI:TPasGLTFUTF8String):TStream;
 var FileName:TPasGLTFUTF8String;
 begin
- FileName:=ExpandRelativePath(aURI,AssetBasePath);
+ FileName:=PasVulkan.Utils.ExpandRelativePath(aURI,AssetBasePath);
  if pvApplication.Assets.ExistAsset(FileName) then begin
   result:=pvApplication.Assets.GetAssetStream(FileName);
  end else begin
@@ -17009,7 +17580,7 @@ begin
     Material:=nil;
    end else begin
     HashedMaterial:=fSceneInstance.fMaterialHashMap[HashData];
-    if assigned(HashedMaterial) then begin
+    if assigned(HashedMaterial) and fSceneInstance.fMaterialExistHashMap.ExistKey(HashedMaterial) then begin
      result:=fMaterials.Add(HashedMaterial);
      fMaterialIndexHashMap.Add(HashedMaterial,result);
     end else begin
@@ -19152,6 +19723,22 @@ begin
  end;
 end;
 
+procedure TpvScene3D.TGroup.StoreAnimationStates;
+var Instance:TpvScene3D.TGroup.TInstance;
+begin
+ for Instance in fInstances do begin
+  Instance.StoreAnimationStates;
+ end;
+end;
+
+procedure TpvScene3D.TGroup.InterpolateAnimationStates(const aAlpha:TpvDouble);
+var Instance:TpvScene3D.TGroup.TInstance;
+begin
+ for Instance in fInstances do begin
+  Instance.InterpolateAnimationStates(aAlpha);
+ end;
+end;
+
 procedure TpvScene3D.TGroup.UpdateCachedVertices(const aInFlightFrameIndex:TpvSizeInt);
 var Instance:TpvScene3D.TGroup.TInstance;
 begin
@@ -19543,6 +20130,24 @@ var Index,AnimatedTextureIndex:TpvSizeInt;
     MaterialPBRAnisotropyStrengthSum:TpvScene3D.TScalarSum;
     MaterialPBRAnisotropyRotationSum:TpvScene3D.TScalarSum;
     MaterialPBRDispersionSum:TpvScene3D.TScalarSum;
+    MaterialHologramDirectionSum:TpvScene3D.TVector3Sum;
+    MaterialHologramFlickerSpeedSum:TpvScene3D.TScalarSum;
+    MaterialHologramFlickerMinSum:TpvScene3D.TScalarSum;
+    MaterialHologramFlickerMaxSum:TpvScene3D.TScalarSum;
+    MaterialHologramMainColorSum:TpvScene3D.TVector3Sum;
+    MaterialHologramMainAlphaSum:TpvScene3D.TScalarSum;
+    MaterialHologramRimColorSum:TpvScene3D.TVector3Sum;
+    MaterialHologramRimAlphaSum:TpvScene3D.TScalarSum;
+    MaterialHologramRimPowerSum:TpvScene3D.TScalarSum;
+    MaterialHologramRimThresholdSum:TpvScene3D.TScalarSum;
+    MaterialHologramScanTilingSum:TpvScene3D.TScalarSum;
+    MaterialHologramScanSpeedSum:TpvScene3D.TScalarSum;
+    MaterialHologramScanMinSum:TpvScene3D.TScalarSum;
+    MaterialHologramScanMaxSum:TpvScene3D.TScalarSum;
+    MaterialHologramGlowTilingSum:TpvScene3D.TScalarSum;
+    MaterialHologramGlowSpeedSum:TpvScene3D.TScalarSum;
+    MaterialHologramGlowMinSum:TpvScene3D.TScalarSum;  
+    MaterialHologramGlowMaxSum:TpvScene3D.TScalarSum;      
     AnimatedTextureMask:TpvUInt64;
     TextureTransform:TpvScene3D.TMaterial.TTextureReference.PTransform;
     WorkTextureTransform:TpvScene3D.TMaterial.TTextureReference.PTransform;
@@ -19583,6 +20188,24 @@ begin
   MaterialPBRAnisotropyStrengthSum.Clear;
   MaterialPBRAnisotropyRotationSum.Clear;
   MaterialPBRDispersionSum.Clear;
+  MaterialHologramDirectionSum.Clear;
+  MaterialHologramFlickerSpeedSum.Clear;
+  MaterialHologramFlickerMinSum.Clear;
+  MaterialHologramFlickerMaxSum.Clear;
+  MaterialHologramMainColorSum.Clear;
+  MaterialHologramMainAlphaSum.Clear;
+  MaterialHologramRimColorSum.Clear;
+  MaterialHologramRimAlphaSum.Clear;
+  MaterialHologramRimPowerSum.Clear;
+  MaterialHologramRimThresholdSum.Clear;
+  MaterialHologramScanTilingSum.Clear;
+  MaterialHologramScanSpeedSum.Clear;
+  MaterialHologramScanMinSum.Clear;
+  MaterialHologramScanMaxSum.Clear;
+  MaterialHologramGlowTilingSum.Clear;
+  MaterialHologramGlowSpeedSum.Clear;
+  MaterialHologramGlowMinSum.Clear;
+  MaterialHologramGlowMaxSum.Clear;
   begin
    AnimatedTextureMask:=fData.AnimatedTextureMask;
    while AnimatedTextureMask<>0 do begin
@@ -19627,6 +20250,24 @@ begin
       MaterialPBRAnisotropyStrengthSum.Add(fData.Anisotropy.AnisotropyStrength,Factor,Additive);
       MaterialPBRAnisotropyRotationSum.Add(fData.Anisotropy.AnisotropyRotation,Factor,Additive);
       MaterialPBRDispersionSum.Add(fData.Dispersion.Dispersion,Factor,Additive);
+      MaterialHologramDirectionSum.Add(fData.Hologram.Direction,Factor,Additive);
+      MaterialHologramFlickerSpeedSum.Add(fData.Hologram.FlickerSpeed,Factor,Additive);
+      MaterialHologramFlickerMinSum.Add(fData.Hologram.FlickerMin,Factor,Additive);
+      MaterialHologramFlickerMaxSum.Add(fData.Hologram.FlickerMax,Factor,Additive);
+      MaterialHologramMainColorSum.Add(fData.Hologram.MainColorFactor.xyz,Factor,Additive);
+      MaterialHologramMainAlphaSum.Add(fData.Hologram.MainColorFactor.w,Factor,Additive);
+      MaterialHologramRimColorSum.Add(fData.Hologram.RimColorFactor.xyz,Factor,Additive);
+      MaterialHologramRimAlphaSum.Add(fData.Hologram.RimColorFactor.w,Factor,Additive);
+      MaterialHologramRimPowerSum.Add(fData.Hologram.RimPower,Factor,Additive);
+      MaterialHologramRimThresholdSum.Add(fData.Hologram.RimThreshold,Factor,Additive);
+      MaterialHologramScanTilingSum.Add(fData.Hologram.ScanTiling,Factor,Additive);
+      MaterialHologramScanSpeedSum.Add(fData.Hologram.ScanSpeed,Factor,Additive);
+      MaterialHologramScanMinSum.Add(fData.Hologram.ScanMin,Factor,Additive);
+      MaterialHologramScanMaxSum.Add(fData.Hologram.ScanMax,Factor,Additive);
+      MaterialHologramGlowTilingSum.Add(fData.Hologram.GlowTiling,Factor,Additive);
+      MaterialHologramGlowSpeedSum.Add(fData.Hologram.GlowSpeed,Factor,Additive);
+      MaterialHologramGlowMinSum.Add(fData.Hologram.GlowMin,Factor,Additive);
+      MaterialHologramGlowMaxSum.Add(fData.Hologram.GlowMax,Factor,Additive);
      end else begin
       // Texture
       TextureTransform:=fData.GetTextureTransform(TpvScene3D.TTextureIndex(Overwrite^.SubIndex));
@@ -19821,6 +20462,132 @@ begin
         MaterialPBRDispersionSum.Add(Overwrite^.MaterialPBRDispersion,Factor,Additive);
        end;
       end;
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramDirection in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramDirection in Overwrite^.Flags then begin
+        MaterialHologramDirectionSum.Add(fData.Hologram.Direction,Factor,Additive);
+       end else begin
+        MaterialHologramDirectionSum.Add(Overwrite^.MaterialHologramDirection,Factor,Additive);
+       end;
+      end;
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramFlickerSpeed in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramFlickerSpeed in Overwrite^.Flags then begin
+        MaterialHologramFlickerSpeedSum.Add(fData.Hologram.FlickerSpeed,Factor,Additive);
+       end else begin
+        MaterialHologramFlickerSpeedSum.Add(Overwrite^.MaterialHologramFlickerSpeed,Factor,Additive);
+       end;
+      end;
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramFlickerMin in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramFlickerMin in Overwrite^.Flags then begin
+        MaterialHologramFlickerMinSum.Add(fData.Hologram.FlickerMin,Factor,Additive);
+       end else begin
+        MaterialHologramFlickerMinSum.Add(Overwrite^.MaterialHologramFlickerMin,Factor,Additive);
+       end;
+      end;
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramFlickerMax in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramFlickerMax in Overwrite^.Flags then begin
+        MaterialHologramFlickerMaxSum.Add(fData.Hologram.FlickerMax,Factor,Additive);
+       end else begin
+        MaterialHologramFlickerMaxSum.Add(Overwrite^.MaterialHologramFlickerMax,Factor,Additive);
+       end;
+      end;
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramMainColor in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramMainColor in Overwrite^.Flags then begin
+        MaterialHologramMainColorSum.Add(fData.Hologram.MainColorFactor.xyz,Factor,Additive);
+       end else begin
+        MaterialHologramMainColorSum.Add(Overwrite^.MaterialHologramMainColor,Factor,Additive);
+       end;
+      end;
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramMainAlpha in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramMainAlpha in Overwrite^.Flags then begin
+        MaterialHologramMainAlphaSum.Add(fData.Hologram.MainColorFactor.w,Factor,Additive);
+       end else begin
+        MaterialHologramMainAlphaSum.Add(Overwrite^.MaterialHologramMainAlpha,Factor,Additive);
+       end;
+      end;
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramRimColor in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramRimColor in Overwrite^.Flags then begin
+        MaterialHologramRimColorSum.Add(fData.Hologram.RimColorFactor.xyz,Factor,Additive);
+       end else begin
+        MaterialHologramRimColorSum.Add(Overwrite^.MaterialHologramRimColor,Factor,Additive);
+       end;
+      end;
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramRimAlpha in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramRimAlpha in Overwrite^.Flags then begin
+        MaterialHologramRimAlphaSum.Add(fData.Hologram.RimColorFactor.w,Factor,Additive);
+       end else begin
+        MaterialHologramRimAlphaSum.Add(Overwrite^.MaterialHologramRimAlpha,Factor,Additive);
+       end;
+      end;
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramRimPower in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramRimPower in Overwrite^.Flags then begin
+        MaterialHologramRimPowerSum.Add(fData.Hologram.RimPower,Factor,Additive);
+       end else begin
+        MaterialHologramRimPowerSum.Add(Overwrite^.MaterialHologramRimPower,Factor,Additive);
+       end;
+      end;
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramRimThreshold in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramRimThreshold in Overwrite^.Flags then begin
+        MaterialHologramRimThresholdSum.Add(fData.Hologram.RimThreshold,Factor,Additive);
+       end else begin
+        MaterialHologramRimThresholdSum.Add(Overwrite^.MaterialHologramRimThreshold,Factor,Additive);
+       end;
+      end;
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramScanTiling in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramScanTiling in Overwrite^.Flags then begin
+        MaterialHologramScanTilingSum.Add(fData.Hologram.ScanTiling,Factor,Additive);
+       end else begin
+        MaterialHologramScanTilingSum.Add(Overwrite^.MaterialHologramScanTiling,Factor,Additive);
+       end;
+      end;
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramScanSpeed in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramScanSpeed in Overwrite^.Flags then begin
+        MaterialHologramScanSpeedSum.Add(fData.Hologram.ScanSpeed,Factor,Additive);
+       end else begin
+        MaterialHologramScanSpeedSum.Add(Overwrite^.MaterialHologramScanSpeed,Factor,Additive);
+       end;
+      end;
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramScanMin in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramScanMin in Overwrite^.Flags then begin
+        MaterialHologramScanMinSum.Add(fData.Hologram.ScanMin,Factor,Additive);
+       end else begin
+        MaterialHologramScanMinSum.Add(Overwrite^.MaterialHologramScanMin,Factor,Additive);
+       end;
+      end;
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramScanMax in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramScanMax in Overwrite^.Flags then begin
+        MaterialHologramScanMaxSum.Add(fData.Hologram.ScanMax,Factor,Additive);
+       end else begin
+        MaterialHologramScanMaxSum.Add(Overwrite^.MaterialHologramScanMax,Factor,Additive);
+       end;
+      end;
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramGlowTiling in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramGlowTiling in Overwrite^.Flags then begin
+        MaterialHologramGlowTilingSum.Add(fData.Hologram.GlowTiling,Factor,Additive);
+       end else begin
+        MaterialHologramGlowTilingSum.Add(Overwrite^.MaterialHologramGlowTiling,Factor,Additive);
+       end;
+      end;
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramGlowSpeed in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramGlowSpeed in Overwrite^.Flags then begin
+        MaterialHologramGlowSpeedSum.Add(fData.Hologram.GlowSpeed,Factor,Additive);
+       end else begin
+        MaterialHologramGlowSpeedSum.Add(Overwrite^.MaterialHologramGlowSpeed,Factor,Additive);
+       end;
+      end;
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramGlowMin in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramGlowMin in Overwrite^.Flags then begin
+        MaterialHologramGlowMinSum.Add(fData.Hologram.GlowMin,Factor,Additive);
+       end else begin
+        MaterialHologramGlowMinSum.Add(Overwrite^.MaterialHologramGlowMin,Factor,Additive);
+       end;
+      end;      
+      if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramGlowMax in Overwrite^.Flags then begin
+       if TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramGlowMax in Overwrite^.Flags then begin
+        MaterialHologramGlowMaxSum.Add(fData.Hologram.GlowMax,Factor,Additive);
+       end else begin
+        MaterialHologramGlowMaxSum.Add(Overwrite^.MaterialHologramGlowMax,Factor,Additive);
+       end;
+      end;
      end else begin
       // Texture
       TextureTransform:=fData.GetTextureTransform(TpvScene3D.TTextureIndex(Overwrite^.SubIndex));
@@ -19877,6 +20644,24 @@ begin
   fWorkData.Anisotropy.AnisotropyStrength:=MaterialPBRAnisotropyStrengthSum.Get(fWorkData.Anisotropy.AnisotropyStrength);
   fWorkData.Anisotropy.AnisotropyRotation:=MaterialPBRAnisotropyRotationSum.Get(fWorkData.Anisotropy.AnisotropyRotation);
   fWorkData.Dispersion.Dispersion:=MaterialPBRDispersionSum.Get(fWorkData.Dispersion.Dispersion);
+  fWorkData.Hologram.Direction:=MaterialHologramDirectionSum.Get(fWorkData.Hologram.Direction);
+  fWorkData.Hologram.FlickerSpeed:=MaterialHologramFlickerSpeedSum.Get(fWorkData.Hologram.FlickerSpeed);
+  fWorkData.Hologram.FlickerMin:=MaterialHologramFlickerMinSum.Get(fWorkData.Hologram.FlickerMin);
+  fWorkData.Hologram.FlickerMax:=MaterialHologramFlickerMaxSum.Get(fWorkData.Hologram.FlickerMax);
+  fWorkData.Hologram.MainColorFactor.xyz:=MaterialHologramMainColorSum.Get(fWorkData.Hologram.MainColorFactor.xyz);
+  fWorkData.Hologram.MainColorFactor.w:=MaterialHologramMainAlphaSum.Get(fWorkData.Hologram.MainColorFactor.w);
+  fWorkData.Hologram.RimColorFactor.xyz:=MaterialHologramRimColorSum.Get(fWorkData.Hologram.RimColorFactor.xyz);
+  fWorkData.Hologram.RimColorFactor.w:=MaterialHologramRimAlphaSum.Get(fWorkData.Hologram.RimColorFactor.w);
+  fWorkData.Hologram.RimPower:=MaterialHologramRimPowerSum.Get(fWorkData.Hologram.RimPower);
+  fWorkData.Hologram.RimThreshold:=MaterialHologramRimThresholdSum.Get(fWorkData.Hologram.RimThreshold);
+  fWorkData.Hologram.ScanTiling:=MaterialHologramScanTilingSum.Get(fWorkData.Hologram.ScanTiling);
+  fWorkData.Hologram.ScanSpeed:=MaterialHologramScanSpeedSum.Get(fWorkData.Hologram.ScanSpeed);
+  fWorkData.Hologram.ScanMin:=MaterialHologramScanMinSum.Get(fWorkData.Hologram.ScanMin);
+  fWorkData.Hologram.ScanMax:=MaterialHologramScanMaxSum.Get(fWorkData.Hologram.ScanMax);
+  fWorkData.Hologram.GlowTiling:=MaterialHologramGlowTilingSum.Get(fWorkData.Hologram.GlowTiling);
+  fWorkData.Hologram.GlowSpeed:=MaterialHologramGlowSpeedSum.Get(fWorkData.Hologram.GlowSpeed);
+  fWorkData.Hologram.GlowMin:=MaterialHologramGlowMinSum.Get(fWorkData.Hologram.GlowMin);
+  fWorkData.Hologram.GlowMax:=MaterialHologramGlowMaxSum.Get(fWorkData.Hologram.GlowMax);
   begin
    AnimatedTextureMask:=fData.AnimatedTextureMask;
    while AnimatedTextureMask<>0 do begin
@@ -19963,16 +20748,21 @@ begin
  fActiveMask:=0;
 
  if length(fInstance.fLightNodes)>0 then begin
-  fLights:=TpvScene3D.TLights.Create(true);
-  for Index:=0 to length(fInstance.fLightNodes)-1 do begin
-   Light:=TpvScene3D.TLight.Create(fSceneInstance);
-   try
-    Light.fData.fVisible:=false;
-    Light.fDataPointer:=@Light.fData;
-    Light.fVisible:=false;
-   finally
-    fLights.Add(Light);
+  fSceneInstance.fLightsLock.Acquire;
+  try
+   fLights:=TpvScene3D.TLights.Create(true);
+   for Index:=0 to length(fInstance.fLightNodes)-1 do begin
+    Light:=TpvScene3D.TLight.Create(fSceneInstance);
+    try
+     Light.fData.fVisible:=false;
+     Light.fDataPointer:=@Light.fData;
+     Light.fVisible:=false;
+    finally
+     fLights.Add(Light);
+    end;
    end;
+  finally
+   fSceneInstance.fLightsLock.Release;
   end;
  end else begin
   fLights:=nil;
@@ -20067,17 +20857,27 @@ begin
      if (Light.fMatrix<>LightMatrix) or
         (Light.fDataPointer<>InstanceNode.fLight.fDataPointer) or
         (Light.fGeneration<>InstanceNode.fLight.fGeneration) then begin
-      Light.fMatrix:=LightMatrix;
-      Light.fDataPointer:=InstanceNode.fLight.fDataPointer;
-      Light.fGeneration:=InstanceNode.fLight.fGeneration;
-      Light.Update;
+      fSceneInstance.fLightsLock.Acquire;
+      try
+       Light.fMatrix:=LightMatrix;
+       Light.fDataPointer:=InstanceNode.fLight.fDataPointer;
+       Light.fGeneration:=InstanceNode.fLight.fGeneration;
+       Light.Update;
+      finally
+       fSceneInstance.fLightsLock.Release;
+      end;
      end;
     end else begin
      if Light.fDataPointer^.fVisible or (Light.fDataPointer<>@Light.fData) then begin
-      Light.fData.fVisible:=false;
-      Light.fDataPointer:=@Light.fData;
-      Light.fVisible:=false;
-      Light.Update;
+      fSceneInstance.fLightsLock.Acquire;
+      try
+       Light.fData.fVisible:=false;
+       Light.fDataPointer:=@Light.fData;
+       Light.fVisible:=false;
+       Light.Update;
+      finally
+       fSceneInstance.fLightsLock.Release;
+      end;
      end;
     end;
    end;
@@ -20090,16 +20890,29 @@ var Index:TpvSizeInt;
     Light:TpvScene3D.TLight;
 begin
  if assigned(fLights) and (length(fInstance.fLightNodes)>0) then begin
-  for Index:=0 to fLights.Count-1 do begin
-   Light:=fLights[Index];
-   if assigned(Light) and (Light.fDataPointer^.fVisible or (Light.fDataPointer<>@Light.fData)) then begin
-    Light.fData.fVisible:=false;
-    Light.fDataPointer:=@Light.fData;
-    Light.fVisible:=false;
-    Light.Update;
+  fSceneInstance.fLightsLock.Acquire;
+  try
+   for Index:=0 to fLights.Count-1 do begin
+    Light:=fLights[Index];
+    if assigned(Light) and (Light.fDataPointer^.fVisible or (Light.fDataPointer<>@Light.fData)) then begin
+     Light.fData.fVisible:=false;
+     Light.fDataPointer:=@Light.fData;
+     Light.fVisible:=false;
+     Light.Update;
+    end;
    end;
+  finally
+   fSceneInstance.fLightsLock.Release;
   end;
  end;
+end;
+
+{ TpvScene3D.THeadlessGroup }
+
+constructor TpvScene3D.THeadlessGroup.Create(const aResourceManager:TpvResourceManager;const aParent:TpvResource;const aMetaResource:TpvMetaResource;const aParallelLoadable:TpvResource.TParallelLoadable);
+begin
+ inherited Create(aResourceManager,aParent,aMetaResource,aParallelLoadable);
+ Headless:=true;
 end;
 
 { TpvScene3D.TGroup.TInstances }
@@ -20434,6 +21247,23 @@ begin
  end;
 
  fAnimations[0].Factor:=1.0;
+
+ fLastAnimationStates:=nil;
+ fAnimationStates:=nil;
+ fPointerAnimationStates:=nil;
+
+ fUseAnimationStates:=false;
+
+ SetLength(fLastAnimationStates,length(fAnimations));
+ SetLength(fAnimationStates,length(fAnimations));
+ SetLength(fPointerAnimationStates,length(fAnimations));
+
+ FillChar(fLastAnimationStates[0],SizeOf(TpvScene3D.TGroup.TInstance.TAnimationState)*length(fAnimations),#0);
+ FillChar(fAnimationStates[0],SizeOf(TpvScene3D.TGroup.TInstance.TAnimationState)*length(fAnimations),#0);
+
+ for Index:=0 to length(fAnimations)-1 do begin
+  fPointerAnimationStates[Index]:=@fAnimationStates[Index];
+ end;
 
  fNodeMatrices:=nil;
 
@@ -20855,6 +21685,12 @@ begin
 
  fMaterialMap:=nil;
 
+ fLastAnimationStates:=nil;
+
+ fAnimationStates:=nil;
+
+ fPointerAnimationStates:=nil;
+
  fAnimations:=nil;
 
  fNodeMatrices:=nil;
@@ -21070,9 +21906,14 @@ begin
 
 end;
 
-function TpvScene3D.TGroup.TInstance.GetAutomation(const aIndex:TPasGLTFSizeInt):TpvScene3D.TGroup.TInstance.TAnimation;
+function TpvScene3D.TGroup.TInstance.GetAnimation(const aIndex:TPasGLTFSizeInt):TpvScene3D.TGroup.TInstance.TAnimation;
 begin
  result:=fAnimations[aIndex+1];
+end;
+
+function TpvScene3D.TGroup.TInstance.GetAnimationState(const aIndex:TPasGLTFSizeInt):TpvScene3D.TGroup.TInstance.PAnimationState;
+begin
+ result:=@fAnimationStates[aIndex+1];
 end;
 
 procedure TpvScene3D.TGroup.TInstance.SetScene(const aScene:TpvSizeInt);
@@ -22334,6 +23175,24 @@ procedure TpvScene3D.TGroup.TInstance.Update(const aInFlightFrameIndex:TpvSizeIn
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRAnisotropyStrength,
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRAnisotropyRotation,
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRDispersion,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramDirection,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramFlickerSpeed,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramFlickerMin,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramFlickerMax,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramMainColor,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramMainAlpha,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramRimColor,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramRimAlpha,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramRimPower,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramRimThreshold,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramScanTiling,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramScanSpeed,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramScanMin,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramScanMax,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramGlowTiling,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramGlowSpeed,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramGlowMin, 
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramGlowMax,
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureOffset,
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureRotation,
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureScale:begin
@@ -22514,6 +23373,96 @@ procedure TpvScene3D.TGroup.TInstance.Update(const aInFlightFrameIndex:TpvSizeIn
              ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
              Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRDispersion);
              MaterialOverwrite^.MaterialPBRDispersion:=Scalar;
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramDirection:begin
+             ProcessVector3(Vector3,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
+             Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramDirection);
+             MaterialOverwrite^.MaterialHologramDirection:=Vector3;
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramFlickerSpeed:begin
+             ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
+             Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramFlickerSpeed);
+             MaterialOverwrite^.MaterialHologramFlickerSpeed:=Scalar;
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramFlickerMin:begin
+             ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
+             Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramFlickerMin);
+             MaterialOverwrite^.MaterialHologramFlickerMin:=Scalar;
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramFlickerMax:begin
+             ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
+             Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramFlickerMax);
+             MaterialOverwrite^.MaterialHologramFlickerMax:=Scalar;
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramMainColor:begin
+             ProcessVector3(Vector3,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
+             Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramMainColor);
+             MaterialOverwrite^.MaterialHologramMainColor:=Vector3;
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramMainAlpha:begin
+             ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
+             Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramMainAlpha);
+             MaterialOverwrite^.MaterialHologramMainAlpha:=Scalar;
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramRimColor:begin
+             ProcessVector3(Vector3,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
+             Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramRimColor);
+             MaterialOverwrite^.MaterialHologramRimColor:=Vector3;
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramRimAlpha:begin
+             ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
+             Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramRimAlpha);
+             MaterialOverwrite^.MaterialHologramRimAlpha:=Scalar;
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramRimPower:begin
+             ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
+             Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramRimPower);
+             MaterialOverwrite^.MaterialHologramRimPower:=Scalar;
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramRimThreshold:begin
+             ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
+             Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramRimThreshold);
+             MaterialOverwrite^.MaterialHologramRimThreshold:=Scalar;
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramScanTiling:begin
+             ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
+             Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramScanTiling);
+             MaterialOverwrite^.MaterialHologramScanTiling:=Scalar;
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramScanSpeed:begin
+             ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
+             Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramScanSpeed);
+             MaterialOverwrite^.MaterialHologramScanSpeed:=Scalar;
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramScanMin:begin
+             ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
+             Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramScanMin);
+             MaterialOverwrite^.MaterialHologramScanMin:=Scalar;
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramScanMax:begin
+             ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
+             Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramScanMax);
+             MaterialOverwrite^.MaterialHologramScanMax:=Scalar;
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramGlowTiling:begin
+             ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
+             Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramGlowTiling);
+             MaterialOverwrite^.MaterialHologramGlowTiling:=Scalar;
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramGlowSpeed:begin
+             ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
+             Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramGlowSpeed);
+             MaterialOverwrite^.MaterialHologramGlowSpeed:=Scalar;
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramGlowMin:begin
+             ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
+             Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramGlowMin);
+             MaterialOverwrite^.MaterialHologramGlowMin:=Scalar;
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramGlowMax:begin
+             ProcessScalar(Scalar,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
+             Include(MaterialOverwrite^.Flags,TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramGlowMax);
+             MaterialOverwrite^.MaterialHologramGlowMax:=Scalar;
             end;
             TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureOffset:begin
              ProcessVector2(Vector2,AnimationChannel,TimeIndices[0],TimeIndices[1],KeyDelta,Factor);
@@ -22807,6 +23756,24 @@ procedure TpvScene3D.TGroup.TInstance.Update(const aInFlightFrameIndex:TpvSizeIn
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRAnisotropyStrength,
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRAnisotropyRotation,
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRDispersion,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramDirection,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramFlickerSpeed,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramFlickerMin,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramFlickerMax,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramMainColor,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramMainAlpha,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramRimColor,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramRimAlpha,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramRimPower,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramRimThreshold,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramScanTiling,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramScanSpeed,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramScanMin,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramScanMax,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramGlowTiling,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramGlowSpeed,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramGlowMin,
+      TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramGlowMax,
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureOffset,
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureRotation,
       TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureScale:begin
@@ -22948,6 +23915,78 @@ procedure TpvScene3D.TGroup.TInstance.Update(const aInFlightFrameIndex:TpvSizeIn
             TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRDispersion:begin
              MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialPBRDispersion,
                                                                  TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialPBRDispersion];
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramDirection:begin
+             MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramDirection,
+                                                                 TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramDirection];
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramFlickerSpeed:begin
+             MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramFlickerSpeed,
+                                                                 TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramFlickerSpeed];
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramFlickerMin:begin
+             MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramFlickerMin,
+                                                                 TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramFlickerMin];
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramFlickerMax:begin
+             MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramFlickerMax,
+                                                                 TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramFlickerMax];
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramMainColor:begin
+             MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramMainColor,
+                                                                 TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramMainColor];
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramMainAlpha:begin
+             MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramMainAlpha,
+                                                                 TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramMainAlpha];
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramRimColor:begin
+             MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramRimColor,
+                                                                 TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramRimColor];
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramRimAlpha:begin
+             MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramRimAlpha,
+                                                                 TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramRimAlpha];
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramRimPower:begin
+             MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramRimPower,
+                                                                 TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramRimPower];
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramRimThreshold:begin
+             MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramRimThreshold,
+                                                                 TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramRimThreshold];
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramScanTiling:begin
+             MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramScanTiling,
+                                                                 TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramScanTiling];
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramScanSpeed:begin
+             MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramScanSpeed,
+                                                                 TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramScanSpeed];
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramScanMin:begin
+             MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramScanMin,
+                                                                 TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramScanMin];
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramScanMax:begin
+             MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramScanMax,
+                                                                 TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramScanMax];
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramGlowTiling:begin
+             MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramGlowTiling,
+                                                                 TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramGlowTiling];
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramGlowSpeed:begin
+             MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramGlowSpeed,
+                                                                 TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramGlowSpeed];
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramGlowMin:begin
+             MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramGlowMin,
+                                                                 TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramGlowMin];
+            end;
+            TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramGlowMax:begin
+             MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultMaterialHologramGlowMax,
+                                                                 TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.MaterialHologramGlowMax];
             end;
             TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureOffset:begin
              MaterialOverwrite^.Flags:=MaterialOverwrite^.Flags+[TpvScene3D.TGroup.TInstance.TMaterial.TMaterialOverwriteFlag.DefaultTextureOffset,
@@ -23182,25 +24221,35 @@ procedure TpvScene3D.TGroup.TInstance.Update(const aInFlightFrameIndex:TpvSizeIn
      if (Light.fMatrix<>LightMatrix) or
         (Light.fDataPointer<>InstanceLight.fEffectiveData) or
         (Light.fGeneration<>InstanceLight.fEffectiveData.fGeneration) then begin
-      Light.fMatrix:=LightMatrix;
-      Light.fDataPointer:=InstanceLight.fEffectiveData;
-      Light.fGeneration:=InstanceLight.fEffectiveData.fGeneration;
-      Light.fIgnore:=fUseRenderInstances;
-      Light.Update;
+      fGroup.fSceneInstance.fLightsLock.Acquire;
+      try
+       Light.fMatrix:=LightMatrix;
+       Light.fDataPointer:=InstanceLight.fEffectiveData;
+       Light.fGeneration:=InstanceLight.fEffectiveData.fGeneration;
+       Light.fIgnore:=fUseRenderInstances;
+       Light.Update;
+      finally
+       fGroup.fSceneInstance.fLightsLock.Release;
+      end;
      end;
     end else begin
-     Light:=TpvScene3D.TLight.Create(fSceneInstance);
+     fGroup.fSceneInstance.fLightsLock.Acquire;
      try
-      Light.fLight:=Node.fLight;
-      Light.fInstanceLight:=InstanceLight;
-      Light.fData:=Node.fLight.fData;
-      Light.fDataPointer:=InstanceLight.fEffectiveData;
-      Light.fGeneration:=InstanceLight.fEffectiveData.fGeneration;
-      Light.fMatrix:=LightMatrix;
-      Light.fIgnore:=fUseRenderInstances;
-      Light.Update;
+      Light:=TpvScene3D.TLight.Create(fSceneInstance);
+      try
+       Light.fLight:=Node.fLight;
+       Light.fInstanceLight:=InstanceLight;
+       Light.fData:=Node.fLight.fData;
+       Light.fDataPointer:=InstanceLight.fEffectiveData;
+       Light.fGeneration:=InstanceLight.fEffectiveData.fGeneration;
+       Light.fMatrix:=LightMatrix;
+       Light.fIgnore:=fUseRenderInstances;
+       Light.Update;
+      finally
+       InstanceNode.fLight:=Light;
+      end;
      finally
-      InstanceNode.fLight:=Light;
+      fGroup.fSceneInstance.fLightsLock.Release;
      end;
     end;
    end;
@@ -23551,13 +24600,13 @@ var Index,OtherIndex,PerInFlightFrameRenderInstanceIndex:TpvSizeInt;
     Node:TpvScene3D.TGroup.TNode;
     InstanceNode:TpvScene3D.TGroup.TInstance.TNode;
     InstanceMaterial:TpvScene3D.TGroup.TInstance.TMaterial;
-    HasMaterialUpdate,Dirty,First:boolean;
+    IsActive,HasMaterialUpdate,Dirty,First:boolean;
     RenderInstance:TpvScene3D.TGroup.TInstance.TRenderInstance;
     PerInFlightFrameRenderInstance:TpvScene3D.TGroup.TInstance.PPerInFlightFrameRenderInstance;
     AABBTreeState:TpvBVHDynamicAABBTree.PState;
     AABBTreeNode:TpvBVHDynamicAABBTree.PTreeNode;
     AABBTreeNodePotentiallyVisibleSet:TpvScene3D.TPotentiallyVisibleSet.TNodeIndex;
-    StartCPUTime,EndCPUTime:TpvHighResolutionTime;
+/// StartCPUTime,EndCPUTime:TpvHighResolutionTime;
     TemporaryBoundingBox:TpvAABB;
 begin
 
@@ -23568,15 +24617,36 @@ begin
   SetDirty;
  end;
 
+ if fActive then begin
+  if fUseRenderInstances then begin
+   if fRenderInstances.Count>0 then begin
+    IsActive:=false;
+    for Index:=0 to fRenderInstances.Count-1 do begin
+     RenderInstance:=fRenderInstances[Index];
+     if RenderInstance.fActive then begin
+      IsActive:=true;
+      break;
+     end;
+    end;
+   end else begin
+    IsActive:=false;
+   end; 
+  end else begin
+   IsActive:=true;
+  end;   
+ end else begin
+  IsActive:=false;
+ end; 
+
  if aInFlightFrameIndex>=0 then begin
 
-  fActives[aInFlightFrameIndex]:=fActive;
+  fActives[aInFlightFrameIndex]:=IsActive;
 
 //fModelMatrices[aInFlightFrameIndex]:=fModelMatrix;
 
  end;
 
- if fActive then begin
+ if IsActive then begin
 
   Scene:=GetScene;
 
@@ -23604,7 +24674,7 @@ begin
     fSkins[Index].Used:=false;
    end;
 
-   StartCPUTime:=pvApplication.HighResolutionTimer.GetTime;
+// StartCPUTime:=pvApplication.HighResolutionTimer.GetTime;
    begin
 
     WeightSum:=0.0;
@@ -23632,8 +24702,9 @@ begin
     end;
 
    end;
-   EndCPUTime:=pvApplication.HighResolutionTimer.GetTime;
-   //write(pvApplication.HighResolutionTimer.ToFloatSeconds(EndCPUTime-StartCPUTime)*1000:5:2,'ms');
+// EndCPUTime:=pvApplication.HighResolutionTimer.GetTime;
+// inc(TotalCPUTime,EndCPUTime-StartCPUTime);
+// write(pvApplication.HighResolutionTimer.ToFloatSeconds(EndCPUTime-StartCPUTime)*1000:5:2,'ms');
 
    if aInFlightFrameIndex>=0 then begin
 
@@ -23664,9 +24735,13 @@ begin
     dec(fDirtyCounter);
    end;
 
+// StartCPUTime:=pvApplication.HighResolutionTimer.GetTime;
    for Index:=0 to Scene.fNodes.Count-1 do begin
     ProcessNode(Scene.fNodes[Index].Index,TpvMatrix4x4.Identity,Dirty);
    end;
+// EndCPUTime:=pvApplication.HighResolutionTimer.GetTime;
+//   inc(TotalCPUTime,EndCPUTime-StartCPUTime);
+//   write(pvApplication.HighResolutionTimer.ToFloatSeconds(EndCPUTime-StartCPUTime)*1000:5:2,'ms');
 
    if aInFlightFrameIndex>=0 then begin
     for Index:=0 to fNodes.Count-1 do begin
@@ -23686,10 +24761,14 @@ begin
     end;
    end;
 
+// StartCPUTime:=pvApplication.HighResolutionTimer.GetTime;
    ProcessSkins;
+// EndCPUTime:=pvApplication.HighResolutionTimer.GetTime;
+//   inc(TotalCPUTime,EndCPUTime-StartCPUTime);
 
    fNodeMatrices[0]:=fModelMatrix;
 
+// StartCPUTime:=pvApplication.HighResolutionTimer.GetTime;
    for Index:=0 to fGroup.fNodes.Count-1 do begin
     Node:=fGroup.fNodes[Index];
     InstanceNode:=fNodes.RawItems[Index];
@@ -23698,6 +24777,8 @@ begin
      Move(InstanceNode.fWorkWeights[0],fMorphTargetVertexWeights[Node.fWeightsOffset],length(InstanceNode.fWorkWeights)*SizeOf(TpvFloat));
     end;
    end;
+// EndCPUTime:=pvApplication.HighResolutionTimer.GetTime;
+// inc(TotalCPUTime,EndCPUTime-StartCPUTime);
 
    if aInFlightFrameIndex>=(-1) then begin
 
@@ -23707,6 +24788,7 @@ begin
      InstanceNode.fBoundingBoxFilled[aInFlightFrameIndex]:=false;
     end;
 
+//  StartCPUTime:=pvApplication.HighResolutionTimer.GetTime;
     for Index:=0 to Scene.fAllNodes.Count-1 do begin
      Node:=Scene.fAllNodes[Index];
      InstanceNode:=fNodes.RawItems[Node.Index];
@@ -23726,13 +24808,19 @@ begin
       InstanceNode.fBoundingBoxFilled[aInFlightFrameIndex]:=false;
      end;
     end;
+//  EndCPUTime:=pvApplication.HighResolutionTimer.GetTime;
+//  inc(TotalCPUTime,EndCPUTime-StartCPUTime);
 
+//  StartCPUTime:=pvApplication.HighResolutionTimer.GetTime;
     ProcessBoundingSceneBoxNodes(Scene);
+//  EndCPUTime:=pvApplication.HighResolutionTimer.GetTime;
+//  inc(TotalCPUTime,EndCPUTime-StartCPUTime);
 
    end;
 
    if aInFlightFrameIndex>=0 then begin
 
+//  StartCPUTime:=pvApplication.HighResolutionTimer.GetTime;
     for Index:=0 to Scene.fAllNodes.Count-1 do begin
      Node:=Scene.fAllNodes[Index];
      InstanceNode:=fNodes.RawItems[Node.Index];
@@ -23747,8 +24835,11 @@ begin
       InstanceNode.fPotentiallyVisibleSetNodeIndices[aInFlightFrameIndex]:=TpvScene3D.TPotentiallyVisibleSet.NoNodeIndex;
      end;
     end;
+//  EndCPUTime:=pvApplication.HighResolutionTimer.GetTime;
+//  inc(TotalCPUTime,EndCPUTime-StartCPUTime);
 
     if assigned(fAABBTree) then begin
+//   StartCPUTime:=pvApplication.HighResolutionTimer.GetTime;
      for Index:=0 to Scene.fAllNodes.Count-1 do begin
       Node:=Scene.fAllNodes[Index];
       InstanceNode:=fNodes.RawItems[Node.Index];
@@ -23763,6 +24854,8 @@ begin
        InstanceNode.fAABBTreeProxy:=-1;
       end;
      end;
+//   EndCPUTime:=pvApplication.HighResolutionTimer.GetTime;
+//   inc(TotalCPUTime,EndCPUTime-StartCPUTime);
     end;
 
    end;
@@ -23856,14 +24949,19 @@ begin
    end;
   end;
 
-  if fAABBTreeProxy<0 then begin
-   fAABBTreeProxy:=fGroup.fSceneInstance.fAABBTree.CreateProxy(fBoundingBox,TpvPtrInt(Pointer(self)));
-  end else begin
-   if fUseRenderInstances then begin
-    fGroup.fSceneInstance.fAABBTree.MoveProxy(fAABBTreeProxy,TpvAABB.Create(-TpvVector3.AllMaxAxis,TpvVector3.AllMaxAxis),TpvVector3.Null,TpvVector3.AllAxis);
+  fGroup.fSceneInstance.fAABBTreeLock.Acquire;
+  try
+   if fAABBTreeProxy<0 then begin
+    fAABBTreeProxy:=fGroup.fSceneInstance.fAABBTree.CreateProxy(fBoundingBox,TpvPtrInt(Pointer(self)));
    end else begin
-    fGroup.fSceneInstance.fAABBTree.MoveProxy(fAABBTreeProxy,fBoundingBox,TpvVector3.Null,TpvVector3.AllAxis);
+    if fUseRenderInstances then begin
+     fGroup.fSceneInstance.fAABBTree.MoveProxy(fAABBTreeProxy,TpvAABB.Create(-TpvVector3.AllMaxAxis,TpvVector3.AllMaxAxis),TpvVector3.Null,TpvVector3.AllAxis);
+    end else begin
+     fGroup.fSceneInstance.fAABBTree.MoveProxy(fAABBTreeProxy,fBoundingBox,TpvVector3.Null,TpvVector3.AllAxis);
+    end;
    end;
+  finally
+   fGroup.fSceneInstance.fAABBTreeLock.Release;
   end;
 
   if aInFlightFrameIndex>=0 then begin
@@ -23885,7 +24983,12 @@ begin
     if assigned(fGroup) and
        assigned(fGroup.fSceneInstance) and
        assigned(fGroup.fSceneInstance.fAABBTree) then begin
-     fGroup.fSceneInstance.fAABBTree.DestroyProxy(fAABBTreeProxy);
+     fGroup.fSceneInstance.fAABBTreeLock.Acquire;
+     try
+      fGroup.fSceneInstance.fAABBTree.DestroyProxy(fAABBTreeProxy);
+     finally
+      fGroup.fSceneInstance.fAABBTreeLock.Release;
+     end;
     end;
    finally
     fAABBTreeProxy:=-1;
@@ -23895,11 +24998,21 @@ begin
   for Index:=0 to fNodes.Count-1 do begin
    InstanceNode:=fNodes.RawItems[Index];
    if assigned(InstanceNode.fLight) then begin
-    FreeAndNil(InstanceNode.fLight);
+    fGroup.fSceneInstance.fLightsLock.Acquire;
+    try
+     FreeAndNil(InstanceNode.fLight);
+    finally
+     fGroup.fSceneInstance.fLightsLock.Release;
+    end;
    end;
    if assigned(fAABBTree) and (InstanceNode.fAABBTreeProxy>=0) then begin
     try
-     fAABBTree.DestroyProxy(InstanceNode.fAABBTreeProxy);
+     fGroup.fSceneInstance.fAABBTreeLock.Acquire;
+     try
+      fAABBTree.DestroyProxy(InstanceNode.fAABBTreeProxy);
+     finally
+      fGroup.fSceneInstance.fAABBTreeLock.Release;
+     end;
     finally
      InstanceNode.fAABBTreeProxy:=-1;
     end;
@@ -24446,6 +25559,122 @@ function TpvScene3D.TGroup.TInstance.CreateRenderInstance:TpvScene3D.TGroup.TIns
 begin
  result:=TpvScene3D.TGroup.TInstance.TRenderInstance.Create(self);
  fUseRenderInstances:=true;
+end;
+
+procedure TpvScene3D.TGroup.TInstance.StoreAnimationStates;
+begin
+ if fUseAnimationStates and (length(fAnimationStates)>0) then begin
+  Move(fAnimationStates[0],fLastAnimationStates[0],SizeOf(TpvScene3D.TGroup.TInstance.TAnimationState)*length(fAnimationStates));
+ end;
+end;
+
+procedure TpvScene3D.TGroup.TInstance.InterpolateAnimationStates(const aAlpha:TpvDouble);
+var Index:TpvSizeInt;
+    Alpha,InvAlpha,AnimationLength:TpvDouble;
+    GroupAnimation:TpvScene3D.TGroup.TAnimation;
+    GroupInstanceAnimation:TpvScene3D.TGroup.TInstance.TAnimation;
+    LastAnimationState,AnimationState:TpvScene3D.TGroup.TInstance.PAnimationState;
+    Time:TpvDouble;
+begin
+ 
+ if fUseAnimationStates then begin
+ 
+  // Clamp alpha
+  if aAlpha<0.0 then begin
+   Alpha:=0.0;
+  end else if aAlpha>1.0 then begin
+   Alpha:=1.0;
+  end else begin
+   Alpha:=aAlpha;
+  end;
+  
+  // Calculate inverse alpha
+  InvAlpha:=1.0-Alpha;
+  
+  // Interpolate all animation states
+  for Index:=0 to length(fAnimationStates)-1 do begin
+  
+   LastAnimationState:=@fLastAnimationStates[Index];
+  
+   AnimationState:=@fAnimationStates[Index];
+  
+   // 0 is "No animation" (-1 at group level, since 0 is the first animation in the TGroup instance, thus the -1 offset)
+   if Index>0 then begin
+    GroupAnimation:=fGroup.fAnimations[Index-1];
+   end else begin
+    GroupAnimation:=nil;
+   end;
+  
+   GroupInstanceAnimation:=fAnimations[Index];
+  
+   // Interpolate float values
+   GroupInstanceAnimation.fFactor:=(LastAnimationState^.fFactor*InvAlpha)+(AnimationState^.fFactor*Alpha);
+   GroupInstanceAnimation.fTime:=(LastAnimationState^.fTime*InvAlpha)+(AnimationState^.fTime*Alpha);
+   GroupInstanceAnimation.fShadowTime:=(LastAnimationState^.fShadowTime*InvAlpha)+(AnimationState^.fShadowTime*Alpha);
+
+   if assigned(GroupAnimation) then begin
+
+    AnimationLength:=GroupAnimation.fAnimationEndTime-GroupAnimation.fAnimationBeginTime;
+
+    Time:=GroupInstanceAnimation.fTime;
+    if Time>=0.0 then begin
+     if not (TpvScene3D.TGroup.TInstance.TAnimationState.TAnimationStateFlag.Relative in AnimationState^.fFlags) then begin
+      Time:=Time+GroupAnimation.fAnimationBeginTime;
+     end;
+     if (TpvScene3D.TGroup.TInstance.TAnimationState.TAnimationStateFlag.Wrapping in AnimationState^.fFlags) and
+        (AnimationLength>0.0) and ((Time<GroupAnimation.fAnimationBeginTime) or (Time>GroupAnimation.fAnimationEndTime)) then begin
+      Time:=GroupAnimation.fAnimationBeginTime+(frac((Time-GroupAnimation.fAnimationBeginTime)/AnimationLength)*AnimationLength);
+     end;
+     if TpvScene3D.TGroup.TInstance.TAnimationState.TAnimationStateFlag.Clamping in AnimationState^.fFlags then begin
+      if Time<GroupAnimation.fAnimationBeginTime then begin
+       Time:=GroupAnimation.fAnimationBeginTime;
+      end else if Time>GroupAnimation.fAnimationEndTime then begin
+       Time:=GroupAnimation.fAnimationEndTime;
+      end;
+     end;
+     GroupInstanceAnimation.fTime:=Time;
+    end; 
+
+    Time:=GroupInstanceAnimation.fShadowTime;
+    if Time>=0.0 then begin
+     if not (TpvScene3D.TGroup.TInstance.TAnimationState.TAnimationStateFlag.Relative in AnimationState^.fFlags) then begin
+      Time:=Time+GroupAnimation.fAnimationBeginTime;
+     end;
+     if (TpvScene3D.TGroup.TInstance.TAnimationState.TAnimationStateFlag.Wrapping in AnimationState^.fFlags) and
+        (AnimationLength>0.0) and ((Time<GroupAnimation.fAnimationBeginTime) or (Time>GroupAnimation.fAnimationEndTime)) then begin
+      Time:=GroupAnimation.fAnimationBeginTime+(frac((Time-GroupAnimation.fAnimationBeginTime)/AnimationLength)*AnimationLength);
+     end;
+     if TpvScene3D.TGroup.TInstance.TAnimationState.TAnimationStateFlag.Clamping in AnimationState^.fFlags then begin
+      if Time<GroupAnimation.fAnimationBeginTime then begin
+       Time:=GroupAnimation.fAnimationBeginTime;
+      end else if Time>GroupAnimation.fAnimationEndTime then begin
+       Time:=GroupAnimation.fAnimationEndTime;
+      end;
+     end;
+     GroupInstanceAnimation.fShadowTime:=Time;
+    end; 
+
+   end else begin
+
+    // "No animation" has no animation begin and end times, so just reset the times to zero 
+    GroupInstanceAnimation.fTime:=0.0;
+    GroupInstanceAnimation.fShadowTime:=0.0;
+
+   end;
+
+  // Interpolate boolean values with thresholding at 0.5, since these are binary values
+   if Alpha>=0.5 then begin
+    GroupInstanceAnimation.fAdditive:=TpvScene3D.TGroup.TInstance.TAnimationState.TAnimationStateFlag.Additive in AnimationState^.fFlags;
+    GroupInstanceAnimation.fComplete:=TpvScene3D.TGroup.TInstance.TAnimationState.TAnimationStateFlag.Complete in AnimationState^.fFlags;
+   end else begin
+    GroupInstanceAnimation.fAdditive:=TpvScene3D.TGroup.TInstance.TAnimationState.TAnimationStateFlag.Additive in LastAnimationState^.fFlags;
+    GroupInstanceAnimation.fComplete:=TpvScene3D.TGroup.TInstance.TAnimationState.TAnimationStateFlag.Complete in LastAnimationState^.fFlags;
+   end;
+
+  end;
+
+ end;
+
 end;
 
 procedure TpvScene3D.TGroup.TInstance.SetModelMatrix(const aModelMatrix:TpvMatrix4x4);
@@ -25009,6 +26238,8 @@ begin
 
  inherited Create(aResourceManager,aParent,aMetaResource);
 
+ fPasMPInstance:=nil;
+
  fLoadLock:=TPasMPSpinLock.Create;
 
  fLoadGLTFTimeDurationLock:=0;
@@ -25274,6 +26505,10 @@ begin
 
  fTechniques:=TpvTechniques.Create;
 
+ fParallelGroupInstanceUpdateQueue.Initialize;
+
+ fParallelGroupInstanceUpdateQueueLock:=TPasMPSlimReaderWriterLock.Create;
+
  fCullObjectIDLock:=TPasMPSlimReaderWriterLock.Create;
 
  fCullObjectIDManager:=TpvScene3D.TIDManager.Create;
@@ -25331,6 +26566,8 @@ begin
  FillChar(fMaterialIDMap,SizeOf(TMaterialIDMap),#0);
 
  fMaterialHashMap:=TMaterialHashMap.Create(nil);
+
+ fMaterialExistHashMap:=TMaterialExistHashMap.Create(false);
 
  FillChar(fInFlightFrameMaterialBufferDataGenerations,SizeOf(TInFlightFrameMaterialBufferDataGenerations),#$ff);
 
@@ -25705,7 +26942,11 @@ begin
   fLightBuffers[Index]:=TpvScene3D.TLightBuffer.Create(self,Index);
  end;
 
+ fLightsLock:=TPasMPSlimReaderWriterLock.Create;
+
  fAABBTree:=TpvBVHDynamicAABBTree.Create;
+
+ fAABBTreeLock:=TPasMPSlimReaderWriterLock.Create;
 
  for Index:=0 to fCountInFlightFrames-1 do begin
   fAABBTreeStates[Index].TreeNodes:=nil;
@@ -26008,6 +27249,7 @@ begin
  end;
  FreeAndNil(fMaterials);
  FreeAndNil(fMaterialHashMap);
+ FreeAndNil(fMaterialExistHashMap);
  FreeAndNil(fMaterialIDHashMap);
  FreeAndNil(fMaterialIDManager);
  FreeAndNil(fMaterialListLock);
@@ -26066,6 +27308,10 @@ begin
  FreeAndNil(fCullObjectIDManager);
 
  FreeAndNil(fCullObjectIDLock);
+
+ fParallelGroupInstanceUpdateQueue.Finalize;
+
+ FreeAndNil(fParallelGroupInstanceUpdateQueueLock);
 
  FreeAndNil(fTechniques);
 
@@ -26211,6 +27457,10 @@ begin
  FreeAndNil(fRendererInstanceLock);
 
  FreeAndNil(fBlueNoise2DTexture);
+
+ FreeAndNil(fAABBTreeLock);
+
+ FreeAndNil(fLightsLock);
 
  fLastProcessFrameTimerQueryResults:=nil;
 
@@ -26617,13 +27867,23 @@ begin
 end;
 
 procedure TpvScene3D.DumpMemoryUsage(const aStringList:TStringList);
-var Group:TGroup;
+var Image:TImage;
+    Group:TGroup;
     GroupInstance:TGroup.TInstance;
     TotalSizeVRAM,TotalSizeRAM:TpvUInt64;
 begin
 
  TotalSizeVRAM:=0;
  TotalSizeRAM:=0;
+
+ fImageListLock.Acquire;
+ try
+  for Image in fImages do begin
+   Image.DumpMemoryUsage(aStringList,TotalSizeVRAM,TotalSizeRAM);
+  end;
+ finally
+  fImageListLock.Release;
+ end;
 
  fGroupListLock.Acquire;
  try
@@ -27479,6 +28739,22 @@ begin
 
 end;
 
+procedure TpvScene3D.StoreAnimationStates;
+var Group:TGroup;
+begin
+ for Group in fGroups do begin
+  Group.StoreAnimationStates;
+ end;
+end;
+
+procedure TpvScene3D.InterpolateAnimationStates(const aAlpha:TpvDouble);
+var Group:TGroup;
+begin
+ for Group in fGroups do begin
+  Group.InterpolateAnimationStates(aAlpha);
+ end;
+end;
+
 procedure TpvScene3D.ResetSurface;
 begin
  if assigned(fMeshCompute) then begin
@@ -27514,6 +28790,98 @@ begin
  end;
 end;
 
+// This procedure processes group instances in a parallel manner within a 
+// Directed Acyclic Graph (DAG) structure. Each group instance can only be 
+// updated if all its dependencies are processed. The function works by 
+// dequeuing instances from a parallel queue and checking if their required 
+// dependencies are ready. If all dependencies are resolved, the instance 
+// is updated and marked as processed. Otherwise, it is re-enqueued at the 
+// back of the queue to be checked again later, ensuring no deadlocks occur 
+// and preventing cyclic dependencies in a dynamic game environment.
+procedure TpvScene3D.ParallelGroupInstanceUpdateFunction;
+var OtherIndex:TpvSizeInt;
+    GroupInstance,OtherGroupInstance:TpvScene3D.TGroup.TInstance;
+    OK:boolean;
+begin
+
+ repeat
+
+  // Dequeue
+  fParallelGroupInstanceUpdateQueueLock.Acquire;
+  try
+   OK:=fParallelGroupInstanceUpdateQueue.Dequeue(GroupInstance);
+  finally
+   fParallelGroupInstanceUpdateQueueLock.Release;
+  end;
+
+  if OK then begin
+
+   // Check if group instance is usable
+   if assigned(GroupInstance) and GroupInstance.fGroup.Usable then begin
+
+    // Initialize ready state
+    OK:=true;
+
+    // Check if all required dependencies are usable, ready and already processed
+    if GroupInstance.fRequiredDependencies.Count=0 then begin
+     for OtherIndex:=0 to GroupInstance.fRequiredDependencies.Count-1 do begin
+      OtherGroupInstance:=GroupInstance.fRequiredDependencies[OtherIndex];
+      if (OtherGroupInstance<>GroupInstance.fAppendageInstance) and
+         OtherGroupInstance.Group.Usable and
+         (TPasMPInterlocked.Read(OtherGroupInstance.fVisitedState[fParallelGroupInstanceUpdateInFlightFrameIndex])=0) then begin
+       OK:=false;
+       break;
+      end;
+     end;
+    end;
+
+    // Check if appendage instance is usable, ready and already processed
+    if OK and
+       assigned(GroupInstance.fAppendageInstance) and
+       GroupInstance.fAppendageInstance.Group.Usable and
+       (TPasMPInterlocked.Read(GroupInstance.fAppendageInstance.fVisitedState[fParallelGroupInstanceUpdateInFlightFrameIndex])=0) then begin
+     OK:=false;
+    end;
+
+     // Update group instance if all dependencies are ready
+    if OK then begin
+
+     // We are ready, so update group instance
+     GroupInstance.Update(fParallelGroupInstanceUpdateInFlightFrameIndex);
+
+     // Mark group instance as ready and processed
+     TPasMPInterlocked.Write(GroupInstance.fVisitedState[fParallelGroupInstanceUpdateInFlightFrameIndex],2);
+
+    end else begin
+
+     // Not ready, so enqueue group instance again, but at the end of the queue, so that there is a chance that other group
+     // instances are processed first, so that there is no deadlock, given that it is a directed acyclic graph without cycles
+     fParallelGroupInstanceUpdateQueueLock.Acquire;
+     try
+      fParallelGroupInstanceUpdateQueue.Enqueue(GroupInstance);
+     finally
+      fParallelGroupInstanceUpdateQueueLock.Release;
+     end;
+
+    end;
+
+   end;
+
+  end else begin
+
+   break;
+
+  end;
+
+ until false;
+
+end;
+
+procedure TpvScene3D.ParallelGroupInstanceUpdateParallelJobFunction(const Job:PPasMPJob;const ThreadIndex:TPasMPInt32);
+begin
+ ParallelGroupInstanceUpdateFunction;
+end;
+
 procedure TpvScene3D.Update(const aInFlightFrameIndex:TpvSizeInt);
 type TGroupInstanceStack=TpvDynamicFastStack<TpvScene3D.TGroup.TInstance>;
 var Index,OtherIndex,MaterialBufferDataOffset,MaterialBufferDataSize:TpvSizeInt;
@@ -27531,6 +28899,7 @@ var Index,OtherIndex,MaterialBufferDataOffset,MaterialBufferDataSize:TpvSizeInt;
     GroupInstanceStack:TGroupInstanceStack;
     Sphere:TpvSphere;
     StartCPUTime,EndCPUTime:TpvHighResolutionTime;
+    Jobs:array of PPasMPJob;
 begin
 
  fCountLights[aInFlightFrameIndex]:=0;
@@ -27578,90 +28947,155 @@ begin
 
   StartCPUTime:=pvApplication.HighResolutionTimer.GetTime;
 
+  TotalCPUTime:=0;
+
   fGroupInstanceListLock.Acquire;
   try
 
    fGroupInstances.Sort;
 
-   GroupInstanceStack.Initialize;
-   try
+   if assigned(fPasMPInstance) and (fPasMPInstance.CountJobWorkerThreads>1) then begin
 
-    for Index:=0 to fGroupInstances.Count-1 do begin
-     fGroupInstances[Index].fVisitedState[aInFlightFrameIndex]:=0;
+    // Clear queue
+    fParallelGroupInstanceUpdateQueueLock.Acquire;
+    try
+     while fParallelGroupInstanceUpdateQueue.Dequeue(GroupInstance) do begin
+     end;
+    finally
+     fParallelGroupInstanceUpdateQueueLock.Release;
     end;
 
+    // Initialize inital queue
     for Index:=0 to fGroupInstances.Count-1 do begin
      GroupInstance:=fGroupInstances[Index];
-     if GroupInstance.fGroup.Usable and (GroupInstance.fVisitedState[aInFlightFrameIndex]=0) then begin
-      if (GroupInstance.fRequiredDependencies.Count=0) and
-         ((not assigned(GroupInstance.fAppendageInstance)) or
-          (assigned(GroupInstance.fAppendageInstance) and
-           (GroupInstance.fAppendageInstance.fVisitedState[aInFlightFrameIndex]<>0))) then begin
-       GroupInstance.fVisitedState[aInFlightFrameIndex]:=2;
-       GroupInstance.Update(aInFlightFrameIndex);
-      end else begin
-       GroupInstanceStack.Push(GroupInstance);
-       while GroupInstanceStack.Pop(GroupInstance) do begin
-        case GroupInstance.fVisitedState[aInFlightFrameIndex] of
-         0:begin
-          GroupInstance.fVisitedState[aInFlightFrameIndex]:=1;
-          GroupInstanceStack.Push(GroupInstance);
-          for OtherIndex:=0 to GroupInstance.fRequiredDependencies.Count-1 do begin
-           OtherGroupInstance:=GroupInstance.fRequiredDependencies[OtherIndex];
-           if (OtherGroupInstance<>GroupInstance.fAppendageInstance) and
-              OtherGroupInstance.Group.Usable and
-              (OtherGroupInstance.fVisitedState[aInFlightFrameIndex]=0) then begin
-            GroupInstanceStack.Push(OtherGroupInstance);
+     GroupInstance.fVisitedState[aInFlightFrameIndex]:=0;
+     fParallelGroupInstanceUpdateQueueLock.Acquire;
+     try
+      fParallelGroupInstanceUpdateQueue.Enqueue(GroupInstance);
+     finally
+      fParallelGroupInstanceUpdateQueueLock.Release;
+     end;
+    end;
+
+    fParallelGroupInstanceUpdateInFlightFrameIndex:=aInFlightFrameIndex;
+
+    Jobs:=nil;
+    try
+
+     SetLength(Jobs,Max(1,fPasMPInstance.CountJobWorkerThreads));
+
+     for Index:=0 to length(Jobs)-1 do begin
+      Jobs[Index]:=fPasMPInstance.Acquire(ParallelGroupInstanceUpdateParallelJobFunction,nil,nil,0,TPasMPUInt32($f0000000));
+     end;
+
+     fPasMPInstance.Run(Jobs);
+
+     ParallelGroupInstanceUpdateFunction; // Help the worker threads at processing the queue, before waiting&releasing the jobs
+
+     fPasMPInstance.Wait(Jobs);
+
+     fPasMPInstance.Release(Jobs);
+
+    finally
+     Jobs:=nil;
+    end;
+
+    ParallelGroupInstanceUpdateFunction;
+
+   end else begin
+
+    GroupInstanceStack.Initialize;
+    try
+
+     for Index:=0 to fGroupInstances.Count-1 do begin
+      fGroupInstances[Index].fVisitedState[aInFlightFrameIndex]:=0;
+     end;
+
+     for Index:=0 to fGroupInstances.Count-1 do begin
+      GroupInstance:=fGroupInstances[Index];
+      if GroupInstance.fGroup.Usable and (GroupInstance.fVisitedState[aInFlightFrameIndex]=0) then begin
+       if (GroupInstance.fRequiredDependencies.Count=0) and
+          ((not assigned(GroupInstance.fAppendageInstance)) or
+           (assigned(GroupInstance.fAppendageInstance) and
+            (GroupInstance.fAppendageInstance.fVisitedState[aInFlightFrameIndex]<>0))) then begin
+        GroupInstance.fVisitedState[aInFlightFrameIndex]:=2;
+        GroupInstance.Update(aInFlightFrameIndex);
+       end else begin
+        GroupInstanceStack.Push(GroupInstance);
+        while GroupInstanceStack.Pop(GroupInstance) do begin
+         case GroupInstance.fVisitedState[aInFlightFrameIndex] of
+          0:begin
+           GroupInstance.fVisitedState[aInFlightFrameIndex]:=1;
+           GroupInstanceStack.Push(GroupInstance);
+           for OtherIndex:=0 to GroupInstance.fRequiredDependencies.Count-1 do begin
+            OtherGroupInstance:=GroupInstance.fRequiredDependencies[OtherIndex];
+            if (OtherGroupInstance<>GroupInstance.fAppendageInstance) and
+               OtherGroupInstance.Group.Usable and
+               (OtherGroupInstance.fVisitedState[aInFlightFrameIndex]=0) then begin
+             GroupInstanceStack.Push(OtherGroupInstance);
+            end;
+           end;
+           if assigned(GroupInstance.fAppendageInstance) then begin
+            OtherGroupInstance:=GroupInstance.fAppendageInstance;
+            if OtherGroupInstance.Group.Usable and (OtherGroupInstance.fVisitedState[aInFlightFrameIndex]=0) then begin
+             GroupInstanceStack.Push(OtherGroupInstance);
+            end;
            end;
           end;
-          if assigned(GroupInstance.fAppendageInstance) then begin
-           OtherGroupInstance:=GroupInstance.fAppendageInstance;
-           if OtherGroupInstance.Group.Usable and (OtherGroupInstance.fVisitedState[aInFlightFrameIndex]=0) then begin
-            GroupInstanceStack.Push(OtherGroupInstance);
-           end;
+          1:begin
+           GroupInstance.fVisitedState[aInFlightFrameIndex]:=2;
+           GroupInstance.Update(aInFlightFrameIndex);
           end;
-         end;
-         1:begin
-          GroupInstance.fVisitedState[aInFlightFrameIndex]:=2;
-          GroupInstance.Update(aInFlightFrameIndex);
-         end;
-         else begin
+          else begin
+          end;
          end;
         end;
        end;
       end;
      end;
+
+    finally
+     GroupInstanceStack.Finalize;
     end;
 
-   finally
-    GroupInstanceStack.Finalize;
-   end;
+   end; 
 
   finally
    fGroupInstanceListLock.Release;
   end;
 
   EndCPUTime:=pvApplication.HighResolutionTimer.GetTime;
+{ writeln;
+  writeln;
+  writeln;}
 //write(pvApplication.HighResolutionTimer.ToFloatSeconds(EndCPUTime-StartCPUTime)*1000:5:2,'ms');
+
+{ write(pvApplication.HighResolutionTimer.ToFloatSeconds(EndCPUTime-StartCPUTime)*1000:5:2,'ms ');
+  writeln(pvApplication.HighResolutionTimer.ToFloatSeconds(TotalCPUTime)*1000:5:2,'ms');    //}
 
  finally
   fGroupListLock.Release;
  end;
 
- AABBTreeState:=@fAABBTreeStates[aInFlightFrameIndex];
- fAABBTree.UpdateGeneration;
- if AABBTreeState^.Generation<>fAABBTree.Generation then begin
-  AABBTreeState^.Generation:=fAABBTree.Generation;
-  if (length(fAABBTree.Nodes)>0) and (fAABBTree.Root>=0) then begin
-   if length(AABBTreeState^.TreeNodes)<length(fAABBTree.Nodes) then begin
-    AABBTreeState^.TreeNodes:=copy(fAABBTree.Nodes);
+ fAABBTreeLock.Acquire;
+ try
+  AABBTreeState:=@fAABBTreeStates[aInFlightFrameIndex];
+  fAABBTree.UpdateGeneration;
+  if AABBTreeState^.Generation<>fAABBTree.Generation then begin
+   AABBTreeState^.Generation:=fAABBTree.Generation;
+   if (length(fAABBTree.Nodes)>0) and (fAABBTree.Root>=0) then begin
+    if length(AABBTreeState^.TreeNodes)<length(fAABBTree.Nodes) then begin
+     AABBTreeState^.TreeNodes:=copy(fAABBTree.Nodes);
+    end else begin
+     Move(fAABBTree.Nodes[0],AABBTreeState^.TreeNodes[0],length(fAABBTree.Nodes)*SizeOf(TpvBVHDynamicAABBTree.TTreeNode));
+    end;
+    AABBTreeState^.Root:=fAABBTree.Root;
    end else begin
-    Move(fAABBTree.Nodes[0],AABBTreeState^.TreeNodes[0],length(fAABBTree.Nodes)*SizeOf(TpvBVHDynamicAABBTree.TTreeNode));
+    AABBTreeState^.Root:=-1;
    end;
-   AABBTreeState^.Root:=fAABBTree.Root;
-  end else begin
-   AABBTreeState^.Root:=-1;
   end;
+ finally
+  fAABBTreeLock.Release;
  end;
 
  begin
@@ -28908,30 +30342,37 @@ begin
 
    if aFrustumCulling or aPotentiallyVisibleSetCulling then begin
 
-    AABBTreeState:=@fAABBTreeStates[aInFlightFrameIndex];
+   {fAABBTreeLock.Acquire;
+    try}
 
-    if aFrustumCulling then begin
-     SetLength(Frustums,aCountViews);
-     for Index:=0 to aCountViews-1 do begin
-      View:=@aViews.Items[aViewBaseIndex+Index];
-      Frustums[Index].Init(View^.ViewMatrix,View^.ProjectionMatrix);
+     AABBTreeState:=@fAABBTreeStates[aInFlightFrameIndex];
+
+     if aFrustumCulling then begin
+      SetLength(Frustums,aCountViews);
+      for Index:=0 to aCountViews-1 do begin
+       View:=@aViews.Items[aViewBaseIndex+Index];
+       Frustums[Index].Init(View^.ViewMatrix,View^.ProjectionMatrix);
+      end;
      end;
-    end;
 
-    CullAndPrepareGroupInstances(aInFlightFrameIndex,
-                                 aRendererInstance,
-                                 aRenderPassIndex,
-                                 aViews,
-                                 aViewNodeIndices,
-                                 aViewBaseIndex,
-                                 aCountViews,
-                                 aMaterialAlphaModes,
-                                 aPotentiallyVisibleSetCulling,
-                                 Frustums,
-                                 AABBTreeState^.TreeNodes,
-                                 AABBTreeState^.Root,
-                                 aShadowPass
-                                );
+     CullAndPrepareGroupInstances(aInFlightFrameIndex,
+                                  aRendererInstance,
+                                  aRenderPassIndex,
+                                  aViews,
+                                  aViewNodeIndices,
+                                  aViewBaseIndex,
+                                  aCountViews,
+                                  aMaterialAlphaModes,
+                                  aPotentiallyVisibleSetCulling,
+                                  Frustums,
+                                  AABBTreeState^.TreeNodes,
+                                  AABBTreeState^.Root,
+                                  aShadowPass
+                                 );
+
+{   finally
+     fAABBTreeLock.Release;
+    end;}
 
    end else begin
 
@@ -30802,6 +32243,24 @@ begin
    TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRAnisotropyStrength,
    TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRAnisotropyRotation,
    TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialPBRDispersion,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramDirection,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramFlickerSpeed,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramFlickerMin,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramFlickerMax,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramMainColor,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramMainAlpha,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramRimColor,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramRimAlpha,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramRimPower,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramRimThreshold,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramScanTiling,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramScanSpeed,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramScanMin,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramScanMax,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramGlowTiling,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramGlowSpeed,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramGlowMin,
+   TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerMaterialHologramGlowMax, 
    TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureOffset,
    TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureRotation,
    TpvScene3D.TGroup.TAnimation.TChannel.TTarget.PointerTextureScale:begin

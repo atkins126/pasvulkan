@@ -88,10 +88,15 @@ void main() {
 
     vec3 inscattering;
     vec3 transmittance; 
+     
+    if(atmosphereParameters.AbsorptionExtinction.w <= 0.0){
+      
+      inscattering = vec3(0.0);
+      transmittance = vec3(1.0);
 
-    // Move to top atmosphere as the starting point for ray marching.
-    // This is critical to be after the above to not disrupt above atmosphere tests and voxel selection.
-    if(!MoveToTopAtmosphere(worldPos, worldDir, atmosphereParameters.TopRadius)){
+    }else if(!MoveToTopAtmosphere(worldPos, worldDir, atmosphereParameters.TopRadius)){
+      // Move to top atmosphere as the starting point for ray marching.
+      // This is critical to be after the above to not disrupt above atmosphere tests and voxel selection.
       
       // Ray is not intersecting the atmosphere       
       inscattering = GetSunLuminance(cameraPosition, worldDir, sunDirection, atmosphereParameters.BottomRadius).xyz;
@@ -148,6 +153,12 @@ void main() {
       }
 
     }
+
+    {
+      float fadeFactor = clamp(atmosphereParameters.AbsorptionExtinction.w, 0.0, 1.0);
+      inscattering *= fadeFactor;
+      transmittance = mix(transmittance, vec3(1.0), fadeFactor); 
+    } 
 
     vec4 outputColor = vec4(inscattering, 1.0 - clamp(dot(transmittance, vec3(1.0 / 3.0)), 0.0, 1.0));
 
