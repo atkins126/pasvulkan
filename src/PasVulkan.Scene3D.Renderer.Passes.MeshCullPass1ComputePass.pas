@@ -185,6 +185,7 @@ begin
  fPipelineLayout:=TpvVulkanPipelineLayout.Create(fInstance.Renderer.VulkanDevice);
  fPipelineLayout.AddPushConstantRange(TVkShaderStageFlags(VK_SHADER_STAGE_COMPUTE_BIT),0,SizeOf(TpvScene3DRendererPassesMeshCullPass1ComputePass.TPushConstants));
  fPipelineLayout.AddDescriptorSetLayout(fInstance.MeshCullPass1ComputeVulkanDescriptorSetLayout);
+ fPipelineLayout.AddDescriptorSetLayout(fInstance.Scene3D.GlobalVulkanDescriptorSetLayout);
  fPipelineLayout.Initialize;
 
  fInstance.Renderer.VulkanDevice.DebugUtils.SetObjectName(fPipelineLayout.Handle,VK_OBJECT_TYPE_PIPELINE_LAYOUT,'TpvScene3DRendererPassesMeshCullPass1ComputePass.fPipelineLayout');
@@ -217,7 +218,7 @@ begin
 end;
 
 procedure TpvScene3DRendererPassesMeshCullPass1ComputePass.Execute(const aCommandBuffer:TpvVulkanCommandBuffer;const aInFlightFrameIndex,aFrameIndex:TpvSizeInt);
-var RenderPassIndex,
+var RenderPass:TpvScene3DRendererRenderPass;
     DrawChoreographyBatchRangeIndex,
     FirstDrawCallIndex,
     CountDrawCallIndices,
@@ -227,25 +228,25 @@ var RenderPassIndex,
     DrawChoreographyBatchRange:TpvScene3D.PDrawChoreographyBatchRange;
     BufferMemoryBarriers:array[0..3] of TVkBufferMemoryBarrier;
     PushConstants:TpvScene3DRendererPassesMeshCullPass1ComputePass.TPushConstants;
+    DescriptorSets:array[0..1] of TVkDescriptorSet;
 begin
  inherited Execute(aCommandBuffer,aInFlightFrameIndex,aFrameIndex);
 
  case fCullRenderPass of
   TpvScene3DRendererCullRenderPass.FinalView:begin
-   RenderPassIndex:=fInstance.InFlightFrameStates[aInFlightFrameIndex].ViewRenderPassIndex;
+   RenderPass:=TpvScene3DRendererRenderPass.View;
    Part:=0;
   end;
   TpvScene3DRendererCullRenderPass.CascadedShadowMap:begin
-   RenderPassIndex:=fInstance.InFlightFrameStates[aInFlightFrameIndex].CascadedShadowMapRenderPassIndex;
+   RenderPass:=TpvScene3DRendererRenderPass.CascadedShadowMap;
    Part:=1;
   end;
   else begin
-   RenderPassIndex:=-1;
-   Part:=0;
+   exit;
   end;
  end;
 
- if RenderPassIndex>=0 then begin
+ begin
 
   fPlanetCullPass.Execute(aCommandBuffer,aInFlightFrameIndex);
 
@@ -293,14 +294,14 @@ begin
                                     4,@BufferMemoryBarriers[0],
                                     0,nil);
 
-  if fInstance.PerInFlightFrameGPUCulledArray[aInFlightFrameIndex,RenderPassIndex] then begin
+  if fInstance.PerInFlightFrameGPUCulledArray[aInFlightFrameIndex,RenderPass] then begin
 
    FirstDrawCallIndex:=0;
    CountDrawCallIndices:=0;
 
    DrawChoreographyBatchRangeDynamicArray:=@fInstance.DrawChoreographyBatchRangeFrameBuckets[aInFlightFrameIndex];
 
-   DrawChoreographyBatchRangeIndexDynamicArray:=@fInstance.DrawChoreographyBatchRangeFrameRenderPassBuckets[aInFlightFrameIndex,RenderPassIndex];
+   DrawChoreographyBatchRangeIndexDynamicArray:=@fInstance.DrawChoreographyBatchRangeFrameRenderPassBuckets[aInFlightFrameIndex,RenderPass];
 
    for DrawChoreographyBatchRangeIndex:=0 to DrawChoreographyBatchRangeIndexDynamicArray^.Count-1 do begin
 
@@ -377,20 +378,22 @@ begin
 
   aCommandBuffer.CmdBindPipeline(VK_PIPELINE_BIND_POINT_COMPUTE,fPipeline.Handle);
 
+  DescriptorSets[0]:=fInstance.MeshCullPass1ComputeVulkanDescriptorSets[aInFlightFrameIndex].Handle;
+  DescriptorSets[1]:=fInstance.Scene3D.GlobalVulkanDescriptorSets[aInFlightFrameIndex].Handle;
+
   aCommandBuffer.CmdBindDescriptorSets(VK_PIPELINE_BIND_POINT_COMPUTE,
                                        fPipelineLayout.Handle,
                                        0,
-                                       1,
-                                       @fInstance.MeshCullPass1ComputeVulkanDescriptorSets[aInFlightFrameIndex].Handle,
+                                       2,
+                                       @DescriptorSets[0],
                                        0,
                                        nil);
 
-
-  if fInstance.PerInFlightFrameGPUCulledArray[aInFlightFrameIndex,RenderPassIndex] then begin
+  if fInstance.PerInFlightFrameGPUCulledArray[aInFlightFrameIndex,RenderPass] then begin
 
    DrawChoreographyBatchRangeDynamicArray:=@fInstance.DrawChoreographyBatchRangeFrameBuckets[aInFlightFrameIndex];
 
-   DrawChoreographyBatchRangeIndexDynamicArray:=@fInstance.DrawChoreographyBatchRangeFrameRenderPassBuckets[aInFlightFrameIndex,RenderPassIndex];
+   DrawChoreographyBatchRangeIndexDynamicArray:=@fInstance.DrawChoreographyBatchRangeFrameRenderPassBuckets[aInFlightFrameIndex,RenderPass];
 
    for DrawChoreographyBatchRangeIndex:=0 to DrawChoreographyBatchRangeIndexDynamicArray^.Count-1 do begin
 

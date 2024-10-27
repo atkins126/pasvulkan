@@ -262,104 +262,32 @@ type TpvScene3DAtmosphere=class;
             { TDensityProfile }
             TDensityProfile=packed record
              public
-              Layers:array[0..1] of TDensityProfileLayer;
-            end; 
-            { TVolumetricCloudLayer }
-            TVolumetricCloudLayer=packed record
-             public
-              Albedo:TpvVector4; // w = unused
-              ExtinctionCoefficient:TpvVector4; // w = CoverageWindAngle
-              ///////
-              SkewAlongWindDirection:TpvFloat;
-              TotalNoiseScale:TpvFloat;
-              CurlScale:TpvFloat;
-              CurlNoiseHeightFraction:TpvFloat;
-              ///////
-              CurlNoiseModifier:TpvFloat;
-              DetailScale:TpvFloat;
-              DetailNoiseHeightFraction:TpvFloat;
-              DetailNoiseModifier:TpvFloat;
-              ///////
-              SkewAlongCoverageWindDirection:TpvFloat;
-              WeatherScale:TpvFloat;
-              CoverageAmount:TpvFloat;
-              CoverageMinimum:TpvFloat;
-              ///////
-              TypeAmount:TpvFloat;
-              TypeMinimum:TpvFloat;
-              RainAmount:TpvFloat;
-              RainMinimum:TpvFloat;
-              ///////
-              GradientSmall:TpvVector4;
-              GradientMedium:TpvVector4;
-              GradientLarge:TpvVector4;
-              AnvilDeformationSmall:TpvVector4;
-              AnvilDeformationMedium:TpvVector4;
-              AnvilDeformationLarge:TpvVector4;
-              ///////
-              WindSpeed:TpvFloat;
-              WindAngle:TpvFloat;
-              WindUpAmount:TpvFloat;
-              CoverageWindSpeed:TpvFloat;
-              function GetCoverageWindAngle:TpvFloat;
-              procedure SetCoverageWindAngle(const aCoverageWindAngle:TpvFloat);
-              procedure LoadFromJSON(const aJSON:TPasJSONItem);
-              procedure LoadFromJSONStream(const aStream:TStream);
-              procedure LoadFromJSONFile(const aFileName:string);
-              function SaveToJSON:TPasJSONItemObject;
-              procedure SaveToJSONStream(const aStream:TStream);
-              procedure SaveToJSONFile(const aFileName:string);
-              property CoverageWindAngle:TpvFloat read GetCoverageWindAngle write SetCoverageWindAngle;
+             Layers:array[0..1] of TDensityProfileLayer;
             end;
-            PVolumetricCloudLayer=^TVolumetricCloudLayer;
-            { TVolumetricCloudParametersOld }
-            TVolumetricCloudParametersOld=packed record
+            { TAtmosphereCullingParameters }
+            TAtmosphereCullingParameters=packed record
              public
-              BeerPowder:TpvFloat;
-              BeerPowderPower:TpvFloat;
-              AmbientGroundMultiplier:TpvFloat;
-              PhaseG:TpvFloat;
-              ///////
-              PhaseG2:TpvFloat;
-              PhaseBlend:TpvFloat;
-              MultiScatteringScattering:TpvFloat;
-              MultiScatteringExtinction:TpvFloat;
-              ///////
-              MultiScatteringEccentricity:TpvFloat;
-              ShadowStepLength:TpvFloat;
-              HorizonBlendAmount:TpvFloat;
-              HorizonBlendPower:TpvFloat;
-              ///////
-              CloudStartHeight:TpvFloat;
-              CloudThickness:TpvFloat;
-              AnimationMultiplier:TpvFloat;
-              Padding0:TpvFloat;
-              ///////
-              MaxStepCount:TpvInt32;
-              MaxMarchingDistance:TpvFloat;
-              InverseDistanceStepCount:TpvFloat;
-              RenderDistance:TpvFloat;
-              ///////
-              LODDistance:TpvFloat;
-              LODMin:TpvFloat;
-              BigStepMarch:TpvFloat;
-              TransmittanceThreshold:TpvFloat;            
-              ///////
-              ShadowSampleCount:TpvFloat;
-              GroundContributionSampleCount:TpvFloat;
-              Padding1:TpvFloat;
-              Padding2:TpvFloat;
-              ///////
-              Layers:array[0..1] of TVolumetricCloudLayer;
-              procedure Initialize;
-              procedure LoadFromJSON(const aJSON:TPasJSONItem);
-              procedure LoadFromJSONStream(const aStream:TStream);
-              procedure LoadFromJSONFile(const aFileName:string);
-              function SaveToJSON:TPasJSONItemObject;
-              procedure SaveToJSONStream(const aStream:TStream);
-              procedure SaveToJSONFile(const aFileName:string);
+              procedure CalculateBoundingSphere;
+             public
+              InnerFadeDistance:TpvFloat;
+              OuterFadeDistance:TpvFloat;
+              CountFaces:TpvUInt32;             
+              Mode:TpvUInt32;
+              InversedTransform:TpvMatrix4x4;
+              BoundingSphere:TpvVector4;
+              case TpvInt32 of
+               0:(
+                FacePlanes:array[0..31] of TpvVector4;
+               );
+               1:(
+                Center:TpvVector4;
+                HalfExtents:TpvVector4;
+               );
+               2:(
+                CenterRadius:TpvVector4;
+               );
             end;
-            PVolumetricCloudParametersOld=^TVolumetricCloudParametersOld;
+            PAtmosphereCullingParameters=^TAtmosphereCullingParameters;            
             { TVolumetricCloudLayerLow }
             TVolumetricCloudLayerLow=packed record
              public
@@ -507,6 +435,7 @@ type TpvScene3DAtmosphere=class;
               MuSMin:TpvFloat;
               RaymarchingMinSteps:TpvInt32;
               RaymarchingMaxSteps:TpvInt32;
+              AtmosphereCullingParameters:TAtmosphereCullingParameters;
               VolumetricClouds:TVolumetricCloudParameters;
               procedure InitializeEarthAtmosphere(const aEarthBottomRadius:TpvFloat=6360.0;
                                                   const aEarthTopRadius:TpvFloat=6460.0;
@@ -624,6 +553,29 @@ type TpvScene3DAtmosphere=class;
              
               procedure Assign(const aVolumetricCloudParameters:TVolumetricCloudParameters);
             end;
+            { TGPUAtmosphereCullingParameters }
+            TGPUAtmosphereCullingParameters=packed record
+             public
+              procedure Assign(const aAtmosphereCullingParameters:TAtmosphereCullingParameters);
+             public
+              InnerFadeDistance:TpvFloat;
+              OuterFadeDistance:TpvFloat;
+              CountFaces:TpvUInt32;
+              Mode:TpvUInt32;
+              InversedTransform:TpvMatrix4x4;
+              BoundingSphere:TpvVector4;
+              case TpvInt32 of
+               0:(
+                FacePlanes:array[0..31] of TpvVector4;
+               );
+               1:(
+                Center:TpvVector4;
+                HalfExtents:TpvVector4;
+               );
+               2:(
+                CenterRadius:TpvVector4;
+               );
+            end;
             { TGPUAtmosphereParameters }
             TGPUAtmosphereParameters=packed record
              public
@@ -648,6 +600,7 @@ type TpvScene3DAtmosphere=class;
               AbsorptionDensity1LinearTerm:TpvFloat;              
               RaymarchingMinSteps:TpvInt32;
               RaymarchingMaxSteps:TpvInt32;
+              AtmosphereCullingParameters:TGPUAtmosphereCullingParameters;
               VolumetricClouds:TGPUVolumetricCloudParameters;
               procedure Assign(const aAtmosphereParameters:TAtmosphereParameters);
             end;
@@ -672,6 +625,8 @@ type TpvScene3DAtmosphere=class;
               fSkyLuminanceLUTTexture:TpvScene3DRendererImageCubeMap;
               fSkyViewLUTTexture:TpvScene3DRendererArray2DImage;
               fCameraVolumeTexture:TpvScene3DRendererArray2DImage;
+              fSkyViewLUTTextureImageLayout:TVkImageLayout;
+              fCameraVolumeTextureImageLayout:TVkImageLayout;
               fCubeMapTexture:TpvScene3DRendererMipmapImageCubeMap;
               fGGXCubeMapTexture:TpvScene3DRendererMipmapImageCubeMap;
               fCharlieCubeMapTexture:TpvScene3DRendererMipmapImageCubeMap;
@@ -897,394 +852,48 @@ begin
  ConstantTerm:=aConstantTerm;
 end;
 
-{ TpvScene3DAtmosphere.TVolumetricCloudLayer }
+{ TpvScene3DAtmosphere.TAtmosphereCullingParameters }
 
-function TpvScene3DAtmosphere.TVolumetricCloudLayer.GetCoverageWindAngle:TpvFloat;
+procedure TpvScene3DAtmosphere.TAtmosphereCullingParameters.CalculateBoundingSphere;
+var FaceIndex:TpvSizeInt;
+    s:TpvSphere;
+    cx,cy,cz:TpvDouble;
+    p:PpvVector4;
 begin
- result:=ExtinctionCoefficient.w;
-end;
-
-procedure TpvScene3DAtmosphere.TVolumetricCloudLayer.SetCoverageWindAngle(const aCoverageWindAngle:TpvFloat);
-begin
- ExtinctionCoefficient.w:=aCoverageWindAngle;
-end;
-
-procedure TpvScene3DAtmosphere.TVolumetricCloudLayer.LoadFromJSON(const aJSON:TPasJSONItem);
-var JSONObject:TPasJSONItemObject;
-    JSONValue:TPasJSONItem;
-begin
- if assigned(aJSON) and (aJSON is TPasJSONItemObject) then begin
-  JSONObject:=TPasJSONItemObject(aJSON);
-  Albedo:=TpvVector4.InlineableCreate(JSONToVector3(JSONObject.Properties['albedo'],Albedo.xyz),0.0);
-  ExtinctionCoefficient:=TpvVector4.InlineableCreate(JSONToVector3(JSONObject.Properties['extinctioncoefficient'],ExtinctionCoefficient.xyz),TPasJSON.GetNumber(JSONObject.Properties['coveragewindangle'],CoverageWindAngle));
-  SkewAlongWindDirection:=TPasJSON.GetNumber(JSONObject.Properties['skewalongwinddirection'],SkewAlongWindDirection);
-  TotalNoiseScale:=TPasJSON.GetNumber(JSONObject.Properties['totalnoisescale'],TotalNoiseScale);
-  CurlScale:=TPasJSON.GetNumber(JSONObject.Properties['curlscale'],CurlScale);
-  CurlNoiseHeightFraction:=TPasJSON.GetNumber(JSONObject.Properties['curlnoiseheightfraction'],CurlNoiseHeightFraction);
-  CurlNoiseModifier:=TPasJSON.GetNumber(JSONObject.Properties['curlnoisemodifier'],CurlNoiseModifier);
-  DetailScale:=TPasJSON.GetNumber(JSONObject.Properties['detailscale'],DetailScale);
-  DetailNoiseHeightFraction:=TPasJSON.GetNumber(JSONObject.Properties['detailnoiseheightfraction'],DetailNoiseHeightFraction);
-  DetailNoiseModifier:=TPasJSON.GetNumber(JSONObject.Properties['detailnoisemodifier'],DetailNoiseModifier);
-  SkewAlongCoverageWindDirection:=TPasJSON.GetNumber(JSONObject.Properties['skewalongcoveragewinddirection'],SkewAlongCoverageWindDirection);
-  WeatherScale:=TPasJSON.GetNumber(JSONObject.Properties['weatherscale'],WeatherScale);
-  CoverageAmount:=TPasJSON.GetNumber(JSONObject.Properties['coverageamount'],CoverageAmount);
-  CoverageMinimum:=TPasJSON.GetNumber(JSONObject.Properties['coverageminimum'],CoverageMinimum);
-  TypeAmount:=TPasJSON.GetNumber(JSONObject.Properties['typeamount'],TypeAmount);
-  TypeMinimum:=TPasJSON.GetNumber(JSONObject.Properties['typeminimum'],TypeMinimum);
-  RainAmount:=TPasJSON.GetNumber(JSONObject.Properties['rainamount'],RainAmount);
-  RainMinimum:=TPasJSON.GetNumber(JSONObject.Properties['rainminimum'],RainMinimum);
-  GradientSmall:=JSONToVector4(JSONObject.Properties['gradientsmall'],GradientSmall);
-  GradientMedium:=JSONToVector4(JSONObject.Properties['gradientmedium'],GradientMedium);
-  GradientLarge:=JSONToVector4(JSONObject.Properties['gradientlarge'],GradientLarge);
-  AnvilDeformationSmall:=JSONToVector4(JSONObject.Properties['anvildeformationsmall'],AnvilDeformationSmall);
-  AnvilDeformationMedium:=JSONToVector4(JSONObject.Properties['anvildeformationmedium'],AnvilDeformationMedium);
-  AnvilDeformationLarge:=JSONToVector4(JSONObject.Properties['anvildeformationlarge'],AnvilDeformationLarge);
-  WindSpeed:=TPasJSON.GetNumber(JSONObject.Properties['windspeed'],WindSpeed);
-  WindAngle:=TPasJSON.GetNumber(JSONObject.Properties['windangle'],WindAngle);
-  WindUpAmount:=TPasJSON.GetNumber(JSONObject.Properties['windupamount'],WindUpAmount);
-  CoverageWindSpeed:=TPasJSON.GetNumber(JSONObject.Properties['coveragewindspeed'],CoverageWindSpeed);
-  //CoverageWindAngle:=TPasJSON.GetNumber(JSONObject.Properties['coveragewindangle'],CoverageWindAngle); // Already done above
- end;  
-end;  
-
-procedure TpvScene3DAtmosphere.TVolumetricCloudLayer.LoadFromJSONStream(const aStream:TStream);
-var JSON:TPasJSONItem;
-begin
- JSON:=TPasJSON.Parse(aStream);
- if assigned(JSON) then begin
-  try
-   LoadFromJSON(JSON);
-  finally
-   FreeAndNil(JSON);
+ case Mode and $f of
+  1:begin
+   s.Center:=CenterRadius.xyz;
+   s.Radius:=CenterRadius.w;
   end;
- end;
-end;
-
-procedure TpvScene3DAtmosphere.TVolumetricCloudLayer.LoadFromJSONFile(const aFileName:string);
-var Stream:TMemoryStream;
-begin
- Stream:=TMemoryStream.Create;
- try
-  Stream.LoadFromFile(aFileName);
-  Stream.Seek(0,soBeginning);
-  LoadFromJSONStream(Stream);
- finally
-  Stream.Free;
- end;
-end;
-
-function TpvScene3DAtmosphere.TVolumetricCloudLayer.SaveToJSON:TPasJSONItemObject;
-begin
- result:=TPasJSONItemObject.Create;
- result.Add('albedo',Vector3ToJSON(Albedo.xyz));
- result.Add('extinctioncoefficient',Vector3ToJSON(ExtinctionCoefficient.xyz));
- result.Add('skewalongwinddirection',TPasJSONItemNumber.Create(SkewAlongWindDirection));
- result.Add('totalnoisescale',TPasJSONItemNumber.Create(TotalNoiseScale));
- result.Add('curlscale',TPasJSONItemNumber.Create(CurlScale));
- result.Add('curlnoiseheightfraction',TPasJSONItemNumber.Create(CurlNoiseHeightFraction));
- result.Add('curlnoisemodifier',TPasJSONItemNumber.Create(CurlNoiseModifier));
- result.Add('detailscale',TPasJSONItemNumber.Create(DetailScale));
- result.Add('detailnoiseheightfraction',TPasJSONItemNumber.Create(DetailNoiseHeightFraction));
- result.Add('detailnoisemodifier',TPasJSONItemNumber.Create(DetailNoiseModifier));
- result.Add('skewalongcoveragewinddirection',TPasJSONItemNumber.Create(SkewAlongCoverageWindDirection));
- result.Add('weatherscale',TPasJSONItemNumber.Create(WeatherScale));
- result.Add('coverageamount',TPasJSONItemNumber.Create(CoverageAmount));
- result.Add('coverageminimum',TPasJSONItemNumber.Create(CoverageMinimum));
- result.Add('typeamount',TPasJSONItemNumber.Create(TypeAmount));
- result.Add('typeminimum',TPasJSONItemNumber.Create(TypeMinimum));
- result.Add('rainamount',TPasJSONItemNumber.Create(RainAmount));
- result.Add('rainminimum',TPasJSONItemNumber.Create(RainMinimum));
- result.Add('gradientsmall',Vector4ToJSON(GradientSmall));
- result.Add('gradientmedium',Vector4ToJSON(GradientMedium));
- result.Add('gradientlarge',Vector4ToJSON(GradientLarge));
- result.Add('anvildeformationsmall',Vector4ToJSON(AnvilDeformationSmall));
- result.Add('anvildeformationmedium',Vector4ToJSON(AnvilDeformationMedium));
- result.Add('anvildeformationlarge',Vector4ToJSON(AnvilDeformationLarge));
- result.Add('windspeed',TPasJSONItemNumber.Create(WindSpeed));
- result.Add('windangle',TPasJSONItemNumber.Create(WindAngle));
- result.Add('windupamount',TPasJSONItemNumber.Create(WindUpAmount));
- result.Add('coveragewindspeed',TPasJSONItemNumber.Create(CoverageWindSpeed));
- result.Add('coveragewindangle',TPasJSONItemNumber.Create(CoverageWindAngle));
-end;
-
-procedure TpvScene3DAtmosphere.TVolumetricCloudLayer.SaveToJSONStream(const aStream:TStream);
-var JSON:TPasJSONItem;
-begin
- JSON:=SaveToJSON;
- if assigned(JSON) then begin
-  try
-   TPasJSON.StringifyToStream(aStream,JSON,true);
-  finally
-   FreeAndNil(JSON);
+  2:begin
+   s:=TpvSphere.CreateFromAABB(TpvAABB.Create(Center.xyz-HalfExtents.xyz,Center.xyz+HalfExtents.xyz));
   end;
- end;
-end;
-
-procedure TpvScene3DAtmosphere.TVolumetricCloudLayer.SaveToJSONFile(const aFileName:string);
-var Stream:TMemoryStream;
-begin
- Stream:=TMemoryStream.Create;
- try
-  SaveToJSONStream(Stream);
-  Stream.Seek(0,soBeginning);
-  Stream.SaveToFile(aFileName);
- finally
-  Stream.Free;
- end;
-end;
-
-{ TpvScene3DAtmosphere.TVolumetricCloudParametersOld }
-
-procedure TpvScene3DAtmosphere.TVolumetricCloudParametersOld.Initialize;
-begin
-
- BeerPowder:=20.0;
- BeerPowderPower:=0.5;
- AmbientGroundMultiplier:=0.75;
- PhaseG:=0.5; // [-0.999; 0.999]
- PhaseG2:=-0.5; // [-0.999; 0.999]
- PhaseBlend:=0.2; // [0; 1]
- MultiScatteringScattering:=1.0;
- MultiScatteringExtinction:=0.1;
- MultiScatteringEccentricity:=0.2;
- ShadowStepLength:=3000.0;
- HorizonBlendAmount:=0.0000125;
- HorizonBlendPower:=2.0;
-
- CloudStartHeight:=1500.0;
- CloudThickness:=5000.0;
- 
- begin
- 
-  Layers[0].Albedo:=TpvVector4.InlineableCreate(0.9,0.9,0.9,0.0);
-  Layers[0].ExtinctionCoefficient:=TpvVector4.InlineableCreate(0.71*0.1,0.86*0.1,1.0*0.1,0.0);
-  Layers[0].SkewAlongWindDirection:=700.0;
-
-  Layers[0].TotalNoiseScale:=0.0006;
-  Layers[0].CurlScale:=0.3;
-  Layers[0].CurlNoiseHeightFraction:=5.0;
-  Layers[0].CurlNoiseModifier:=500.0;
-  Layers[0].DetailScale:=4.0;
-  Layers[0].DetailNoiseHeightFraction:=10.0;
-  Layers[0].DetailNoiseModifier:=0.3;
-  Layers[0].SkewAlongCoverageWindDirection:=2500.0;
-  Layers[0].WeatherScale:=0.00002;
-  Layers[0].CoverageAmount:=1.0;
-  Layers[0].CoverageMinimum:=0.0;
-  Layers[0].TypeAmount:=1.0;
-  Layers[0].TypeMinimum:=0.0;
-  Layers[0].RainAmount:=0.0;
-  Layers[0].RainMinimum:=0.0;
-
-  Layers[0].GradientSmall:=TpvVector4.InlineableCreate(0.01,0.1,0.11,0.2);
-  Layers[0].GradientMedium:=TpvVector4.InlineableCreate(0.01,0.08,0.3,0.4);
-  Layers[0].GradientLarge:=TpvVector4.InlineableCreate(0.01,0.06,0.75,0.95);
-
-  Layers[0].AnvilDeformationSmall:=TpvVector4.InlineableCreate(0.0,0.0,0.0,0.0);
-  Layers[0].AnvilDeformationMedium:=TpvVector4.InlineableCreate(15.0,0.1,15.0,0.1);
-  Layers[0].AnvilDeformationLarge:=TpvVector4.InlineableCreate(5.0,0.25,5.0,0.15);
-
-  Layers[0].WindSpeed:=15.0;
-  Layers[0].WindAngle:=0.75;
-  Layers[0].WindUpAmount:=0.5;
-  Layers[0].CoverageWindSpeed:=30.0;
-  Layers[0].CoverageWindAngle:=0.0;
-
- end; 
-
- begin
- 
-  Layers[1].Albedo:=TpvVector4.InlineableCreate(0.9,0.9,0.9,0.0);
-  Layers[1].ExtinctionCoefficient:=TpvVector4.InlineableCreate(0.71*0.01,0.86*0.01,1.0*0.01,0.0);
-  Layers[1].SkewAlongWindDirection:=400.0;
-
-  Layers[1].TotalNoiseScale:=0.0006;
-  Layers[1].CurlScale:=0.1;
-  Layers[1].CurlNoiseHeightFraction:=500.0;
-  Layers[1].CurlNoiseModifier:=250.0;
-  Layers[1].DetailScale:=2.0;
-  Layers[1].DetailNoiseHeightFraction:=0.0;
-  Layers[1].DetailNoiseModifier:=1.0;
-  Layers[1].SkewAlongCoverageWindDirection:=0.0;
-  Layers[1].WeatherScale:=0.000025;
-  Layers[1].CoverageAmount:=0.0;
-  Layers[1].CoverageMinimum:=0.0;
-  Layers[1].TypeAmount:=1.0;
-  Layers[1].TypeMinimum:=0.0;
-  Layers[1].RainAmount:=0.0;
-  Layers[1].RainMinimum:=0.0;
-
-  Layers[1].GradientSmall:=TpvVector4.InlineableCreate(0.6,0.62,0.63,0.65);
-  Layers[1].GradientMedium:=TpvVector4.InlineableCreate(0.6,0.64,0.66,0.7);
-  Layers[1].GradientLarge:=TpvVector4.InlineableCreate(0.6,0.66,0.69,0.75);
-
-  Layers[1].AnvilDeformationSmall:=TpvVector4.InlineableCreate(0.0,0.0,0.0,0.0);
-  Layers[1].AnvilDeformationMedium:=TpvVector4.InlineableCreate(0.0,0.0,0.0,0.0);
-  Layers[1].AnvilDeformationLarge:=TpvVector4.InlineableCreate(0.0,0.0,0.0,0.0);
-
-  Layers[1].WindSpeed:=10.0;
-  Layers[1].WindAngle:=1.0;
-  Layers[1].WindUpAmount:=0.1;
-  Layers[1].CoverageWindSpeed:=50.0;
-  Layers[1].CoverageWindAngle:=1.0;
-
- end;
-
- AnimationMultiplier:=2.0;
- 
- MaxStepCount:=96;
- MaxMarchingDistance:=30000.0;
- InverseDistanceStepCount:=15000.0;
- RenderDistance:=70000.0;
- LODDistance:=30000.0;
- LODMin:=0;
- BigStepMarch:=2.0;
- TransmittanceThreshold:=0.005;
- ShadowSampleCount:=5.0;
- GroundContributionSampleCount:=3.0;
-
-end;
-
-procedure TpvScene3DAtmosphere.TVolumetricCloudParametersOld.LoadFromJSON(const aJSON:TPasJSONItem);
-var JSONRootObject:TPasJSONItemObject;
-    JSON:TPasJSONItem;
-    Index:TpvInt32;
-begin
-
- if assigned(aJSON) and (aJSON is TPasJSONItemObject) then begin
-
-  JSONRootObject:=TPasJSONItemObject(aJSON);
-
-  BeerPowder:=TPasJSON.GetNumber(JSONRootObject.Properties['beerpowder'],BeerPowder);
-  BeerPowderPower:=TPasJSON.GetNumber(JSONRootObject.Properties['beerpowderpower'],BeerPowderPower);
-  AmbientGroundMultiplier:=TPasJSON.GetNumber(JSONRootObject.Properties['ambientgroundmultiplier'],AmbientGroundMultiplier);
-  PhaseG:=TPasJSON.GetNumber(JSONRootObject.Properties['phaseg'],PhaseG);
-  PhaseG2:=TPasJSON.GetNumber(JSONRootObject.Properties['phaseg2'],PhaseG2);
-  PhaseBlend:=TPasJSON.GetNumber(JSONRootObject.Properties['phaseblend'],PhaseBlend);
-  MultiScatteringScattering:=TPasJSON.GetNumber(JSONRootObject.Properties['multiscatteringscattering'],MultiScatteringScattering);
-  MultiScatteringExtinction:=TPasJSON.GetNumber(JSONRootObject.Properties['multiscatteringextinction'],MultiScatteringExtinction);
-  MultiScatteringEccentricity:=TPasJSON.GetNumber(JSONRootObject.Properties['multiScatteringeccentricity'],MultiScatteringEccentricity);
-  ShadowStepLength:=TPasJSON.GetNumber(JSONRootObject.Properties['shadowsteplength'],ShadowStepLength);
-  HorizonBlendAmount:=TPasJSON.GetNumber(JSONRootObject.Properties['horizonblendamount'],HorizonBlendAmount);
-  HorizonBlendPower:=TPasJSON.GetNumber(JSONRootObject.Properties['horizonblendpower'],HorizonBlendPower);
-
-  CloudStartHeight:=TPasJSON.GetNumber(JSONRootObject.Properties['cloudstartheight'],CloudStartHeight);
-  CloudThickness:=TPasJSON.GetNumber(JSONRootObject.Properties['cloudthickness'],CloudThickness);
-
-  JSON:=JSONRootObject.Properties['layers'];
-  if assigned(JSON) and (JSON is TPasJSONItemArray) then begin
-   for Index:=0 to Min(TPasJSONItemArray(JSON).Count-1,Length(Layers)-1) do begin
-    Layers[Index].LoadFromJSON(TPasJSONItemArray(JSON).Items[Index]);
+  3:begin
+   if CountFaces>0 then begin
+    cx:=0.0;
+    cy:=0.0;
+    cz:=0.0;
+    for FaceIndex:=0 to TpvSizeInt(CountFaces)-1 do begin
+     p:=@FacePlanes[FaceIndex];
+     cx:=cx+(p^.x*(-p^.w));
+     cy:=cy+(p^.y*(-p^.w));
+     cz:=cz+(p^.z*(-p^.w));
+    end;
+    s.Center:=TpvVector3.InlineableCreate(cx/CountFaces,cy/CountFaces,cz/CountFaces);
+    s.Radius:=0.0;
+    for FaceIndex:=0 to TpvSizeInt(CountFaces)-1 do begin
+     p:=@FacePlanes[FaceIndex];
+     s.Radius:=Max(s.Radius,(s.Center-(p^.xyz*(-p^.w))).Length);
+    end;
+    s.Radius:=s.Radius*2.0;
+   end else begin
+    s.Center:=TpvVector3.Origin;
+    s.Radius:=0.0;
    end;
   end;
-
-  AnimationMultiplier:=TPasJSON.GetNumber(JSONRootObject.Properties['animationmultiplier'],AnimationMultiplier);
-
-  MaxStepCount:=TPasJSON.GetInt64(JSONRootObject.Properties['maxstepcount'],MaxStepCount);
-  MaxMarchingDistance:=TPasJSON.GetNumber(JSONRootObject.Properties['maxmarchingdistance'],MaxMarchingDistance);
-  InverseDistanceStepCount:=TPasJSON.GetNumber(JSONRootObject.Properties['inversedistancestepcount'],InverseDistanceStepCount);
-  RenderDistance:=TPasJSON.GetNumber(JSONRootObject.Properties['renderdistance'],RenderDistance);
-  LODDistance:=TPasJSON.GetNumber(JSONRootObject.Properties['loddistance'],LODDistance);
-  LODMin:=TPasJSON.GetNumber(JSONRootObject.Properties['lodmin'],LODMin);
-  BigStepMarch:=TPasJSON.GetNumber(JSONRootObject.Properties['bigstepmarch'],BigStepMarch);
-  TransmittanceThreshold:=TPasJSON.GetNumber(JSONRootObject.Properties['transmittancethreshold'],TransmittanceThreshold);
-  ShadowSampleCount:=TPasJSON.GetNumber(JSONRootObject.Properties['shadowsamplecount'],ShadowSampleCount);
-  GroundContributionSampleCount:=TPasJSON.GetNumber(JSONRootObject.Properties['groundcontributionsamplecount'],GroundContributionSampleCount);
-
  end;
-
-end;
-
-procedure TpvScene3DAtmosphere.TVolumetricCloudParametersOld.LoadFromJSONStream(const aStream:TStream);
-var JSON:TPasJSONItem;
-begin
- JSON:=TPasJSON.Parse(aStream);
- if assigned(JSON) then begin
-  try
-   LoadFromJSON(JSON);
-  finally
-   FreeAndNil(JSON);
-  end;
- end;
-end;
-
-procedure TpvScene3DAtmosphere.TVolumetricCloudParametersOld.LoadFromJSONFile(const aFileName:string);
-var Stream:TMemoryStream;
-begin
- Stream:=TMemoryStream.Create;
- try
-  Stream.LoadFromFile(aFileName);
-  Stream.Seek(0,soBeginning);
-  LoadFromJSONStream(Stream);
- finally
-  Stream.Free;
- end;
-end;
-
-function TpvScene3DAtmosphere.TVolumetricCloudParametersOld.SaveToJSON:TPasJSONItemObject;
-var JSONArray:TPasJSONItemArray;
-    Index:TpvInt32;
-begin
- result:=TPasJSONItemObject.Create;
- result.Add('beerpowder',TPasJSONItemNumber.Create(BeerPowder));
- result.Add('beerpowderpower',TPasJSONItemNumber.Create(BeerPowderPower));
- result.Add('ambientgroundmultiplier',TPasJSONItemNumber.Create(AmbientGroundMultiplier));
- result.Add('phaseg',TPasJSONItemNumber.Create(PhaseG));
- result.Add('phaseg2',TPasJSONItemNumber.Create(PhaseG2));
- result.Add('phaseblend',TPasJSONItemNumber.Create(PhaseBlend));
- result.Add('multiscatteringscattering',TPasJSONItemNumber.Create(MultiScatteringScattering));
- result.Add('multiscatteringextinction',TPasJSONItemNumber.Create(MultiScatteringExtinction));
- result.Add('multiscatteringeccentricity',TPasJSONItemNumber.Create(MultiScatteringEccentricity));
- result.Add('shadowsteplength',TPasJSONItemNumber.Create(ShadowStepLength));
- result.Add('horizonblendamount',TPasJSONItemNumber.Create(HorizonBlendAmount));
- result.Add('horizonblendpower',TPasJSONItemNumber.Create(HorizonBlendPower));
- result.Add('cloudstartheight',TPasJSONItemNumber.Create(CloudStartHeight));
- result.Add('cloudthickness',TPasJSONItemNumber.Create(CloudThickness));
- JSONArray:=TPasJSONItemArray.Create;
- try
-  for Index:=0 to Length(Layers)-1 do begin
-   JSONArray.Add(Layers[Index].SaveToJSON);
-  end;
- finally
-  result.Add('layers',JSONArray);
- end; 
- result.Add('animationmultiplier',TPasJSONItemNumber.Create(AnimationMultiplier));
- result.Add('maxstepcount',TPasJSONItemNumber.Create(MaxStepCount));
- result.Add('maxmarchingdistance',TPasJSONItemNumber.Create(MaxMarchingDistance));
- result.Add('inversedistancestepcount',TPasJSONItemNumber.Create(InverseDistanceStepCount));
- result.Add('renderdistance',TPasJSONItemNumber.Create(RenderDistance));
- result.Add('loddistance',TPasJSONItemNumber.Create(LODDistance));
- result.Add('lodmin',TPasJSONItemNumber.Create(LODMin));
- result.Add('bigstepmarch',TPasJSONItemNumber.Create(BigStepMarch));
- result.Add('transmittancethreshold',TPasJSONItemNumber.Create(TransmittanceThreshold));
- result.Add('shadowsamplecount',TPasJSONItemNumber.Create(ShadowSampleCount));
- result.Add('groundcontributionsamplecount',TPasJSONItemNumber.Create(GroundContributionSampleCount));
-end;
-
-procedure TpvScene3DAtmosphere.TVolumetricCloudParametersOld.SaveToJSONStream(const aStream:TStream);
-var JSON:TPasJSONItem;
-begin
- JSON:=SaveToJSON;
- if assigned(JSON) then begin
-  try
-   TPasJSON.StringifyToStream(aStream,JSON,true);
-  finally
-   FreeAndNil(JSON);
-  end;
- end;
-end;
-
-procedure TpvScene3DAtmosphere.TVolumetricCloudParametersOld.SaveToJSONFile(const aFileName:string);
-var Stream:TMemoryStream;
-begin
- Stream:=TMemoryStream.Create;
- try
-  SaveToJSONStream(Stream);
-  Stream.Seek(0,soBeginning);
-  Stream.SaveToFile(aFileName);
- finally
-  Stream.Free;
- end;
+ BoundingSphere.xyz:=s.Center;
+ BoundingSphere.w:=s.Radius+(OuterFadeDistance*2.0);
 end;
 
 { TpvScene3DAtmosphere.TVolumetricCloudLayerLow }
@@ -1752,6 +1361,9 @@ begin
  RaymarchingMinSteps:=4;
  RaymarchingMaxSteps:=14;
 
+ // Atmosphere culling
+ FillChar(AtmosphereCullingParameters,SizeOf(TAtmosphereCullingParameters),#0);
+
  // Volumetric clouds
  VolumetricClouds.Initialize;
 
@@ -2113,6 +1725,34 @@ begin
 
 end;
 
+{ TpvScene3DAtmosphere.TGPUAtmosphereCullingParameters }
+
+procedure TpvScene3DAtmosphere.TGPUAtmosphereCullingParameters.Assign(const aAtmosphereCullingParameters:TAtmosphereCullingParameters);
+var FaceIndex:TpvSizeInt; 
+begin
+ aAtmosphereCullingParameters.CalculateBoundingSphere;
+ InnerFadeDistance:=aAtmosphereCullingParameters.InnerFadeDistance;
+ OuterFadeDistance:=aAtmosphereCullingParameters.OuterFadeDistance;
+ CountFaces:=aAtmosphereCullingParameters.CountFaces;
+ Mode:=aAtmosphereCullingParameters.Mode;
+ InversedTransform:=aAtmosphereCullingParameters.InversedTransform;
+ BoundingSphere:=aAtmosphereCullingParameters.BoundingSphere;
+ case Mode and $f of
+  1:begin
+   CenterRadius:=aAtmosphereCullingParameters.CenterRadius;
+  end;
+  2:begin
+   Center:=aAtmosphereCullingParameters.Center;
+   HalfExtents:=aAtmosphereCullingParameters.HalfExtents;
+  end;
+  3:begin
+   for FaceIndex:=0 to Min(TpvSizeInt(CountFaces),32)-1 do begin
+    FacePlanes[FaceIndex]:=aAtmosphereCullingParameters.FacePlanes[FaceIndex];
+   end;
+  end;
+ end;
+end;
+
 { TpvScene3DAtmosphere.TGPUAtmosphereParameters }
 
 procedure TpvScene3DAtmosphere.TGPUAtmosphereParameters.Assign(const aAtmosphereParameters:TAtmosphereParameters);
@@ -2145,6 +1785,8 @@ begin
 
  RaymarchingMinSteps:=aAtmosphereParameters.RaymarchingMinSteps;
  RaymarchingMaxSteps:=aAtmosphereParameters.RaymarchingMaxSteps;
+
+ AtmosphereCullingParameters.Assign(aAtmosphereParameters.AtmosphereCullingParameters);
 
  VolumetricClouds.Assign(aAtmosphereParameters.VolumetricClouds);
 
@@ -2220,7 +1862,9 @@ begin
  TpvScene3D(fAtmosphere.fScene3D).VulkanDevice.DebugUtils.SetObjectName(fSkyViewLUTTexture.VulkanArrayImageView.Handle,VK_OBJECT_TYPE_IMAGE_VIEW,'SkyViewLUTTexture');
  if assigned(fSkyViewLUTTexture.VulkanOtherArrayImageView) then begin
   TpvScene3D(fAtmosphere.fScene3D).VulkanDevice.DebugUtils.SetObjectName(fSkyViewLUTTexture.VulkanOtherArrayImageView.Handle,VK_OBJECT_TYPE_IMAGE_VIEW,'SkyViewLUTTexture');
- end;                                                                                                           
+ end;
+
+ fSkyViewLUTTextureImageLayout:=VK_IMAGE_LAYOUT_GENERAL;
 
  fCameraVolumeTexture:=TpvScene3DRendererArray2DImage.Create(TpvScene3D(fAtmosphere.fScene3D).VulkanDevice,
                                                              CameraVolumeTextureWidth,
@@ -2237,6 +1881,8 @@ begin
  if assigned(fCameraVolumeTexture.VulkanOtherArrayImageView) then begin
   TpvScene3D(fAtmosphere.fScene3D).VulkanDevice.DebugUtils.SetObjectName(fCameraVolumeTexture.VulkanOtherArrayImageView.Handle,VK_OBJECT_TYPE_IMAGE_VIEW,'CameraVolumeTexture');
  end;                                                            
+
+ fCameraVolumeTextureImageLayout:=VK_IMAGE_LAYOUT_GENERAL;
 
  fCubeMapTexture:=TpvScene3DRendererMipmapImageCubeMap.Create(TpvScene3D(fAtmosphere.fScene3D).VulkanDevice,
                                                               CubeMapTextureSize,
@@ -3622,11 +3268,43 @@ begin
                                     0,
                                     0,nil,
                                     0,nil,
-                                    1,@ImageMemoryBarriers[0]);   
+                                    1,@ImageMemoryBarriers[0]);
 
   TpvScene3D(fAtmosphere.fScene3D).VulkanDevice.DebugUtils.CmdBufLabelEnd(aCommandBuffer);
 
- end; 
+  fSkyViewLUTTextureImageLayout:=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+ end else if fSkyViewLUTTextureImageLayout<>VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL then begin
+
+  // Sky view LUT
+
+  TpvScene3D(fAtmosphere.fScene3D).VulkanDevice.DebugUtils.CmdBufLabelBegin(aCommandBuffer,'TpvScene3DAtmosphere.SkyViewLUT',[0.0,0.0,1.0,1.0]);
+
+  ImageMemoryBarriers[0]:=TVkImageMemoryBarrier.Create(0,
+                                                       TVkAccessFlags(VK_ACCESS_SHADER_READ_BIT),
+                                                       VK_IMAGE_LAYOUT_UNDEFINED,
+                                                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                                       VK_QUEUE_FAMILY_IGNORED,
+                                                       VK_QUEUE_FAMILY_IGNORED,
+                                                       fSkyViewLUTTexture.VulkanImage.Handle,
+                                                       TVkImageSubresourceRange.Create(TVkImageAspectFlags(VK_IMAGE_ASPECT_COLOR_BIT),
+                                                                                       0,
+                                                                                       1,
+                                                                                       0,
+                                                                                       fSkyViewLUTTexture.Layers));
+
+  aCommandBuffer.CmdPipelineBarrier(TVkPipelineStageFlags(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT),
+                                    TVkPipelineStageFlags(VK_PIPELINE_STAGE_VERTEX_SHADER_BIT) or TVkPipelineStageFlags(VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT) or TVkPipelineStageFlags(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT),
+                                    0,
+                                    0,nil,
+                                    0,nil,
+                                    1,@ImageMemoryBarriers[0]);
+
+  TpvScene3D(fAtmosphere.fScene3D).VulkanDevice.DebugUtils.CmdBufLabelEnd(aCommandBuffer);
+
+  fSkyViewLUTTextureImageLayout:=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+ end;
 
  if TpvScene3DRenderer(TpvScene3DRendererInstance(fRendererInstance).Renderer).FastAerialPerspective then begin
 
@@ -3701,11 +3379,43 @@ begin
                                     0,
                                     0,nil,
                                     0,nil,
-                                    1,@ImageMemoryBarriers[0]);    
+                                    1,@ImageMemoryBarriers[0]);
 
   TpvScene3D(fAtmosphere.fScene3D).VulkanDevice.DebugUtils.CmdBufLabelEnd(aCommandBuffer);
 
- end; 
+  fCameraVolumeTextureImageLayout:=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+ end else if fCameraVolumeTextureImageLayout<>VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL then begin
+
+  // Camera volume
+
+  TpvScene3D(fAtmosphere.fScene3D).VulkanDevice.DebugUtils.CmdBufLabelBegin(aCommandBuffer,'TpvScene3DAtmosphere.CameraVolume',[1.0,1.0,0.0,1.0]);
+
+  ImageMemoryBarriers[0]:=TVkImageMemoryBarrier.Create(0,
+                                                       TVkAccessFlags(VK_ACCESS_SHADER_READ_BIT),
+                                                       VK_IMAGE_LAYOUT_UNDEFINED,
+                                                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                                       VK_QUEUE_FAMILY_IGNORED,
+                                                       VK_QUEUE_FAMILY_IGNORED,
+                                                       fCameraVolumeTexture.VulkanImage.Handle,
+                                                       TVkImageSubresourceRange.Create(TVkImageAspectFlags(VK_IMAGE_ASPECT_COLOR_BIT),
+                                                                                       0,
+                                                                                       1,
+                                                                                       0,
+                                                                                       fCameraVolumeTexture.Layers));
+
+  aCommandBuffer.CmdPipelineBarrier(TVkPipelineStageFlags(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT),
+                                    TVkPipelineStageFlags(VK_PIPELINE_STAGE_VERTEX_SHADER_BIT) or TVkPipelineStageFlags(VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT) or TVkPipelineStageFlags(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT),
+                                    0,
+                                    0,nil,
+                                    0,nil,
+                                    1,@ImageMemoryBarriers[0]);
+
+  TpvScene3D(fAtmosphere.fScene3D).VulkanDevice.DebugUtils.CmdBufLabelEnd(aCommandBuffer);
+
+  fCameraVolumeTextureImageLayout:=VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+ end;
 
  begin
 

@@ -35,6 +35,13 @@ layout(set = 2, binding = 1, std430) readonly buffer PlanetData {
 
   vec4 selected; // xyz = octahedral map coordinates, w = radius   
 
+  uvec4 selectedColorBrushIndexBrushRotation; // xy = selected color (16-bit half float vec4), z = brush index, w = brush rotation
+
+  float selectedInnerRadius;
+  uint reserved0;
+  uint reserved1;
+  uint reserved2;
+
   PlanetMaterial materials[16];
 
 } planetData;
@@ -67,15 +74,18 @@ layout(push_constant) uniform PushConstants {
 #else
 layout(push_constant) uniform PushConstants {
 
+  // First uvec4
   uint viewBaseIndex;
   uint countViews;
   uint countQuadPointsInOneDirection; 
   uint countAllViews;
   
+  // Second uvec4
   uint resolutionXY;  
   float tessellationFactor; // = factor / referenceMinEdgeSize, for to avoid at least one division in the shader 
   vec2 jitter;
 
+  // Third uvec4 
   int frameIndex; 
   int reversed;
 #if defined(USE_BUFFER_REFERENCE) 
@@ -95,17 +105,21 @@ PlanetData planetData = pushConstants.planetData; // For to avoid changing the c
 
 #if !defined(PLANET_WATER)
 
-PlanetMaterial layerMaterials[4];
-vec4 layerMaterialWeights;
+#define layerMaterials planetData.materials
+
+//PlanetMaterial layerMaterials[4];
+mat2x4 layerMaterialWeights;
 
 void layerMaterialSetup(vec3 sphereNormal){
 
+/*
   layerMaterials[0] = planetData.materials[0];
   layerMaterials[1] = planetData.materials[1];
   layerMaterials[2] = planetData.materials[2];
   layerMaterials[3] = planetData.materials[3];
-   
-  layerMaterialWeights = vec4(1.0, 0.0, 0.0, 0.0);
+*/
+      
+  //layerMaterialWeights = mat2x4(vec4(0.0, 0.0, 0.0, 0.0), vec4(0.0, 0.0, 0.0, 0.0));
 
 }
 
@@ -254,32 +268,62 @@ void multiplanarSetup(vec3 position, vec3 positionDX, vec3 positionDY, vec3 norm
 
 vec4 multiplanarTexture(const in sampler2D tex, float scale){
 #ifdef TRIPLANAR
-  return (textureNoTile(tex, multiplanarP.yz * scale, multiplanarDX.yz * scale, multiplanarDY.yz * scale) * multiplanarM.x) +
-         (textureNoTile(tex, multiplanarP.zx * scale, multiplanarDX.zx * scale, multiplanarDY.zx * scale) * multiplanarM.y) + 
-         (textureNoTile(tex, multiplanarP.xy * scale, multiplanarDX.xy * scale, multiplanarDY.xy * scale) * multiplanarM.z);
+  if(scale < 0.0){
+    scale = -scale;
+    return (textureGrad(tex, multiplanarP.yz * scale, multiplanarDX.yz * scale, multiplanarDY.yz * scale) * multiplanarM.x) +
+           (textureGrad(tex, multiplanarP.zx * scale, multiplanarDX.zx * scale, multiplanarDY.zx * scale) * multiplanarM.y) + 
+           (textureGrad(tex, multiplanarP.xy * scale, multiplanarDX.xy * scale, multiplanarDY.xy * scale) * multiplanarM.z);
+  }else{
+    return (textureNoTile(tex, multiplanarP.yz * scale, multiplanarDX.yz * scale, multiplanarDY.yz * scale) * multiplanarM.x) +
+           (textureNoTile(tex, multiplanarP.zx * scale, multiplanarDX.zx * scale, multiplanarDY.zx * scale) * multiplanarM.y) + 
+           (textureNoTile(tex, multiplanarP.xy * scale, multiplanarDX.xy * scale, multiplanarDY.xy * scale) * multiplanarM.z);
+  }
 #else
- return (textureNoTile(
+  if(scale < 0.0){
+    scale = -scale;
+    return (textureGrad(
+              tex, 
+              vec2(multiplanarP[multiplanarMA.y], multiplanarP[multiplanarMA.z]) * scale,
+              vec2(multiplanarDX[multiplanarMA.y], multiplanarDX[multiplanarMA.z]) * scale,
+              vec2(multiplanarDY[multiplanarMA.y], multiplanarDY[multiplanarMA.z]) * scale
+            ) * multiplanarM.x
+          ) +
+          (textureGrad(
             tex, 
-            vec2(multiplanarP[multiplanarMA.y], multiplanarP[multiplanarMA.z]) * scale,
-            vec2(multiplanarDX[multiplanarMA.y], multiplanarDX[multiplanarMA.z]) * scale,
-            vec2(multiplanarDY[multiplanarMA.y], multiplanarDY[multiplanarMA.z]) * scale
-          ) * multiplanarM.x
-        ) +
-        (textureNoTile(
-           tex, 
-           vec2(multiplanarP[multiplanarME.y], multiplanarP[multiplanarME.z]) * scale,
-           vec2(multiplanarDX[multiplanarME.y], multiplanarDX[multiplanarME.z]) * scale,
-           vec2(multiplanarDY[multiplanarME.y], multiplanarDY[multiplanarME.z]) * scale
-          ) * multiplanarM.y
-        );
+            vec2(multiplanarP[multiplanarME.y], multiplanarP[multiplanarME.z]) * scale,
+            vec2(multiplanarDX[multiplanarME.y], multiplanarDX[multiplanarME.z]) * scale,
+            vec2(multiplanarDY[multiplanarME.y], multiplanarDY[multiplanarME.z]) * scale
+            ) * multiplanarM.y
+          );
+  }else{
+    return (textureNoTile(
+              tex, 
+              vec2(multiplanarP[multiplanarMA.y], multiplanarP[multiplanarMA.z]) * scale,
+              vec2(multiplanarDX[multiplanarMA.y], multiplanarDX[multiplanarMA.z]) * scale,
+              vec2(multiplanarDY[multiplanarMA.y], multiplanarDY[multiplanarMA.z]) * scale
+            ) * multiplanarM.x
+          ) +
+          (textureNoTile(
+            tex, 
+            vec2(multiplanarP[multiplanarME.y], multiplanarP[multiplanarME.z]) * scale,
+            vec2(multiplanarDX[multiplanarME.y], multiplanarDX[multiplanarME.z]) * scale,
+            vec2(multiplanarDY[multiplanarME.y], multiplanarDY[multiplanarME.z]) * scale
+            ) * multiplanarM.y
+          );
+  }
 #endif
+}
+
+float getLayerWeight(const in int layerIndex){
+  return layerMaterialWeights[layerIndex >> 2][layerIndex & 3];
 }
 
 vec3 getLayeredMultiplanarAlbedo(){
   vec4 albedoWeightSum = vec4(0.0);
   [[unroll]] for(int layerIndex = 0; layerIndex < 4; layerIndex++){
-    if(layerMaterialWeights[layerIndex] > 0.0){
-      albedoWeightSum += vec4(multiplanarTexture(u2DTextures[(GetPlanetMaterialAlbedoTextureIndex(layerMaterials[layerIndex]) << 1) | 1], GetPlanetMaterialScale(layerMaterials[layerIndex])).xyz, 1.0) * layerMaterialWeights[layerIndex];
+    const float weight = getLayerWeight(layerIndex);
+    if(weight > 0.0){
+      albedoWeightSum += vec4(multiplanarTexture(u2DTextures[(GetPlanetMaterialAlbedoTextureIndex(layerMaterials[layerIndex]) << 1) | 1], GetPlanetMaterialScale(layerMaterials[layerIndex])).xyz, 1.0) * weight;
     }
   }
   return albedoWeightSum.xyz / max(1e-7, albedoWeightSum.w);
@@ -288,8 +332,9 @@ vec3 getLayeredMultiplanarAlbedo(){
 vec3 getLayeredMultiplanarNormal(){
   vec4 normalWeightSum = vec4(0.0);
   [[unroll]] for(int layerIndex = 0; layerIndex < 4; layerIndex++){
-    if(layerMaterialWeights[layerIndex] > 0.0){
-      normalWeightSum += vec4(multiplanarTexture(u2DTextures[(GetPlanetMaterialNormalHeightTextureIndex(layerMaterials[layerIndex]) << 1) | 0], GetPlanetMaterialScale(layerMaterials[layerIndex])).xyz, 1.0) * layerMaterialWeights[layerIndex];
+    const float weight = getLayerWeight(layerIndex);
+    if(weight > 0.0){
+      normalWeightSum += vec4(multiplanarTexture(u2DTextures[(GetPlanetMaterialNormalHeightTextureIndex(layerMaterials[layerIndex]) << 1) | 0], GetPlanetMaterialScale(layerMaterials[layerIndex])).xyz, 1.0) * weight;
     }
   }
   return normalWeightSum.xyz / max(1e-7, normalWeightSum.w);
@@ -298,8 +343,9 @@ vec3 getLayeredMultiplanarNormal(){
 float getLayeredMultiplanarHeight(){
   vec2 heightWeightSum = vec2(0.0);
   [[unroll]] for(int layerIndex = 0; layerIndex < 4; layerIndex++){
-    if(layerMaterialWeights[layerIndex] > 0.0){
-      heightWeightSum += vec2(multiplanarTexture(u2DTextures[(GetPlanetMaterialNormalHeightTextureIndex(layerMaterials[layerIndex]) << 1) | 0], GetPlanetMaterialScale(layerMaterials[layerIndex])).w, 1.0) * layerMaterialWeights[layerIndex];
+    const float weight = getLayerWeight(layerIndex);
+    if(weight > 0.0){
+      heightWeightSum += vec2(multiplanarTexture(u2DTextures[(GetPlanetMaterialNormalHeightTextureIndex(layerMaterials[layerIndex]) << 1) | 0], GetPlanetMaterialScale(layerMaterials[layerIndex])).w, 1.0) * weight;
     }
   }
   return heightWeightSum.x / max(1e-7, heightWeightSum.y);
@@ -308,8 +354,9 @@ float getLayeredMultiplanarHeight(){
 vec3 getLayeredMultiplanarOcclusionRoughnessMetallic(){
   vec4 occlusionRoughnessMetallicWeightSum = vec4(0.0);
   [[unroll]] for(int layerIndex = 0; layerIndex < 4; layerIndex++){
-    if(layerMaterialWeights[layerIndex] > 0.0){
-      occlusionRoughnessMetallicWeightSum += vec4(multiplanarTexture(u2DTextures[(GetPlanetMaterialOcclusionRoughnessMetallicTextureIndex(layerMaterials[layerIndex]) << 1) | 0], GetPlanetMaterialScale(layerMaterials[layerIndex])).xyz, 1.0) * layerMaterialWeights[layerIndex];
+    const float weight = getLayerWeight(layerIndex);
+    if(weight > 0.0){
+      occlusionRoughnessMetallicWeightSum += vec4(multiplanarTexture(u2DTextures[(GetPlanetMaterialOcclusionRoughnessMetallicTextureIndex(layerMaterials[layerIndex]) << 1) | 0], GetPlanetMaterialScale(layerMaterials[layerIndex])).xyz, 1.0) * weight;
     }
   }
   return occlusionRoughnessMetallicWeightSum.xyz / max(1e-7, occlusionRoughnessMetallicWeightSum.w);

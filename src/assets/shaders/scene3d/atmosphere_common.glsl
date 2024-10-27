@@ -25,109 +25,6 @@
 
 float SampleSegmentT = 0.3;
 
-struct DensityProfileLayer {
-  float Width;
-  float ExpTerm;
-  float ExpScale;
-  float LinearTerm;
-  float ConstantTerm;
-  float Unused0;
-  float Unused1;
-  float Unused2;
-};
-
-struct DensityProfile {
-  DensityProfileLayer Layers[2];
-};
-
-struct VolumetricCloudLayer {
-
-  vec4 Albedo; // w = unused 
-
-  vec4 ExtinctionCoefficient; // w = CoverageWindAngle
-	
-  float SkewAlongWindDirection;
-	float TotalNoiseScale;
-	float CurlScale;
-	float CurlNoiseHeightFraction;
-	
-  float CurlNoiseModifier;
-	float DetailScale;
-	float DetailNoiseHeightFraction;
-	float DetailNoiseModifier;
-	
-  float SkewAlongCoverageWindDirection;
-	float WeatherScale;
-	float CoverageAmount;
-	float CoverageMinimum;
-	
-  float TypeAmount;
-	float TypeMinimum;
-	float RainAmount;
-	float RainMinimum;
-	
-  vec4 GradientSmall;
-	
-  vec4 GradientMedium;
-	
-  vec4 GradientLarge;
-	
-  vec4 AnvilDeformationSmall;
-	
-  vec4 AnvilDeformationMedium;
-	
-  vec4 AnvilDeformationLarge;
-	
-  float WindSpeed;
-	float WindAngle;
-	float WindUpAmount;
-	float CoverageWindSpeed;
-  
-  //float CoverageWindAngle; // in ExtinctionCoefficient.w  
-
-};
-
-struct VolumetricCloudParametersOld {
-
-	float BeerPowder;
-	float BeerPowderPower;
-	float AmbientGroundMultiplier; 	
-  float PhaseG;
-
-	float PhaseG2;
-	float PhaseBlend; 
-	float MultiScatteringScattering;	
-  float MultiScatteringExtinction;
-
-	float MultiScatteringEccentricity;
-	float ShadowStepLength;
-	float HorizonBlendAmount;
-	float HorizonBlendPower;
-
-	float CloudStartHeight;
-	float CloudThickness;
-	float AnimationMultiplier;
-	float Padding0;
-
-	int MaxStepCount; 
-	float MaxMarchingDistance; 
-	float InverseDistanceStepCount; 
-	float RenderDistance;
-
-	float LODDistance; 
-	float LODMin; 
-	float BigStepMarch; 
-	float TransmittanceThreshold; 
-
-	float ShadowSampleCount;
-	float GroundContributionSampleCount;
-	float Padding1;
-	float Padding2;
-  
-	VolumetricCloudLayer Layers[2];
-
-};
-
 struct CloudPhaseParameters {
   float G;
   float G2;
@@ -255,6 +152,16 @@ struct VolumetricCloudParameters {
 
 };
 
+// Atmosphere culling for avoiding rendering the atmosphere scattering inside scene objects, when the GPU is too slow for real atmospheric shadowing either by
+// using shadow mapping or by using raytracing. 
+// This structure data must set dynamically based on the scene object that it should cull the atmosphere scattering inside.
+struct AtmosphereCullingParameters {
+  uvec4 innerOuterFadeDistancesCountFacesMode; // x = inner fade distance, y = outer fade distance, z = count faces, w = mode (0 = Disabled, 1 = Sphere, 2 = AABB, 3 = Convex Hull)
+  mat4 inversedTransform; // Inversed transform matrix 
+  vec4 boundingSphere; // x = center, y = radius 
+  vec4 facePlanes[32]; // maximal 32 faces, but for AABB [0] is the center and [1] is the extent, for Sphere [0] is the center (xyz) with radius (w)
+};
+
 struct AtmosphereParameters {
 
   mat4 transform;
@@ -290,9 +197,97 @@ struct AtmosphereParameters {
   int RaymarchingMinSteps;
   int RaymarchingMaxSteps;
 
+  AtmosphereCullingParameters CullingParameters;
+
   VolumetricCloudParameters VolumetricClouds;
 
 };
+
+float getAtmosphereCullingSDF(const in AtmosphereCullingParameters CullingParameters, vec3 p){
+  if(CullingParameters.innerOuterFadeDistancesCountFacesMode.w == 0u){
+    // Disabled
+    return 1e20;
+  }else{
+    p = (CullingParameters.inversedTransform * vec4(p, 1.0)).xyz; // Transform the point to the local space 
+    float signedDistance = length(p - CullingParameters.boundingSphere.xyz) - CullingParameters.boundingSphere.w;
+    if(signedDistance > 0.0){
+      return 1e20; // Outside the bounding sphere, early out 
+    }
+    switch(CullingParameters.innerOuterFadeDistancesCountFacesMode.w & 0xfu){
+      case 1u:{
+        // Sphere culling
+        signedDistance = length(p - CullingParameters.facePlanes[0].xyz) - CullingParameters.facePlanes[0].w;
+        break;
+      }
+      case 2u:{
+        // AABB culling
+        signedDistance = length(max(vec3(0.0), abs(p - CullingParameters.facePlanes[0].xyz) - CullingParameters.facePlanes[1].xyz));
+        break;
+      }
+      case 3u:{
+        // Convex Hull culling
+        signedDistance = uintBitsToFloat(0xff800000u); // -inf
+        for(uint faceIndex = 0u, countFaces = min(CullingParameters.innerOuterFadeDistancesCountFacesMode.z, 32u); faceIndex < countFaces; faceIndex++){
+          const vec4 facePlane = CullingParameters.facePlanes[faceIndex];
+          signedDistance = max(signedDistance, dot(p, facePlane.xyz) + facePlane.w);
+        }
+        break;
+      }
+      default:{
+        // Should not happen
+        return 1e20;
+      }
+    }
+    return signedDistance;
+  }
+}
+
+float getAtmosphereCullingFactor(const in AtmosphereCullingParameters CullingParameters, vec3 p, vec3 c){
+  if(CullingParameters.innerOuterFadeDistancesCountFacesMode.w == 0u){
+    // Disabled
+    return 1.0;
+  }else{
+    const vec2 innerOuterFadeDistances = uintBitsToFloat(CullingParameters.innerOuterFadeDistancesCountFacesMode.xy);
+    if((CullingParameters.innerOuterFadeDistancesCountFacesMode.w & 0x10u) != 0u){
+      p = c; // Use the camera position instead of the point
+    }
+    p = (CullingParameters.inversedTransform * vec4(p, 1.0)).xyz; // Transform the point to the local space 
+    float signedDistance = length(p - CullingParameters.boundingSphere.xyz) - CullingParameters.boundingSphere.w;
+    if(signedDistance > 0.0){
+      return 1.0; // Outside the bounding sphere, early out 
+    }
+    switch(CullingParameters.innerOuterFadeDistancesCountFacesMode.w & 0xfu){
+      case 1u:{
+        // Sphere culling
+        signedDistance = length(p - CullingParameters.facePlanes[0].xyz) - CullingParameters.facePlanes[0].w;
+        break;
+      }
+      case 2u:{
+        // AABB culling
+        signedDistance = length(max(vec3(0.0), abs(p - CullingParameters.facePlanes[0].xyz) - CullingParameters.facePlanes[1].xyz));
+        break;
+      }
+      case 3u:{
+        // Convex Hull culling
+        signedDistance = uintBitsToFloat(0xff800000u); // -inf
+        for(uint faceIndex = 0u, countFaces = min(CullingParameters.innerOuterFadeDistancesCountFacesMode.z, 32u); faceIndex < countFaces; faceIndex++){
+          const vec4 facePlane = CullingParameters.facePlanes[faceIndex];
+          signedDistance = max(signedDistance, dot(p, facePlane.xyz) + facePlane.w);
+          if(signedDistance >= innerOuterFadeDistances.y){
+            // If it is already greater than the outer fade distance, then break the loop early
+            break;
+          }
+        }
+        break;
+      }
+      default:{
+        // Should not happen
+        return 1.0;
+      }
+    }
+    return clamp((signedDistance - innerOuterFadeDistances.x) / max(1e-6, innerOuterFadeDistances.y - innerOuterFadeDistances.x), 0.0, 1.0);
+  }
+}
 
 vec3 getSunDirection(const in AtmosphereParameters atmosphereParameters){
   return vec3(atmosphereParameters.MieScattering.w, atmosphereParameters.MieExtinction.w, atmosphereParameters.MieAbsorption.w);

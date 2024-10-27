@@ -1153,6 +1153,7 @@ type PpvScalar=^TpvScalar;
        function Area:TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
        function Center:TpvVector3;
        function Flip:TpvAABB;
+       function ToOBB(const aTransform:TpvMatrix4x4):TpvOBB;
        function SquareMagnitude:TpvScalar; {$ifdef CAN_INLINE}inline;{$endif}
        function Resize(const f:TpvScalar):TpvAABB; {$ifdef CAN_INLINE}inline;{$endif}
        procedure DirectCombine(const WithAABB:TpvAABB); {$ifdef CAN_INLINE}inline;{$endif}
@@ -1205,8 +1206,6 @@ type PpvScalar=^TpvScalar;
      PpvSphere=^TpvSphere;
      TpvSphere=record
       public
-       Center:TpvVector3;
-       Radius:TpvScalar;
        constructor Create(const pCenter:TpvVector3;const pRadius:TpvScalar); overload;
        constructor Create(const aVector:TpvVector4); overload;
        constructor CreateFromAABB(const ppvAABB:TpvAABB);
@@ -1227,10 +1226,27 @@ type PpvScalar=^TpvScalar;
        function TriangleIntersection(const Triangle:TpvTriangle;out Position,Normal:TpvVector3;out Depth:TpvScalar):boolean; overload;
        function TriangleIntersection(const SegmentTriangle:TpvSegmentTriangle;const TriangleNormal:TpvVector3;out Position,Normal:TpvVector3;out Depth:TpvScalar):boolean; overload;
        function SweptIntersection(const SphereB:TpvSphere;const VelocityA,VelocityB:TpvVector3;out TimeFirst,TimeLast:TpvScalar):boolean; {$ifdef CAN_INLINE}inline;{$endif}
+      public
+       case TpvUInt8 of
+        0:(
+         Center:TpvVector3;
+        );
+        1:(
+         x:TpvScalar;
+         y:TpvScalar;
+         z:TpvScalar;
+         Radius:TpvScalar;
+        );
+        2:(
+         Vector4:TpvVector4;
+        );
      end;
 
      PpvSpheres=^TpvSpheres;
      TpvSpheres=array[0..65535] of TpvSphere;
+
+     TpvSphereDynamicArray=array of TpvSphere;
+     PpvSphereDynamicArray=^TpvSphereDynamicArray;
 
      PpvCapsule=^TpvCapsule;
      TpvCapsule=packed record
@@ -8482,7 +8498,7 @@ begin
 end;
 
 function TpvMatrix3x3.MulInverse(const a:TpvVector3):TpvVector3;
-var d:TpvScalar;
+{var d:TpvScalar;
 begin
  d:=((RawComponents[0,0]*((RawComponents[1,1]*RawComponents[2,2])-(RawComponents[2,1]*RawComponents[1,2])))-
      (RawComponents[0,1]*((RawComponents[1,0]*RawComponents[2,2])-(RawComponents[2,0]*RawComponents[1,2]))))+
@@ -8493,10 +8509,13 @@ begin
  result.x:=((a.x*((RawComponents[1,1]*RawComponents[2,2])-(RawComponents[1,2]*RawComponents[2,1])))+(a.y*((RawComponents[1,2]*RawComponents[2,0])-(RawComponents[1,0]*RawComponents[2,2])))+(a.z*((RawComponents[1,0]*RawComponents[2,1])-(RawComponents[1,1]*RawComponents[2,0]))))*d;
  result.y:=((RawComponents[0,0]*((a.y*RawComponents[2,2])-(a.z*RawComponents[2,1])))+(RawComponents[0,1]*((a.z*RawComponents[2,0])-(a.x*RawComponents[2,2])))+(RawComponents[0,2]*((a.x*RawComponents[2,1])-(a.y*RawComponents[2,0]))))*d;
  result.z:=((RawComponents[0,0]*((RawComponents[1,1]*a.z)-(RawComponents[1,2]*a.y)))+(RawComponents[0,1]*((RawComponents[1,2]*a.x)-(RawComponents[1,0]*a.z)))+(RawComponents[0,2]*((RawComponents[1,0]*a.y)-(RawComponents[1,1]*a.x))))*d;
+end;}
+begin
+ result:=Inverse*a;
 end;
 
 function TpvMatrix3x3.MulInverse(const a:TpvVector4):TpvVector4;
-var d:TpvScalar;
+{var d:TpvScalar;
 begin
  d:=((RawComponents[0,0]*((RawComponents[1,1]*RawComponents[2,2])-(RawComponents[2,1]*RawComponents[1,2])))-
      (RawComponents[0,1]*((RawComponents[1,0]*RawComponents[2,2])-(RawComponents[2,0]*RawComponents[1,2]))))+
@@ -8508,6 +8527,9 @@ begin
  result.y:=((RawComponents[0,0]*((a.y*RawComponents[2,2])-(a.z*RawComponents[2,1])))+(RawComponents[0,1]*((a.z*RawComponents[2,0])-(a.x*RawComponents[2,2])))+(RawComponents[0,2]*((a.x*RawComponents[2,1])-(a.y*RawComponents[2,0]))))*d;
  result.z:=((RawComponents[0,0]*((RawComponents[1,1]*a.z)-(RawComponents[1,2]*a.y)))+(RawComponents[0,1]*((RawComponents[1,2]*a.x)-(RawComponents[1,0]*a.z)))+(RawComponents[0,2]*((RawComponents[1,0]*a.y)-(RawComponents[1,1]*a.x))))*d;
  result.w:=a.w;
+end;}
+begin
+ result:=Inverse*a;
 end;
 
 function TpvMatrix3x3.Decompose:TpvDecomposedMatrix3x3;
@@ -12936,7 +12958,7 @@ begin
 end;
 
 function TpvMatrix4x4.MulInverse({$ifdef fpc}constref{$else}const{$endif} a:TpvVector3):TpvVector3;
-var d:TpvScalar;
+{var d:TpvScalar;
 begin
  d:=((RawComponents[0,0]*((RawComponents[1,1]*RawComponents[2,2])-(RawComponents[2,1]*RawComponents[1,2])))-
      (RawComponents[0,1]*((RawComponents[1,0]*RawComponents[2,2])-(RawComponents[2,0]*RawComponents[1,2]))))+
@@ -12947,10 +12969,13 @@ begin
  result.x:=((a.x*((RawComponents[1,1]*RawComponents[2,2])-(RawComponents[1,2]*RawComponents[2,1])))+(a.y*((RawComponents[1,2]*RawComponents[2,0])-(RawComponents[1,0]*RawComponents[2,2])))+(a.z*((RawComponents[1,0]*RawComponents[2,1])-(RawComponents[1,1]*RawComponents[2,0]))))*d;
  result.y:=((RawComponents[0,0]*((a.y*RawComponents[2,2])-(a.z*RawComponents[2,1])))+(RawComponents[0,1]*((a.z*RawComponents[2,0])-(a.x*RawComponents[2,2])))+(RawComponents[0,2]*((a.x*RawComponents[2,1])-(a.y*RawComponents[2,0]))))*d;
  result.z:=((RawComponents[0,0]*((RawComponents[1,1]*a.z)-(RawComponents[1,2]*a.y)))+(RawComponents[0,1]*((RawComponents[1,2]*a.x)-(RawComponents[1,0]*a.z)))+(RawComponents[0,2]*((RawComponents[1,0]*a.y)-(RawComponents[1,1]*a.x))))*d;
+end;}
+begin
+ result:=Inverse*a;
 end;
 
 function TpvMatrix4x4.MulInverse({$ifdef fpc}constref{$else}const{$endif} a:TpvVector4):TpvVector4;
-var d:TpvScalar;
+{var d:TpvScalar;
 begin
  d:=((RawComponents[0,0]*((RawComponents[1,1]*RawComponents[2,2])-(RawComponents[2,1]*RawComponents[1,2])))-
      (RawComponents[0,1]*((RawComponents[1,0]*RawComponents[2,2])-(RawComponents[2,0]*RawComponents[1,2]))))+
@@ -12962,6 +12987,9 @@ begin
  result.y:=((RawComponents[0,0]*((a.y*RawComponents[2,2])-(a.z*RawComponents[2,1])))+(RawComponents[0,1]*((a.z*RawComponents[2,0])-(a.x*RawComponents[2,2])))+(RawComponents[0,2]*((a.x*RawComponents[2,1])-(a.y*RawComponents[2,0]))))*d;
  result.z:=((RawComponents[0,0]*((RawComponents[1,1]*a.z)-(RawComponents[1,2]*a.y)))+(RawComponents[0,1]*((RawComponents[1,2]*a.x)-(RawComponents[1,0]*a.z)))+(RawComponents[0,2]*((RawComponents[1,0]*a.y)-(RawComponents[1,1]*a.x))))*d;
  result.w:=a.w;
+end;}
+begin
+ result:=Inverse*a;
 end;
 
 function TpvMatrix4x4.MulInverted({$ifdef fpc}constref{$else}const{$endif} a:TpvVector3):TpvVector3;
@@ -15076,6 +15104,13 @@ end;
 function TpvAABB.SquareMagnitude:TpvScalar;
 begin
  result:=sqr(Max.x-Min.x)+(Max.y-Min.y)+sqr(Max.z-Min.z);
+end;
+
+function TpvAABB.ToOBB(const aTransform:TpvMatrix4x4):TpvOBB;
+begin
+ result.Center:=aTransform*((Min+Max)*0.5);
+ result.HalfExtents:=(Max-Min)*0.5;
+ result.Matrix:=aTransform.ToMatrix3x3;
 end;
 
 function TpvAABB.Resize(const f:TpvScalar):TpvAABB;

@@ -125,7 +125,9 @@ layout (set = 1, binding = 10, std430) readonly buffer FrustumClusterGridData {
 
 // Per planet descriptor set
 
-layout(set = 2, binding = 0) uniform sampler2D uTextures[]; // 0 = height map, 1 = normal map, 2 = tangent bitangent map
+// Aliased textures, because some are array textures and some are not 
+layout(set = 2, binding = 0) uniform sampler2D uTextures[]; // 0 = height map, 1 = normal map, 2 = blend map, 3 = grass map, 4 = water map
+layout(set = 2, binding = 0) uniform sampler2DArray uArrayTextures[]; // 0 = height map, 1 = normal map, 2 = blend map, 3 = grass map, 4 = water map
 
 #include "planet_textures.glsl"
 #include "planet_renderpass.glsl"
@@ -255,6 +257,11 @@ vec3 workNormal;
 void main(){
 
   layerMaterialSetup(sphereNormal);
+  
+  layerMaterialWeights = mat2x4(
+    texturePlanetOctahedralMapArray(uArrayTextures[PLANET_TEXTURE_BLENDMAP], sphereNormal, 0),
+    texturePlanetOctahedralMapArray(uArrayTextures[PLANET_TEXTURE_BLENDMAP], sphereNormal, 1)
+  );
  
 #ifdef EXTERNAL_VERTICES
   workNormal = inBlock.normal.xyz;
@@ -279,7 +286,7 @@ void main(){
 #endif
 
   tangentSpaceBasis = mat3(workTangent, workBitangent, workNormal);
-
+ 
   tangentSpaceViewDirection = normalize(tangentSpaceBasis * viewDirection);
   tangentSpaceViewDirectionXYOverZ = tangentSpaceViewDirection.xy / tangentSpaceViewDirection.z;
 
@@ -296,20 +303,56 @@ void main(){
   {
 
     float weightSum = 0.0;
-    [[unroll]] for(int layerIndex = 0; layerIndex < 4; layerIndex++){
-      const float weight = layerMaterialWeights[layerIndex];
-      if(weight > 0.0){        
-        albedo += multiplanarTexture(u2DTextures[(GetPlanetMaterialAlbedoTextureIndex(layerMaterials[layerIndex]) << 1) | 1], GetPlanetMaterialScale(layerMaterials[layerIndex])) * weight;
-        normalHeight += multiplanarTexture(u2DTextures[(GetPlanetMaterialNormalHeightTextureIndex(layerMaterials[layerIndex]) << 1) | 0], GetPlanetMaterialScale(layerMaterials[layerIndex])) * weight;
-        occlusionRoughnessMetallic += multiplanarTexture(u2DTextures[(GetPlanetMaterialOcclusionRoughnessMetallicTextureIndex(layerMaterials[layerIndex]) << 1) | 0], GetPlanetMaterialScale(layerMaterials[layerIndex])) * weight;
-        weightSum += weight;
+    float maxWeight = 0.0;
+    [[unroll]] for(int layerTopLevelIndex = 0; layerTopLevelIndex < 2; layerTopLevelIndex++){
+      const vec4 weights = layerMaterialWeights[layerTopLevelIndex]; 
+      if(any(greaterThan(weights, vec4(0.0)))){
+        [[unroll]] for(int layerBottomLevelIndex = 0; layerBottomLevelIndex < 4; layerBottomLevelIndex++){
+          const float weight = weights[layerBottomLevelIndex];
+          if(weight > 0.0){        
+            const int layerIndex = (layerTopLevelIndex << 2) | layerBottomLevelIndex; 
+            const PlanetMaterial layerMaterial = layerMaterials[layerIndex];
+            albedo += multiplanarTexture(u2DTextures[(GetPlanetMaterialAlbedoTextureIndex(layerMaterial) << 1) | 1], GetPlanetMaterialScale(layerMaterial)) * weight;
+            normalHeight += multiplanarTexture(u2DTextures[(GetPlanetMaterialNormalHeightTextureIndex(layerMaterial) << 1) | 0], GetPlanetMaterialScale(layerMaterial)) * weight;
+            occlusionRoughnessMetallic += multiplanarTexture(u2DTextures[(GetPlanetMaterialOcclusionRoughnessMetallicTextureIndex(layerMaterial) << 1) | 0], GetPlanetMaterialScale(layerMaterial)) * weight;
+            weightSum += weight;
+            maxWeight = max(maxWeight, weight);
+          }
+        }
       }
     }
 
+    // Process the default ground texture if the weight sum is less than fadeEnd
+    {
+
+      // Define the range for the soft transition
+      const float fadeStart = 0.0; // Begin of fading
+      const float fadeEnd = 1.0; // Full fading
+
+      // Calculate the factor for the default weight
+      const float defaultWeightFactor = clamp((fadeEnd - weightSum) / (fadeEnd - fadeStart), 0.0, 1.0);
+
+      // Calculate the weight of the default ground texture
+      const float defaultWeight = defaultWeightFactor;   
+
+      if(defaultWeight > 0.0){   
+
+        const PlanetMaterial defaultMaterial = layerMaterials[15];
+        albedo += multiplanarTexture(u2DTextures[(GetPlanetMaterialAlbedoTextureIndex(defaultMaterial) << 1) | 1], GetPlanetMaterialScale(defaultMaterial)) * defaultWeight;
+        normalHeight += multiplanarTexture(u2DTextures[(GetPlanetMaterialNormalHeightTextureIndex(defaultMaterial) << 1) | 0], GetPlanetMaterialScale(defaultMaterial)) * defaultWeight;
+        occlusionRoughnessMetallic += multiplanarTexture(u2DTextures[(GetPlanetMaterialOcclusionRoughnessMetallicTextureIndex(defaultMaterial) << 1) | 0], GetPlanetMaterialScale(defaultMaterial)) * defaultWeight;
+        weightSum += defaultWeight;
+
+      }  
+
+    }
+
+    // Process the grass texture if the grass value is greater than 0.0
     float grass = clamp(texturePlanetOctahedralMap(uTextures[PLANET_TEXTURE_GRASSMAP], sphereNormal).x, 0.0, 1.0);
     if(grass > 0.0){
 
-      {
+      // Normalize the weights before adding the grass texture
+      if(weightSum > 0.0){
         float factor = 1.0 / max(1e-7, weightSum);
         albedo *= factor;
         normalHeight *= factor;
@@ -317,22 +360,25 @@ void main(){
         weightSum *= factor;
       } 
 
+      // Optional attenuation of the current textures based on the grass value
       float f = pow(1.0 - grass, 16.0);     
       albedo *= f;
       normalHeight *= f;
       occlusionRoughnessMetallic *= f;
       weightSum *= f;
- 
+
+      // Add the grass texture 
       const float weight = grass;
-      const PlanetMaterial grassMaterial = layerMaterials[1];
-      albedo += multiplanarTexture(u2DTextures[(GetPlanetMaterialAlbedoTextureIndex(grassMaterial) << 1) | 1], GetPlanetMaterialScale(grassMaterial) * 10.0) * weight;
-      normalHeight += multiplanarTexture(u2DTextures[(GetPlanetMaterialNormalHeightTextureIndex(grassMaterial) << 1) | 0], GetPlanetMaterialScale(grassMaterial) * 10.0) * weight;
-      occlusionRoughnessMetallic += multiplanarTexture(u2DTextures[(GetPlanetMaterialOcclusionRoughnessMetallicTextureIndex(grassMaterial) << 1) | 0], GetPlanetMaterialScale(grassMaterial) * 10.0) * weight;
+      const PlanetMaterial grassMaterial = layerMaterials[14];
+      albedo += multiplanarTexture(u2DTextures[(GetPlanetMaterialAlbedoTextureIndex(grassMaterial) << 1) | 1], GetPlanetMaterialScale(grassMaterial)) * weight;
+      normalHeight += multiplanarTexture(u2DTextures[(GetPlanetMaterialNormalHeightTextureIndex(grassMaterial) << 1) | 0], GetPlanetMaterialScale(grassMaterial)) * weight;
+      occlusionRoughnessMetallic += multiplanarTexture(u2DTextures[(GetPlanetMaterialOcclusionRoughnessMetallicTextureIndex(grassMaterial) << 1) | 0], GetPlanetMaterialScale(grassMaterial)) * weight;
       weightSum += weight;
 
     }
 
-    {
+    // Normalize the weights 
+    if(weightSum > 0.0){
       float factor = 1.0 / max(1e-7, weightSum);
       albedo *= factor;
       normalHeight *= factor;
@@ -383,7 +429,7 @@ void main(){
   float litIntensity = 1.0;
 
   const float specularWeight = 1.0;
-
+ 
   const float iblWeight = 1.0;
 
 #define LIGHTING_INITIALIZATION
@@ -403,18 +449,63 @@ void main(){
   vec4 c = vec4(diffuseOutput + specularOutput, 1.0);
   
   if(planetData.selected.w > 1e-6){
-    float d = length(sphereNormal - normalize(planetData.selected.xyz)) - planetData.selected.w;
+    
+    const vec4 selectedColor = vec4(unpackHalf2x16(planetData.selectedColorBrushIndexBrushRotation.x), unpackHalf2x16(planetData.selectedColorBrushIndexBrushRotation.y));
+    
+    const uint brushIndex = planetData.selectedColorBrushIndexBrushRotation.z;
+
+    if(brushIndex == 0u){
+
+      // Circle brush
+
+      const float d = length(sphereNormal - normalize(planetData.selected.xyz)) - planetData.selected.w;
+
 #if 0     
-    float t = fwidth(d);
-    float l = max(1e-6, planetData.selected.w * 0.25);
-    if((d < l) && ((t < (l * 2.0)) && !(isnan(t) || isinf(t)))){ // to prevent artifacts at normal discontinuities and edges
-      t = clamp(t * 1.41421356237, 1e-3, 1e-2); // minimize the possibility of artifacts at normal discontinuities and edges even more, by limiting the range of t to a reasonable value range
-      c.xyz = mix(c.xyz, mix(vec3(1.0) - clamp(c.zxy, vec3(1.0), vec3(1.0)), vec3(1.0, 0.0, 0.0), 0.5), smoothstep(t, -t, d) * 0.5);
-    }
+      float t = fwidth(d);
+      float l = max(1e-6, planetData.selected.w * 0.25);
+      if((d < l) && ((t < (l * 2.0)) && !(isnan(t) || isinf(t)))){ // to prevent artifacts at normal discontinuities and edges
+        t = clamp(t * 1.41421356237, 1e-3, 1e-2); // minimize the possibility of artifacts at normal discontinuities and edges even more, by limiting the range of t to a reasonable value range
+        c.xyz = mix(c.xyz, mix(vec3(1.0) - clamp(c.zxy, vec3(1.0), vec3(1.0)), selectedColor.xyz, selectedColor.w), smoothstep(t, -t, d) * 0.5);
+      }
 #else
-    float t = 1e-3; // constant value without the problems of fwidth with normal discontinuities and edges
-    c.xyz = mix(c.xyz, mix(vec3(1.0) - clamp(c.zxy, vec3(1.0), vec3(1.0)), vec3(1.0, 0.0, 0.0), 0.5), smoothstep(t, -t, d) * 0.5);
+      float t = planetData.selectedInnerRadius;
+      c.xyz = mix(c.xyz, mix(vec3(1.0) - clamp(c.zxy, vec3(1.0), vec3(1.0)), selectedColor.xyz, selectedColor.w), smoothstep(0.0, -t, d) * 0.5);
 #endif
+
+    }else if(brushIndex <= 255u){
+
+      // Brush texture
+
+      const float brushRotation = uintBitsToFloat(planetData.selectedColorBrushIndexBrushRotation.w);
+
+      const vec3 n = normalize(planetData.selected.xyz),
+                 p = sphereNormal;
+
+      vec3 t = n.yzx - n.zxy, 
+           b = normalize(cross(n, t = normalize(t - dot(t, n)))),
+           o = p - n;
+      
+      if(brushRotation != 0.0){
+        const vec2 rotationSinCos = sin(vec2(brushRotation) + vec2(0.0, 1.57079632679));
+        const vec3 ot = t, ob = b;
+        t = (ot * rotationSinCos.y) - (ob * rotationSinCos.x);
+        b = (ot * rotationSinCos.x) + (ob * rotationSinCos.y);
+      }
+
+      vec2 uv = vec2(dot(o, t), dot(o, b)) / planetData.selected.w;
+
+      float d = smoothstep(1.0, 1.0 - (1.0 / length(vec2(textureSize(uArrayTextures[PLANET_TEXTURE_BRUSHES], 0).xy))), max(abs(uv.x), abs(uv.y)));
+
+      d *= smoothstep(-1e-4, 1e-4, dot(p, n)); // When we are on the back side of the planet, we need to clear the brush, but smoothly.
+
+      if(d > 0.0){
+        d *= textureLod(uArrayTextures[PLANET_TEXTURE_BRUSHES], vec3(fma(uv, vec2(0.5), vec2(0.5)), float(brushIndex)), 0.0).x;
+      } 
+
+      c.xyz = mix(c.xyz, mix(vec3(1.0) - clamp(c.zxy, vec3(1.0), vec3(1.0)), selectedColor.xyz, selectedColor.w), d);
+
+    }
+
   }
 
 #ifdef WIREFRAME

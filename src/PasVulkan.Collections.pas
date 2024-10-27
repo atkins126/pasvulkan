@@ -69,7 +69,11 @@ uses SysUtils,
      PasVulkan.Utils,
      Generics.Collections;
 
-type TpvDynamicArray<T>=record
+type
+
+{ TpvDynamicArray }
+
+ TpvDynamicArray<T>=record
       public
        type PT=^T;
             TItemArray=array of T;
@@ -84,6 +88,7 @@ type TpvDynamicArray<T>=record
        procedure Clear;
        procedure ClearNoFree;
        procedure Resize(const aCount:TpvSizeInt);
+       procedure SetCount(const aCount:TpvSizeInt);
        procedure Finish;
        procedure Assign(const aFrom:{$ifdef fpc}{$endif}TpvDynamicArray<T>); overload;
        procedure Assign(const aItems:array of T); overload;
@@ -851,6 +856,14 @@ begin
   Count:=aCount;
   SetLength(Items,Count);
  end;
+end;
+
+procedure TpvDynamicArray<T>.SetCount(const aCount:TpvSizeInt);
+begin
+ if length(Items)<Count then begin
+  SetLength(Items,Count+((Count+1) shr 1));
+ end;
+ Count:=aCount;
 end;
 
 procedure TpvDynamicArray<T>.Finish;
@@ -3401,10 +3414,10 @@ begin
              (TypeInfo(TpvHashMapKey)=TypeInfo(String)) then begin
   result:=HashData(PpvUInt8(@String(TpvPointer(@aKey)^)[1]),length(String(TpvPointer(@aKey)^))*SizeOf(Char));
  end else if TypeInfo(TpvHashMapKey)=TypeInfo(TpvUUID) then begin
-  result:=(TpvUUID(TpvPointer(@aKey)^).DoubleWords[0]*73856093) xor
-          (TpvUUID(TpvPointer(@aKey)^).DoubleWords[1]*19349669) xor
-          (TpvUUID(TpvPointer(@aKey)^).DoubleWords[2]*83492791) xor
-          (TpvUUID(TpvPointer(@aKey)^).DoubleWords[3]*50331653);
+  result:=(TpvUUID(TpvPointer(@aKey)^).UInt32s[0]*73856093) xor
+          (TpvUUID(TpvPointer(@aKey)^).UInt32s[1]*19349669) xor
+          (TpvUUID(TpvPointer(@aKey)^).UInt32s[2]*83492791) xor
+          (TpvUUID(TpvPointer(@aKey)^).UInt32s[3]*50331653);
  end else{$endif}begin
   case SizeOf(TpvHashMapKey) of
    SizeOf(UInt16):begin
@@ -3439,6 +3452,13 @@ begin
     p:=p xor (p shr 11);
     p:=p+(p shl 6);
     result:=TpvUInt32(TpvPtrUInt(p xor (p shr 22)));
+   end;
+   SizeOf(TpvHashMapUInt128):begin
+    // 128-bit
+   result:=(TpvUUID(TpvPointer(@aKey)^).UInt32s[0]*73856093) xor
+           (TpvUUID(TpvPointer(@aKey)^).UInt32s[1]*19349669) xor
+           (TpvUUID(TpvPointer(@aKey)^).UInt32s[2]*83492791) xor
+           (TpvUUID(TpvPointer(@aKey)^).UInt32s[3]*50331653);
    end;
    else begin
     result:=HashData(PpvUInt8(TpvPointer(@aKey)),SizeOf(TpvHashMapKey));
@@ -3498,7 +3518,7 @@ begin
 {$ifdef fpc}
    SizeOf(TpvHashMapUInt128):begin
     result:=(TpvHashMapUInt128(TpvPointer(@aKeyA)^)[0]=TpvHashMapUInt128(TpvPointer(@aKeyB)^)[0]) and
-           (TpvHashMapUInt128(TpvPointer(@aKeyA)^)[1]=TpvHashMapUInt128(TpvPointer(@aKeyB)^)[1]);
+            (TpvHashMapUInt128(TpvPointer(@aKeyA)^)[1]=TpvHashMapUInt128(TpvPointer(@aKeyB)^)[1]);
    end;
 {$endif}
    else begin
